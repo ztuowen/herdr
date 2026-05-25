@@ -72,6 +72,7 @@ impl App {
         }
 
         if self.state.is_prefix_key(key) {
+            self.state.prefix_previous_mode = Some(Mode::Terminal);
             self.state.mode = Mode::Prefix;
             return None;
         }

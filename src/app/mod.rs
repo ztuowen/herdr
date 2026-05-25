@@ -500,6 +500,7 @@ impl App {
             kanban_selected_col: 0,
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
+            prefix_previous_mode: None,
         };
 
         state.terminals = restored_terminals;
@@ -1324,7 +1325,19 @@ impl App {
                 // Should not be called in terminal mode.
             }
             Mode::Kanban => {
-                input::handle_kanban_key(&mut self.state, key_event);
+                if self.state.is_prefix_key(key) {
+                    self.state.prefix_previous_mode = Some(Mode::Kanban);
+                    self.state.mode = Mode::Prefix;
+                } else if self.state.keybinds.toggle_kanban.matches_direct_key(key) {
+                    input::execute_navigate_action_in_context(
+                        &mut self.state,
+                        &mut self.terminal_runtimes,
+                        input::NavigateAction::ToggleKanban,
+                        input::ActionContext::Direct,
+                    );
+                } else {
+                    input::handle_kanban_key(&mut self.state, key_event);
+                }
             }
         }
     }
@@ -3199,5 +3212,31 @@ mod tests {
             &input[events[1].start..events[1].start + events[1].len],
             b"a"
         );
+    }
+
+    #[test]
+    fn route_client_input_kanban_direct_toggle_and_prefix() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        // Toggle Kanban ON
+        app.route_client_input(b"\x0b".to_vec()); // ctrl+k is 0x0b (11)
+        assert_eq!(app.state.mode, Mode::Kanban);
+
+        // Enter Prefix mode
+        app.route_client_input(b"\x02".to_vec()); // ctrl+b is 0x02 (2)
+        assert_eq!(app.state.mode, Mode::Prefix);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // Escape back to Kanban
+        app.route_client_input(b"\x1b".to_vec());
+        assert_eq!(app.state.mode, Mode::Kanban);
+
+        // Toggle Kanban OFF
+        app.route_client_input(b"\x0b".to_vec());
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 }

@@ -372,7 +372,7 @@ impl Default for KeysConfig {
             navigate_pane_right: BindingConfig::one("l"),
             detach: BindingConfig::one("prefix+q"),
             reload_config: BindingConfig::one("prefix+shift+r"),
-            toggle_kanban: BindingConfig::one("prefix+shift+k"),
+            toggle_kanban: BindingConfig::one("ctrl+k"),
             open_notification_target: BindingConfig::one("prefix+o"),
             previous_workspace: BindingConfig::empty(),
             next_workspace: BindingConfig::empty(),

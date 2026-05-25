@@ -88,6 +88,21 @@ impl App {
             return;
         }
 
+        if self
+            .state
+            .keybinds
+            .toggle_kanban
+            .matches_direct_key(raw_key)
+        {
+            execute_navigate_action_in_context(
+                &mut self.state,
+                &mut self.terminal_runtimes,
+                NavigateAction::ToggleKanban,
+                ActionContext::Direct,
+            );
+            return;
+        }
+
         if let Some(action) = navigate_mode_action_for_key(&self.state, raw_key) {
             if action == NavigateAction::EditScrollback {
                 self.launch_focused_scrollback_editor();
@@ -454,6 +469,20 @@ pub(crate) fn handle_navigate_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    if state
+        .keybinds
+        .toggle_kanban
+        .matches_direct_key(terminal_key)
+    {
+        execute_navigate_action_in_context(
+            state,
+            &mut terminal_runtimes,
+            NavigateAction::ToggleKanban,
+            ActionContext::Direct,
+        );
+        return;
+    }
+
     if let Some(action) = navigate_mode_action_for_key(state, terminal_key) {
         execute_navigate_action_in_context(
             state,
@@ -639,7 +668,7 @@ pub(super) fn execute_navigate_action(state: &mut AppState, action: NavigateActi
     );
 }
 
-pub(super) fn execute_navigate_action_in_context(
+pub(crate) fn execute_navigate_action_in_context(
     state: &mut AppState,
     terminal_runtimes: &mut TerminalRuntimeRegistry,
     action: NavigateAction,
@@ -860,7 +889,9 @@ fn workspace_can_start_worktree_action(
 }
 
 fn leave_navigate_mode(state: &mut AppState) {
-    if state.active.is_some() {
+    if let Some(prev) = state.prefix_previous_mode.take() {
+        state.mode = prev;
+    } else if state.active.is_some() {
         state.mode = Mode::Terminal;
     }
 }
@@ -886,7 +917,9 @@ fn finish_custom_command_context(
 }
 
 fn leave_command_mode(state: &mut AppState) {
-    state.mode = if state.active.is_some() {
+    state.mode = if let Some(prev) = state.prefix_previous_mode.take() {
+        prev
+    } else if state.active.is_some() {
         Mode::Terminal
     } else {
         Mode::Navigate
@@ -1946,5 +1979,110 @@ navigate_pane_right = "ctrl+l"
 
         assert!(state.detach_requested);
         assert!(!state.should_quit);
+    }
+
+    #[tokio::test]
+    async fn kanban_direct_toggle_and_prefix_routing() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        // 1. Verify direct toggle key (ctrl-k) toggles Kanban mode on
+        app.handle_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Kanban);
+
+        // 2. Verify prefix key (ctrl-b) from Kanban mode goes to Prefix mode and stores Kanban as previous mode
+        app.handle_key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Prefix);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // 3. Verify Escape in Prefix mode returns to Kanban mode
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.mode, Mode::Kanban);
+        assert_eq!(app.state.prefix_previous_mode, None);
+
+        // 4. Verify prefix key again
+        app.handle_key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Prefix);
+
+        // 5. Verify direct toggle key (ctrl-k) from Kanban mode toggles Kanban mode off
+        app.state.mode = Mode::Kanban;
+        app.handle_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn kanban_direct_toggle_on_landing_page() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        // No workspaces (landing page)
+        app.state.workspaces = vec![];
+        app.state.active = None;
+        app.state.selected = 0;
+        app.state.mode = Mode::Navigate;
+
+        // 1. Verify direct toggle key (ctrl-k) toggles Kanban mode on
+        app.handle_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Kanban);
+
+        // 2. Verify direct toggle key (ctrl-k) from Kanban mode toggles Kanban mode off and returns to Navigate
+        app.handle_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    #[tokio::test]
+    async fn kanban_open_settings_and_close() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Kanban;
+
+        // 1. Press prefix (ctrl-b) -> Prefix mode
+        app.handle_key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.mode, Mode::Prefix);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // 2. Press 's' -> Settings mode
+        app.handle_key(TerminalKey::new(KeyCode::Char('s'), KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.mode, Mode::Settings);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // 3. Press Escape to close settings -> returns to Kanban
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.mode, Mode::Kanban);
+        assert_eq!(app.state.prefix_previous_mode, None);
     }
 }

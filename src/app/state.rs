@@ -1166,6 +1166,7 @@ pub struct AppState {
     pub kanban_selected_col: usize,
     pub kanban_selected_row: usize,
     pub kanban_detail_uuid: Option<String>,
+    pub prefix_previous_mode: Option<Mode>,
 }
 
 impl AppState {
@@ -1607,6 +1608,7 @@ impl AppState {
             kanban_selected_col: 0,
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
+            prefix_previous_mode: None,
         }
     }
 

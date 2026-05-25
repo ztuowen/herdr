@@ -296,7 +296,7 @@ impl AppState {
         crate::ui::centered_popup_rect(self.screen_rect(), 76, 22).unwrap_or_default()
     }
 
-    fn settings_inner_rect(&self) -> Rect {
+    pub(super) fn settings_inner_rect(&self) -> Rect {
         let popup = self.settings_popup_rect();
         Rect::new(
             popup.x + 1,

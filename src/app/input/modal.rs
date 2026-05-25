@@ -92,6 +92,9 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
 }
 
 pub(super) fn open_global_menu(state: &mut AppState) {
+    if state.mode == Mode::Kanban {
+        state.prefix_previous_mode = Some(Mode::Kanban);
+    }
     state.global_menu = MenuListState::new(0);
     state.mode = Mode::GlobalMenu;
 }
@@ -342,7 +345,9 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
 }
 
 pub(super) fn leave_modal(state: &mut AppState) {
-    if state.active.is_some() {
+    if let Some(prev) = state.prefix_previous_mode.take() {
+        state.mode = prev;
+    } else if state.active.is_some() {
         state.mode = Mode::Terminal;
     } else {
         state.mode = Mode::Navigate;

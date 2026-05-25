@@ -90,6 +90,7 @@ impl AppState {
                     | Mode::Resize
                     | Mode::GlobalMenu
                     | Mode::KeybindHelp
+                    | Mode::Kanban
             );
         let launcher = self.global_launcher_rect();
         let launcher_hit = launcher_enabled
@@ -2665,5 +2666,57 @@ mod tests {
         };
 
         assert_eq!(wheel_routing(input_state), WheelRouting::HostScroll);
+    }
+
+    #[test]
+    fn kanban_global_menu_and_settings_mouse() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Kanban;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 80, 20));
+        let launcher = app.state.global_launcher_rect();
+
+        // 1. Click launcher to open global launcher menu
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            launcher.x + 1,
+            launcher.y,
+        ));
+        assert_eq!(app.state.mode, Mode::GlobalMenu);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // 2. Select Settings from launcher menu
+        let labels = app.state.global_menu_labels();
+        let settings_idx = labels.iter().position(|l| *l == "settings").unwrap();
+        app.state.global_menu.highlighted = settings_idx;
+        let menu_rect = app.state.global_menu_rect();
+        // Click on settings menu item
+        let click_y = menu_rect.y + 1 + settings_idx as u16;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            menu_rect.x + 2,
+            click_y,
+        ));
+
+        assert_eq!(app.state.mode, Mode::Settings);
+        assert_eq!(app.state.prefix_previous_mode, Some(Mode::Kanban));
+
+        // 3. Click Close/Cancel on Settings UI
+        let inner = app.state.settings_inner_rect();
+        let show_primary = crate::ui::settings_show_primary_action(&app.state);
+        let (_, close_rect) =
+            crate::ui::settings_button_rects(inner, app.state.settings.section, show_primary);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            close_rect.x + 1,
+            close_rect.y,
+        ));
+
+        // Exiting settings should return us back to Kanban mode
+        assert_eq!(app.state.mode, Mode::Kanban);
+        assert_eq!(app.state.prefix_previous_mode, None);
     }
 }

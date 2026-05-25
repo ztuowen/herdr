@@ -76,6 +76,45 @@ impl AppState {
                                 && mouse.row < rect.y + rect.height;
                             if !inside {
                                 self.set_kanban_detail_uuid(None);
+                            } else if rect.height >= 9 {
+                                let inner = Rect::new(
+                                    rect.x + 1,
+                                    rect.y + 1,
+                                    rect.width.saturating_sub(2),
+                                    rect.height.saturating_sub(2),
+                                );
+                                let rows = ratatui::layout::Layout::vertical([
+                                    ratatui::layout::Constraint::Length(1), // Header title
+                                    ratatui::layout::Constraint::Length(1), // Divider
+                                    ratatui::layout::Constraint::Length(1), // Card Title
+                                    ratatui::layout::Constraint::Length(1), // Status Badge
+                                    ratatui::layout::Constraint::Length(1), // UUID
+                                    ratatui::layout::Constraint::Min(1),    // Description
+                                    ratatui::layout::Constraint::Length(1), // Footer hint
+                                ])
+                                .split(inner);
+
+                                let footer_row = rows[6];
+                                if mouse.row == footer_row.y {
+                                    let text_len = 54;
+                                    let x_start = footer_row.x
+                                        + (footer_row.width.saturating_sub(text_len)) / 2;
+                                    if mouse.column >= x_start && mouse.column < x_start + text_len
+                                    {
+                                        let offset = mouse.column - x_start;
+                                        if offset < 22 {
+                                            self.set_kanban_detail_uuid(None);
+                                        } else if offset < 38 {
+                                            if let Some(ref uuid) = self.kanban_detail_uuid {
+                                                self.request_clipboard_write =
+                                                    Some(uuid.clone().into_bytes());
+                                            }
+                                        } else {
+                                            self.kanban_delete_selected();
+                                            self.set_kanban_detail_uuid(None);
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             self.set_kanban_detail_uuid(None);
@@ -2951,5 +2990,37 @@ mod tests {
         // Click outside (e.g. sidebar col 1) should close detailed view
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1, 1));
         assert_eq!(app.state.kanban_detail_uuid, None);
+
+        // Test clicking footer buttons inside detailed modal
+        app.state.kanban_items.clear();
+        app.state.kanban_selected_col = 0;
+        app.state.kanban_selected_row = 0;
+        let item = app.state.add_kanban_item(
+            "Button Click Task".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        app.state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+        app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
+
+        // Click Copy UUID button (x = 40, y = 20)
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 40, 20));
+        assert_eq!(app.state.kanban_detail_uuid, Some(item.uuid.clone()));
+        let event = app.event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            crate::events::AppEvent::ClipboardWrite { content } if content == item.uuid.clone().into_bytes()
+        ));
+
+        // Click Close Details button (x = 15, y = 20)
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 15, 20));
+        assert_eq!(app.state.kanban_detail_uuid, None);
+
+        // Re-open and Click Delete Card button (x = 60, y = 20)
+        app.state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 60, 20));
+        assert_eq!(app.state.kanban_detail_uuid, None);
+        assert!(app.state.kanban_items.is_empty());
     }
 }

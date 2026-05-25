@@ -497,6 +497,7 @@ pub(crate) enum NavigateAction {
     Zoom,
     EnterResizeMode,
     ToggleSidebar,
+    ToggleKanban,
     CyclePaneNext,
     CyclePanePrevious,
     Help,
@@ -597,6 +598,7 @@ fn action_for_key(
         (&kb.zoom, NavigateAction::Zoom),
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
         (&kb.toggle_sidebar, NavigateAction::ToggleSidebar),
+        (&kb.toggle_kanban, NavigateAction::ToggleKanban),
         (&kb.reload_config, NavigateAction::ReloadConfig),
         (
             &kb.open_notification_target,
@@ -811,6 +813,17 @@ pub(super) fn execute_navigate_action_in_context(
             leave_navigate_mode(state);
         }
         NavigateAction::OpenNavigator => state.open_navigator(),
+        NavigateAction::ToggleKanban => {
+            if state.mode == Mode::Kanban {
+                if state.active.is_some() {
+                    state.mode = Mode::Terminal;
+                } else {
+                    state.mode = Mode::Navigate;
+                }
+            } else {
+                state.mode = Mode::Kanban;
+            }
+        }
     }
 
     finish_action_context(state, context, previous_mode);

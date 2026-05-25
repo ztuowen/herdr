@@ -98,6 +98,14 @@ pub enum Method {
     IntegrationInstall(IntegrationInstallParams),
     #[serde(rename = "integration.uninstall")]
     IntegrationUninstall(IntegrationUninstallParams),
+    #[serde(rename = "kanban.add")]
+    KanbanAdd(KanbanAddParams),
+    #[serde(rename = "kanban.list")]
+    KanbanList(KanbanListParams),
+    #[serde(rename = "kanban.update")]
+    KanbanUpdate(KanbanUpdateParams),
+    #[serde(rename = "kanban.delete")]
+    KanbanDelete(KanbanDeleteParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -692,6 +700,12 @@ pub enum ResponseResult {
         diagnostics: Vec<String>,
     },
     Ok {},
+    KanbanItem {
+        item: KanbanItem,
+    },
+    KanbanList {
+        items: Vec<KanbanItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -947,6 +961,77 @@ pub enum AgentStatus {
 fn default_true() -> bool {
     true
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KanbanStatus {
+    #[default]
+    Todo,
+    InProgress,
+    NeedReview,
+    Done,
+}
+
+impl KanbanStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::InProgress => "in_progress",
+            Self::NeedReview => "need_review",
+            Self::Done => "done",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "todo" | "TODO" | "Todo" => Some(Self::Todo),
+            "in_progress" | "in-progress" | "IN_PROGRESS" | "InProgress" => Some(Self::InProgress),
+            "need_review" | "need-review" | "NEED_REVIEW" | "NeedReview" => Some(Self::NeedReview),
+            "done" | "DONE" | "Done" => Some(Self::Done),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanItem {
+    pub uuid: String,
+    pub title: String,
+    pub description: String,
+    pub status: KanbanStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanAddParams {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<KanbanStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct KanbanListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<KanbanStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanUpdateParams {
+    pub uuid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<KanbanStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanDeleteParams {
+    pub uuid: String,
+}
+
 
 #[cfg(test)]
 mod tests {

@@ -652,6 +652,7 @@ pub enum Mode {
     GlobalMenu,
     KeybindHelp,
     Navigator,
+    Kanban,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1161,6 +1162,10 @@ pub struct AppState {
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
+    pub kanban_items: Vec<crate::api::schema::KanbanItem>,
+    pub kanban_selected_col: usize,
+    pub kanban_selected_row: usize,
+    pub kanban_detail_uuid: Option<String>,
 }
 
 impl AppState {
@@ -1310,6 +1315,152 @@ impl AppState {
         }
         ws.active_tab().map(|tab| tab.layout.focused()) == Some(pane_id)
     }
+
+    pub fn add_kanban_item(
+        &mut self,
+        title: String,
+        description: Option<String>,
+        status: Option<crate::api::schema::KanbanStatus>,
+    ) -> crate::api::schema::KanbanItem {
+        let item = crate::api::schema::KanbanItem {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            title,
+            description: description.unwrap_or_default(),
+            status: status.unwrap_or(crate::api::schema::KanbanStatus::Todo),
+        };
+        self.kanban_items.push(item.clone());
+        self.mark_session_dirty();
+        item
+    }
+
+    pub fn update_kanban_item(
+        &mut self,
+        uuid: &str,
+        title: Option<String>,
+        description: Option<String>,
+        status: Option<crate::api::schema::KanbanStatus>,
+    ) -> Option<crate::api::schema::KanbanItem> {
+        let cloned_item = {
+            let item = self.kanban_items.iter_mut().find(|it| it.uuid == uuid)?;
+            if let Some(t) = title {
+                item.title = t;
+            }
+            if let Some(d) = description {
+                item.description = d;
+            }
+            if let Some(s) = status {
+                item.status = s;
+            }
+            item.clone()
+        };
+        self.mark_session_dirty();
+        Some(cloned_item)
+    }
+
+    pub fn delete_kanban_item(&mut self, uuid: &str) -> Option<crate::api::schema::KanbanItem> {
+        let pos = self.kanban_items.iter().position(|it| it.uuid == uuid)?;
+        let removed = self.kanban_items.remove(pos);
+        self.mark_session_dirty();
+        Some(removed)
+    }
+
+    pub fn kanban_items_in_column(&self, col: usize) -> Vec<&crate::api::schema::KanbanItem> {
+        let status = match col {
+            0 => crate::api::schema::KanbanStatus::Todo,
+            1 => crate::api::schema::KanbanStatus::InProgress,
+            2 => crate::api::schema::KanbanStatus::NeedReview,
+            3 => crate::api::schema::KanbanStatus::Done,
+            _ => return vec![],
+        };
+        self.kanban_items
+            .iter()
+            .filter(|item| item.status == status)
+            .collect()
+    }
+
+    pub fn kanban_move_col_left(&mut self) {
+        if self.kanban_selected_col > 0 {
+            self.kanban_selected_col -= 1;
+            self.kanban_selected_row = 0;
+        }
+    }
+
+    pub fn kanban_move_col_right(&mut self) {
+        if self.kanban_selected_col < 3 {
+            self.kanban_selected_col += 1;
+            self.kanban_selected_row = 0;
+        }
+    }
+
+    pub fn kanban_move_row_up(&mut self) {
+        if self.kanban_selected_row > 0 {
+            self.kanban_selected_row -= 1;
+        }
+    }
+
+    pub fn kanban_move_row_down(&mut self) {
+        let count = self.kanban_items_in_column(self.kanban_selected_col).len();
+        if count > 0 && self.kanban_selected_row < count - 1 {
+            self.kanban_selected_row += 1;
+        }
+    }
+
+    pub fn kanban_shift_item_left(&mut self) {
+        let col = self.kanban_selected_col;
+        if col == 0 {
+            return;
+        }
+        let items = self.kanban_items_in_column(col);
+        if let Some(item_to_move) = items.get(self.kanban_selected_row) {
+            let uuid = item_to_move.uuid.clone();
+            let new_status = match col - 1 {
+                0 => crate::api::schema::KanbanStatus::Todo,
+                1 => crate::api::schema::KanbanStatus::InProgress,
+                2 => crate::api::schema::KanbanStatus::NeedReview,
+                _ => return,
+            };
+            self.update_kanban_item(&uuid, None, None, Some(new_status));
+            self.kanban_selected_col = col - 1;
+            let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
+            self.kanban_selected_row = new_count.saturating_sub(1);
+        }
+    }
+
+    pub fn kanban_shift_item_right(&mut self) {
+        let col = self.kanban_selected_col;
+        if col >= 3 {
+            return;
+        }
+        let items = self.kanban_items_in_column(col);
+        if let Some(item_to_move) = items.get(self.kanban_selected_row) {
+            let uuid = item_to_move.uuid.clone();
+            let new_status = match col + 1 {
+                1 => crate::api::schema::KanbanStatus::InProgress,
+                2 => crate::api::schema::KanbanStatus::NeedReview,
+                3 => crate::api::schema::KanbanStatus::Done,
+                _ => return,
+            };
+            self.update_kanban_item(&uuid, None, None, Some(new_status));
+            self.kanban_selected_col = col + 1;
+            let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
+            self.kanban_selected_row = new_count.saturating_sub(1);
+        }
+    }
+
+    pub fn kanban_delete_selected(&mut self) {
+        let col = self.kanban_selected_col;
+        let items = self.kanban_items_in_column(col);
+        if let Some(item) = items.get(self.kanban_selected_row) {
+            let uuid = item.uuid.clone();
+            self.delete_kanban_item(&uuid);
+            let new_count = self.kanban_items_in_column(col).len();
+            if self.kanban_selected_row >= new_count && new_count > 0 {
+                self.kanban_selected_row = new_count - 1;
+            } else if new_count == 0 {
+                self.kanban_selected_row = 0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1452,6 +1603,10 @@ impl AppState {
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
+            kanban_items: Vec::new(),
+            kanban_selected_col: 0,
+            kanban_selected_row: 0,
+            kanban_detail_uuid: None,
         }
     }
 
@@ -1605,5 +1760,59 @@ mod tests {
                 "Collapse"
             ]
         );
+    }
+
+    #[test]
+    fn kanban_state_helpers() {
+        let mut state = AppState::test_new();
+        assert!(state.kanban_items.is_empty());
+
+        let item1 = state.add_kanban_item(
+            "Task 1".to_string(),
+            Some("Desc 1".to_string()),
+            Some(crate::api::schema::KanbanStatus::Todo),
+        );
+        assert!(!item1.uuid.is_empty());
+        assert_eq!(item1.title, "Task 1");
+        assert_eq!(item1.description, "Desc 1");
+        assert_eq!(item1.status, crate::api::schema::KanbanStatus::Todo);
+
+        let item2 = state.add_kanban_item(
+            "Task 2".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::InProgress),
+        );
+        assert_eq!(item2.description, "");
+
+        assert_eq!(state.kanban_items_in_column(0).len(), 1);
+        assert_eq!(state.kanban_items_in_column(1).len(), 1);
+
+        // Update item 1
+        let updated = state
+            .update_kanban_item(
+                &item1.uuid,
+                Some("Task 1 Updated".to_string()),
+                None,
+                Some(crate::api::schema::KanbanStatus::InProgress),
+            )
+            .unwrap();
+        assert_eq!(updated.title, "Task 1 Updated");
+        assert_eq!(updated.status, crate::api::schema::KanbanStatus::InProgress);
+
+        // Now both should be in InProgress column
+        assert_eq!(state.kanban_items_in_column(0).len(), 0);
+        assert_eq!(state.kanban_items_in_column(1).len(), 2);
+
+        // Shift item tests
+        state.kanban_selected_col = 1;
+        state.kanban_selected_row = 0;
+        state.kanban_shift_item_right();
+        assert_eq!(state.kanban_selected_col, 2);
+        assert_eq!(state.kanban_items_in_column(2).len(), 1);
+
+        // Delete item
+        let deleted = state.delete_kanban_item(&item2.uuid).unwrap();
+        assert_eq!(deleted.uuid, item2.uuid);
+        assert_eq!(state.kanban_items.len(), 1);
     }
 }

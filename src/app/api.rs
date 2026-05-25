@@ -8,6 +8,7 @@ mod responses;
 mod tabs;
 mod workspaces;
 mod worktrees;
+mod kanban;
 
 use super::{api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKind};
 use crate::events::AppEvent;
@@ -423,6 +424,10 @@ impl App {
             Method::IntegrationUninstall(params) => {
                 return self.handle_integration_uninstall(request.id, params);
             }
+            Method::KanbanAdd(params) => return self.handle_kanban_add(request.id, params),
+            Method::KanbanList(params) => return self.handle_kanban_list(request.id, params),
+            Method::KanbanUpdate(params) => return self.handle_kanban_update(request.id, params),
+            Method::KanbanDelete(params) => return self.handle_kanban_delete(request.id, params),
             _ => {
                 return responses::encode_error(
                     request.id,

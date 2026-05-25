@@ -7,6 +7,7 @@ use ratatui::{
 
 mod dialogs;
 mod keybind_help;
+mod kanban;
 mod menus;
 mod mobile;
 mod navigator;
@@ -52,6 +53,7 @@ use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{render_config_diagnostic, render_toast_notification, toast_notification_rect};
 use self::tabs::render_tab_bar;
+use self::kanban::render_kanban;
 pub(crate) use self::{
     dialogs::{
         confirm_close_button_rects, confirm_close_popup_rect, new_linked_worktree_button_rects,
@@ -182,7 +184,7 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
-    let has_tabs = app.active.and_then(|i| app.workspaces.get(i)).is_some();
+    let has_tabs = app.active.and_then(|i| app.workspaces.get(i)).is_some() && app.mode != Mode::Kanban;
     let (tab_bar_rect, terminal_area) = if has_tabs && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -224,20 +226,27 @@ fn compute_view_internal(
         .unwrap_or_default();
     app.tab_scroll = tab_bar_view.scroll;
 
-    let split_borders = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
-        .map(|ws| ws.layout.splits(terminal_area))
-        .unwrap_or_default();
+    let split_borders = if app.mode == Mode::Kanban {
+        vec![]
+    } else {
+        app.active
+            .and_then(|i| app.workspaces.get(i))
+            .map(|ws| ws.layout.splits(terminal_area))
+            .unwrap_or_default()
+    };
 
-    let pane_infos = compute_pane_infos(
-        app,
-        terminal_runtimes,
-        terminal_area,
-        resize_panes,
-        cell_size,
-    );
-    if resize_panes {
+    let pane_infos = if app.mode == Mode::Kanban {
+        vec![]
+    } else {
+        compute_pane_infos(
+            app,
+            terminal_runtimes,
+            terminal_area,
+            resize_panes,
+            cell_size,
+        )
+    };
+    if resize_panes && app.mode != Mode::Kanban {
         resize_background_tab_panes_to_terminal_area(
             app,
             terminal_runtimes,
@@ -365,7 +374,11 @@ pub fn render_with_runtime_registry(
     if app.view.layout != ViewLayout::Mobile {
         render_tab_bar(app, frame, tab_bar_area);
     }
-    render_panes(app, terminal_runtimes, frame, terminal_area);
+    if app.mode == Mode::Kanban {
+        render_kanban(app, frame, terminal_area);
+    } else {
+        render_panes(app, terminal_runtimes, frame, terminal_area);
+    }
 
     // Ambient notifications sit above panes, but below interactive overlays.
     render_notifications(app, frame, terminal_area);
@@ -397,6 +410,7 @@ pub fn render_with_runtime_registry(
         Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
         Mode::Navigator => render_navigator_overlay(app, frame),
         Mode::Terminal => {}
+        Mode::Kanban => {}
     }
 }
 

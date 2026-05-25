@@ -496,6 +496,10 @@ impl App {
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
+            kanban_items: Vec::new(),
+            kanban_selected_col: 0,
+            kanban_selected_row: 0,
+            kanban_detail_uuid: None,
         };
 
         state.terminals = restored_terminals;
@@ -596,6 +600,7 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
+        app.state.kanban_items = snapshot.kanban_items.clone();
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -1317,6 +1322,9 @@ impl App {
             }
             Mode::Terminal => {
                 // Should not be called in terminal mode.
+            }
+            Mode::Kanban => {
+                input::handle_kanban_key(&mut self.state, key_event);
             }
         }
     }

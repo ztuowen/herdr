@@ -74,10 +74,12 @@ pub(crate) enum GlobalMenuAction {
     Keybinds,
     ReloadConfig,
     Settings,
+    Kanban,
 }
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
+        GlobalMenuAction::Kanban,
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
@@ -134,6 +136,9 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
+        GlobalMenuAction::Kanban => {
+            state.mode = Mode::Kanban;
+        }
     }
 }
 
@@ -767,7 +772,6 @@ pub(crate) fn handle_context_menu_key(
         _ => {}
     }
 }
-
 impl AppState {
     pub(super) fn global_menu_item_at(&self, col: u16, row: u16) -> Option<GlobalMenuAction> {
         let rect = self.global_menu_rect();
@@ -780,6 +784,63 @@ impl AppState {
         }
         let idx = (row - rect.y - 1) as usize;
         global_menu_actions(self).get(idx).copied()
+    }
+}
+
+pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
+    if let Some(_) = state.kanban_detail_uuid.as_ref() {
+        match key.code {
+            KeyCode::Esc => {
+                state.kanban_detail_uuid = None;
+            }
+            KeyCode::Char('d') | KeyCode::Delete => {
+                state.kanban_delete_selected();
+                state.kanban_detail_uuid = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            leave_modal(state);
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::SHIFT => {
+            state.kanban_shift_item_left();
+        }
+        KeyCode::Char('H') => {
+            state.kanban_shift_item_left();
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::SHIFT => {
+            state.kanban_shift_item_right();
+        }
+        KeyCode::Char('L') => {
+            state.kanban_shift_item_right();
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            state.kanban_move_col_left();
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            state.kanban_move_col_right();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.kanban_move_row_up();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.kanban_move_row_down();
+        }
+        KeyCode::Char(' ') | KeyCode::Enter => {
+            let col = state.kanban_selected_col;
+            let items = state.kanban_items_in_column(col);
+            if let Some(item) = items.get(state.kanban_selected_row) {
+                state.kanban_detail_uuid = Some(item.uuid.clone());
+            }
+        }
+        KeyCode::Char('d') | KeyCode::Delete => {
+            state.kanban_delete_selected();
+        }
+        _ => {}
     }
 }
 

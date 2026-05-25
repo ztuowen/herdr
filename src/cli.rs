@@ -16,6 +16,7 @@ mod status;
 mod tab;
 mod workspace;
 mod worktree;
+mod kanban;
 
 pub enum CommandOutcome {
     Handled(i32),
@@ -45,6 +46,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "wait" => run_wait_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
+        "kanban" => kanban::run_kanban_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 

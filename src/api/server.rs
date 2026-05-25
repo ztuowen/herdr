@@ -268,6 +268,10 @@ fn handle_request(
 fn api_method_name(method: &Method) -> &'static str {
     match method {
         Method::Ping(_) => "ping",
+        Method::KanbanAdd(_) => "kanban.add",
+        Method::KanbanList(_) => "kanban.list",
+        Method::KanbanUpdate(_) => "kanban.update",
+        Method::KanbanDelete(_) => "kanban.delete",
         Method::ServerStop(_) => "server.stop",
         Method::ServerLiveHandoff(_) => "server.live_handoff",
         Method::ServerReloadConfig(_) => "server.reload_config",

@@ -107,6 +107,16 @@ impl App {
                 }
             }
         }
+
+        if let Some(content) = self.state.request_clipboard_write.take() {
+            if self
+                .event_tx
+                .try_send(crate::events::AppEvent::ClipboardWrite { content })
+                .is_err()
+            {
+                tracing::warn!("failed to queue clipboard write event");
+            }
+        }
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {

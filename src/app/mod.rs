@@ -1345,6 +1345,16 @@ impl App {
                 }
             }
         }
+
+        if let Some(content) = self.state.request_clipboard_write.take() {
+            if self
+                .event_tx
+                .try_send(crate::events::AppEvent::ClipboardWrite { content })
+                .is_err()
+            {
+                tracing::warn!("failed to queue clipboard write event");
+            }
+        }
     }
 
     /// Handles a mouse event for the headless server.
@@ -3311,5 +3321,32 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[tokio::test]
+    async fn test_route_client_input_kanban_copy_uuid() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Kanban;
+
+        let item = app.state.add_kanban_item(
+            "Test Card".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        app.state.kanban_selected_col = 0;
+        app.state.kanban_selected_row = 0;
+
+        // Route 'c' key in Kanban mode
+        app.route_client_input(b"c".to_vec());
+
+        let event = app.event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            crate::events::AppEvent::ClipboardWrite { content } if content == item.uuid.into_bytes()
+        ));
     }
 }

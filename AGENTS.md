@@ -37,11 +37,11 @@ After the change is integrated, remove the task worktree and delete the task bra
 
 ## Testing
 
-Use `just` recipes by default for tests and checks instead of invoking cargo or scripts directly.
+Use `just` recipes by default for tests and checks instead of invoking cargo or scripts directly. Ensure you set the `ZIG` env variable and prepend the Zig installation path to `PATH` for compilation:
 
 ```bash
-just test               # cargo nextest + maintenance script tests
-just check              # formatting check + cargo nextest + maintenance script tests
+ZIG=/home/ztuowen/zig-x86_64-linux-0.15.2/zig PATH=/home/ztuowen/zig-x86_64-linux-0.15.2:$PATH just test
+ZIG=/home/ztuowen/zig-x86_64-linux-0.15.2/zig PATH=/home/ztuowen/zig-x86_64-linux-0.15.2:$PATH just check
 ```
 
 Default flow: run `just check` before committing. Do not commit until `just check` passes locally unless Can explicitly accepts a narrower validation for that commit.

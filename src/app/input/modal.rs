@@ -798,6 +798,11 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
             KeyCode::Esc => {
                 state.kanban_detail_uuid = None;
             }
+            KeyCode::Char('c') | KeyCode::Char('y') => {
+                if let Some(ref uuid) = state.kanban_detail_uuid {
+                    state.request_clipboard_write = Some(uuid.clone().into_bytes());
+                }
+            }
             KeyCode::Char('d') | KeyCode::Delete => {
                 state.kanban_delete_selected();
                 state.kanban_detail_uuid = None;
@@ -810,6 +815,13 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             leave_modal(state);
+        }
+        KeyCode::Char('c') | KeyCode::Char('y') => {
+            let col = state.kanban_selected_col;
+            let items = state.kanban_items_in_column(col);
+            if let Some(item) = items.get(state.kanban_selected_row) {
+                state.request_clipboard_write = Some(item.uuid.clone().into_bytes());
+            }
         }
         KeyCode::Left if key.modifiers == KeyModifiers::SHIFT => {
             state.kanban_shift_item_left();
@@ -1320,5 +1332,81 @@ mod tests {
 
         assert!(state.workspaces.is_empty());
         assert_eq!(state.mode, Mode::Navigate);
+    }
+
+    #[test]
+    fn test_kanban_key_copy_uuid() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::Kanban;
+        state.kanban_items.clear();
+        let item = state.add_kanban_item(
+            "Copy Task".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        // Selected col/row indices should match the added item's column
+        state.kanban_selected_col = 0; // "todo" column is 0
+        state.kanban_selected_row = 0;
+
+        // 1. Test copy in non-detailed view using 'c'
+        state.request_clipboard_write = None;
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()),
+        );
+        assert_eq!(
+            state
+                .request_clipboard_write
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some(item.uuid.clone())
+        );
+
+        // 2. Test copy in non-detailed view using 'y'
+        state.request_clipboard_write = None;
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty()),
+        );
+        assert_eq!(
+            state
+                .request_clipboard_write
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some(item.uuid.clone())
+        );
+
+        // 3. Open detailed view
+        state.kanban_detail_uuid = Some(item.uuid.clone());
+        state.request_clipboard_write = None;
+
+        // 4. Test copy in detailed view using 'c'
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()),
+        );
+        assert_eq!(
+            state
+                .request_clipboard_write
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some(item.uuid.clone())
+        );
+
+        // 5. Test copy in detailed view using 'y'
+        state.request_clipboard_write = None;
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty()),
+        );
+        assert_eq!(
+            state
+                .request_clipboard_write
+                .as_ref()
+                .map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some(item.uuid.clone())
+        );
     }
 }

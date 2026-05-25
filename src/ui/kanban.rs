@@ -175,7 +175,7 @@ fn render_kanban_detail_modal(
     item: &crate::api::schema::KanbanItem,
     p: &Palette,
 ) {
-    let Some(popup) = centered_popup_rect(area, 64, 14) else {
+    let Some(popup) = centered_popup_rect(area, 64, 15) else {
         return;
     };
 
@@ -190,6 +190,7 @@ fn render_kanban_detail_modal(
         Constraint::Length(1), // Divider
         Constraint::Length(1), // Card Title
         Constraint::Length(1), // Status Badge
+        Constraint::Length(1), // UUID
         Constraint::Min(1),    // Description
         Constraint::Length(1), // Footer hint
     ])
@@ -237,6 +238,13 @@ fn render_kanban_detail_modal(
     frame.render_widget(Paragraph::new(title_line), rows[2]);
     frame.render_widget(Paragraph::new(status_line), rows[3]);
 
+    // UUID
+    let uuid_line = Line::from(vec![
+        Span::styled("UUID: ", Style::default().fg(p.overlay0)),
+        Span::styled(item.uuid.as_str(), Style::default().fg(p.text)),
+    ]);
+    frame.render_widget(Paragraph::new(uuid_line), rows[4]);
+
     // Description block
     let desc_title = Span::styled(
         "Description:\n",
@@ -252,7 +260,7 @@ fn render_kanban_detail_modal(
         Line::from(Span::styled(display_desc, Style::default().fg(p.text))),
     ])
     .wrap(Wrap { trim: true });
-    frame.render_widget(desc_text, rows[4]);
+    frame.render_widget(desc_text, rows[5]);
 
     // Footer hint
     let footer_hints = Line::from(vec![
@@ -262,6 +270,11 @@ fn render_kanban_detail_modal(
         ),
         Span::styled("Close Details  ", Style::default().fg(p.overlay1)),
         Span::styled(
+            " [c] ",
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Copy UUID  ", Style::default().fg(p.overlay1)),
+        Span::styled(
             " [d] ",
             Style::default().fg(p.red).add_modifier(Modifier::BOLD),
         ),
@@ -269,6 +282,6 @@ fn render_kanban_detail_modal(
     ]);
     frame.render_widget(
         Paragraph::new(footer_hints).alignment(ratatui::layout::Alignment::Center),
-        rows[5],
+        rows[6],
     );
 }

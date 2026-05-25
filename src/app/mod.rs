@@ -3323,6 +3323,66 @@ mod tests {
         std::env::remove_var("XDG_CONFIG_HOME");
     }
 
+    #[test]
+    fn test_save_session_preserves_kanban_without_workspaces() {
+        let _guard = config_env_lock().lock().unwrap();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "herdr-test-kanban-save-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", &temp_dir);
+
+        let app_dir = if cfg!(debug_assertions) {
+            "herdr-dev"
+        } else {
+            "herdr"
+        };
+        let session_file = temp_dir.join(app_dir).join("session.json");
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            false, // no_session = false so it saves the session file
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        // Add a Kanban item but keep workspaces empty
+        app.state.add_kanban_item(
+            "Test Save".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        app.save_session_now();
+
+        // Verify session.json is created and has the kanban item
+        assert!(session_file.exists());
+        let content = std::fs::read_to_string(&session_file).unwrap();
+        let parsed: crate::persist::SessionSnapshot = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.kanban_items.len(), 1);
+        assert_eq!(parsed.kanban_items[0].title, "Test Save");
+
+        // Clear kanban items and save again
+        app.state.kanban_items.clear();
+        app.save_session_now();
+
+        // Verify session.json is now deleted/cleared
+        assert!(!session_file.exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     #[tokio::test]
     async fn test_route_client_input_kanban_copy_uuid() {
         let mut app = test_app();

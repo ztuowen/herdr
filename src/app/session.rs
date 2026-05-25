@@ -22,7 +22,7 @@ impl App {
             return;
         }
 
-        if self.state.workspaces.is_empty() {
+        if self.state.workspaces.is_empty() && self.state.kanban_items.is_empty() {
             crate::persist::clear();
         } else {
             let snap = crate::persist::capture(

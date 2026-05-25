@@ -241,6 +241,7 @@ impl App {
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
+            kanban_items,
         ) = if no_session {
             (
                 Vec::new(),
@@ -251,6 +252,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                Vec::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
             let history = config
@@ -287,6 +289,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.kanban_items,
                 )
             } else {
                 crate::logging::session_restored(ws.len(), "ok");
@@ -305,6 +308,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.kanban_items,
                 )
             }
         } else {
@@ -317,6 +321,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                Vec::new(),
             )
         };
 
@@ -496,7 +501,7 @@ impl App {
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
-            kanban_items: Vec::new(),
+            kanban_items,
             kanban_selected_col: 0,
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
@@ -3238,5 +3243,73 @@ mod tests {
         // Toggle Kanban OFF
         app.route_client_input(b"\x0b".to_vec());
         assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn test_kanban_restored_from_session() {
+        let _guard = config_env_lock().lock().unwrap();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "herdr-test-kanban-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", &temp_dir);
+
+        let app_dir = if cfg!(debug_assertions) {
+            "herdr-dev"
+        } else {
+            "herdr"
+        };
+        let session_file = temp_dir.join(app_dir).join("session.json");
+        std::fs::create_dir_all(session_file.parent().unwrap()).unwrap();
+
+        let mock_item = crate::api::schema::KanbanItem {
+            uuid: "test-uuid-123".to_string(),
+            title: "Mock Title".to_string(),
+            description: "Mock Description".to_string(),
+            status: crate::api::schema::KanbanStatus::InProgress,
+            pane_id: None,
+        };
+
+        let snap = crate::persist::SessionSnapshot {
+            version: 3,
+            workspaces: vec![],
+            active: None,
+            selected: 0,
+            agent_panel_scope: state::AgentPanelScope::CurrentWorkspace,
+            sidebar_width: Some(26),
+            sidebar_section_split: Some(0.5),
+            collapsed_space_keys: std::collections::HashSet::new(),
+            kanban_items: vec![mock_item.clone()],
+        };
+
+        let json = serde_json::to_string_pretty(&snap).unwrap();
+        std::fs::write(&session_file, json).unwrap();
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let app = App::new(
+            &Config::default(),
+            false, // no_session = false so it loads the session file
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        assert_eq!(app.state.kanban_items.len(), 1);
+        assert_eq!(app.state.kanban_items[0].uuid, "test-uuid-123");
+        assert_eq!(app.state.kanban_items[0].title, "Mock Title");
+        assert_eq!(
+            app.state.kanban_items[0].status,
+            crate::api::schema::KanbanStatus::InProgress
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

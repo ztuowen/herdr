@@ -10,13 +10,13 @@ use crate::api::schema::{
 
 mod agent;
 mod integration;
+mod kanban;
 mod pane;
 mod server;
 mod status;
 mod tab;
 mod workspace;
 mod worktree;
-mod kanban;
 
 pub enum CommandOutcome {
     Handled(i32),

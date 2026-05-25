@@ -13,7 +13,7 @@ use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
 
-const WORKSPACE_SECTION_HEADER_ROWS: u16 = 2;
+const WORKSPACE_SECTION_HEADER_ROWS: u16 = 3;
 const AGENT_PANEL_HEADER_ROWS: u16 = 3;
 
 pub(crate) struct AgentPanelEntry {
@@ -848,12 +848,54 @@ fn render_workspace_list(
 
     let list_bottom = area.y + area.height.saturating_sub(1);
     if area.height > 0 {
+        let kanban_rect = app.sidebar_kanban_button_rect();
+        if kanban_rect.width > 0 {
+            let todo_count = app.kanban_items_in_column(0).len();
+            let in_progress_count = app.kanban_items_in_column(1).len();
+            let review_count = app.kanban_items_in_column(2).len();
+            let done_count = app.kanban_items_in_column(3).len();
+
+            let is_active = app.mode == Mode::Kanban;
+            let kanban_style = if is_active {
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD)
+            };
+
+            let spans = vec![
+                Span::styled(" ⚏ kanban", kanban_style),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    todo_count.to_string(),
+                    Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    in_progress_count.to_string(),
+                    Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    review_count.to_string(),
+                    Style::default().fg(p.peach).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(
+                    done_count.to_string(),
+                    Style::default().fg(p.green).add_modifier(Modifier::BOLD),
+                ),
+            ];
+
+            frame.render_widget(Paragraph::new(Line::from(spans)), kanban_rect);
+        }
+    }
+    if area.height > 1 {
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
                 " spaces",
                 Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
             )])),
-            Rect::new(area.x, area.y, area.width, 1),
+            Rect::new(area.x, area.y + 1, area.width, 1),
         );
     }
 
@@ -1475,7 +1517,7 @@ mod tests {
         app.active = None;
         app.mode = Mode::Terminal;
 
-        let ws_area = Rect::new(0, 0, 30, 6);
+        let ws_area = Rect::new(0, 0, 30, 7);
         let metrics = workspace_list_scroll_metrics(&app, ws_area);
 
         assert_eq!(metrics.viewport_rows, 1);
@@ -1496,7 +1538,7 @@ mod tests {
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
+        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 13));
 
         assert!(headers.is_empty());
         assert_eq!(cards.len(), 1);

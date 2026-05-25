@@ -1,6 +1,6 @@
 use crate::api::schema::{
-    KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanStatus, KanbanUpdateParams, Method,
-    Request,
+    KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanStatus, KanbanUpdateParams,
+    Method, Request,
 };
 
 pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
@@ -31,7 +31,9 @@ fn print_kanban_help() {
     eprintln!("  herdr kanban add <title> [--description <desc>] [--status <todo|in-progress|need-review|done>]");
     eprintln!("  herdr kanban move <uuid> <status>");
     eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>]");
-    eprintln!("  herdr kanban update <uuid> [--title <title>] [--description <desc>] [--status <status>]");
+    eprintln!(
+        "  herdr kanban update <uuid> [--title <title>] [--description <desc>] [--status <status>]"
+    );
     eprintln!("  herdr kanban delete <uuid>");
 }
 
@@ -105,9 +107,7 @@ fn kanban_move(args: &[String]) -> std::io::Result<i32> {
     let status = match KanbanStatus::from_str(status_str) {
         Some(s) => s,
         None => {
-            eprintln!(
-                "invalid status: {status_str} (expected todo|in-progress|need-review|done)"
-            );
+            eprintln!("invalid status: {status_str} (expected todo|in-progress|need-review|done)");
             return Ok(2);
         }
     };

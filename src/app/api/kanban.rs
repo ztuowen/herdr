@@ -1,12 +1,14 @@
+use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
     KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanUpdateParams, ResponseResult,
 };
 use crate::app::App;
-use super::responses::{encode_error, encode_success};
 
 impl App {
     pub(super) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
-        let item = self.state.add_kanban_item(params.title, params.description, params.status);
+        let item = self
+            .state
+            .add_kanban_item(params.title, params.description, params.status);
         self.schedule_session_save();
         encode_success(id, ResponseResult::KanbanItem { item })
     }
@@ -25,7 +27,11 @@ impl App {
         encode_success(id, ResponseResult::KanbanList { items })
     }
 
-    pub(super) fn handle_kanban_update(&mut self, id: String, params: KanbanUpdateParams) -> String {
+    pub(super) fn handle_kanban_update(
+        &mut self,
+        id: String,
+        params: KanbanUpdateParams,
+    ) -> String {
         match self.state.update_kanban_item(
             &params.uuid,
             params.title,
@@ -44,7 +50,11 @@ impl App {
         }
     }
 
-    pub(super) fn handle_kanban_delete(&mut self, id: String, params: KanbanDeleteParams) -> String {
+    pub(super) fn handle_kanban_delete(
+        &mut self,
+        id: String,
+        params: KanbanDeleteParams,
+    ) -> String {
         match self.state.delete_kanban_item(&params.uuid) {
             Some(item) => {
                 self.schedule_session_save();
@@ -62,8 +72,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use crate::api::schema::SuccessResponse;
+    use crate::config::Config;
 
     #[test]
     fn test_kanban_api_handlers() {
@@ -117,7 +127,10 @@ mod tests {
             _ => panic!("Expected ResponseResult::KanbanItem"),
         };
         assert_eq!(updated_item.title, "Updated Title");
-        assert_eq!(updated_item.status, crate::api::schema::KanbanStatus::InProgress);
+        assert_eq!(
+            updated_item.status,
+            crate::api::schema::KanbanStatus::InProgress
+        );
 
         // Delete
         let delete_res = app.handle_kanban_delete(

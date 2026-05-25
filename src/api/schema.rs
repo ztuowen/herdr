@@ -1032,7 +1032,6 @@ pub struct KanbanDeleteParams {
     pub uuid: String,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

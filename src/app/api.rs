@@ -3,12 +3,12 @@ use std::time::{Duration, Instant};
 
 mod agents;
 mod integrations;
+mod kanban;
 mod panes;
 mod responses;
 mod tabs;
 mod workspaces;
 mod worktrees;
-mod kanban;
 
 use super::{api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKind};
 use crate::events::AppEvent;

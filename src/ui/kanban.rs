@@ -2,13 +2,13 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, BorderType, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 
+use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::state::Palette;
 use crate::app::AppState;
-use super::widgets::{centered_popup_rect, render_panel_shell};
 
 pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
@@ -62,11 +62,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
             let card_height: u16 = 4; // Title + description + borders
             let spacing: u16 = 1;
             let total_card_height = card_height + spacing;
-            let max_visible_cards = if total_card_height > 0 {
-                (inner_area.height / total_card_height) as usize
-            } else {
-                0
-            };
+            let max_visible_cards = inner_area
+                .height
+                .checked_div(total_card_height)
+                .map(usize::from)
+                .unwrap_or(0);
 
             // Compute scroll offset for the focused column
             let scroll_offset = if is_col_focused {
@@ -93,7 +93,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                 let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
 
                 let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
-                let card_border_color = if is_card_selected { p.accent } else { p.surface0 };
+                let card_border_color = if is_card_selected {
+                    p.accent
+                } else {
+                    p.surface0
+                };
                 let card_bg = if is_card_selected {
                     p.surface0
                 } else {
@@ -218,15 +222,15 @@ fn render_kanban_detail_modal(
 
     let title_line = Line::from(vec![Span::styled(
         item.title.as_str(),
-        Style::default()
-            .fg(p.accent)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
     )]);
     let status_line = Line::from(vec![
         Span::styled("Status: ", Style::default().fg(p.overlay0)),
         Span::styled(
             status_str,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         ),
     ]);
 
@@ -254,9 +258,7 @@ fn render_kanban_detail_modal(
     let footer_hints = Line::from(vec![
         Span::styled(
             " [Esc] ",
-            Style::default()
-                .fg(p.accent)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled("Close Details  ", Style::default().fg(p.overlay1)),
         Span::styled(

@@ -476,6 +476,21 @@ impl AppState {
                         return None;
                     }
 
+                    let kanban_button = self.sidebar_kanban_button_rect();
+                    let on_kanban_button = kanban_button.width > 0
+                        && mouse.row >= kanban_button.y
+                        && mouse.row < kanban_button.y + kanban_button.height
+                        && mouse.column >= kanban_button.x
+                        && mouse.column < kanban_button.x + kanban_button.width;
+                    if on_kanban_button {
+                        if self.mode == Mode::Kanban {
+                            leave_modal(self);
+                        } else {
+                            self.mode = Mode::Kanban;
+                        }
+                        return None;
+                    }
+
                     if let Some(target) =
                         self.workspace_list_scrollbar_target_at(mouse.column, mouse.row)
                     {

@@ -788,7 +788,7 @@ impl AppState {
 }
 
 pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
-    if let Some(_) = state.kanban_detail_uuid.as_ref() {
+    if state.kanban_detail_uuid.is_some() {
         match key.code {
             KeyCode::Esc => {
                 state.kanban_detail_uuid = None;

@@ -180,6 +180,18 @@ impl AppState {
         Rect::new(footer.x, footer.y, width, footer.height)
     }
 
+    pub(crate) fn sidebar_kanban_button_rect(&self) -> Rect {
+        let sidebar = self.view.sidebar_rect;
+        if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {
+            return Rect::default();
+        }
+        let ws_area = crate::ui::workspace_list_rect(sidebar, self.sidebar_section_split);
+        if ws_area == Rect::default() || ws_area.height == 0 {
+            return Rect::default();
+        }
+        Rect::new(ws_area.x, ws_area.y, ws_area.width, 1)
+    }
+
     pub(crate) fn global_launcher_rect(&self) -> Rect {
         if self.view.layout == ViewLayout::Mobile {
             return self.view.mobile_menu_hit_area;
@@ -541,6 +553,42 @@ mod tests {
         ));
 
         assert_eq!(app.state.mode, Mode::KeybindHelp);
+    }
+
+    #[test]
+    fn clicking_sidebar_kanban_button_toggles_kanban_mode() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let kanban_btn = app.state.sidebar_kanban_button_rect();
+        assert!(kanban_btn.width > 0);
+
+        // Click the Kanban button to enter Kanban mode
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            kanban_btn.x + kanban_btn.width / 2,
+            kanban_btn.y,
+        ));
+        assert_eq!(app.state.mode, Mode::Kanban);
+
+        // Click it again to exit Kanban mode
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            kanban_btn.x + kanban_btn.width / 2,
+            kanban_btn.y,
+        ));
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn sidebar_kanban_button_rect_is_empty_when_collapsed() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_collapsed = true;
+        let kanban_btn = app.state.sidebar_kanban_button_rect();
+        assert_eq!(kanban_btn, Rect::default());
     }
 
     #[test]

@@ -6,8 +6,8 @@ use ratatui::{
 };
 
 mod dialogs;
-mod keybind_help;
 mod kanban;
+mod keybind_help;
 mod menus;
 mod mobile;
 mod navigator;
@@ -25,6 +25,7 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
+use self::kanban::render_kanban;
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,
@@ -53,7 +54,6 @@ use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{render_config_diagnostic, render_toast_notification, toast_notification_rect};
 use self::tabs::render_tab_bar;
-use self::kanban::render_kanban;
 pub(crate) use self::{
     dialogs::{
         confirm_close_button_rects, confirm_close_popup_rect, new_linked_worktree_button_rects,
@@ -184,7 +184,8 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
-    let has_tabs = app.active.and_then(|i| app.workspaces.get(i)).is_some() && app.mode != Mode::Kanban;
+    let has_tabs =
+        app.active.and_then(|i| app.workspaces.get(i)).is_some() && app.mode != Mode::Kanban;
     let (tab_bar_rect, terminal_area) = if has_tabs && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);

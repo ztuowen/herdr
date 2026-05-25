@@ -25,8 +25,8 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
-pub(crate) use self::kanban::count_wrapped_lines;
 use self::kanban::render_kanban;
+pub(crate) use self::kanban::{count_wrapped_lines, get_description_text};
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,

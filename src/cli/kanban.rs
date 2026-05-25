@@ -28,18 +28,18 @@ pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
 
 fn print_kanban_help() {
     eprintln!("herdr kanban commands:");
-    eprintln!("  herdr kanban add <title> [--description <desc>] [--status <todo|in-progress|need-review|done>]");
+    eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
     eprintln!("  herdr kanban move <uuid> <status>");
     eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>]");
     eprintln!(
-        "  herdr kanban update <uuid> [--title <title>] [--description <desc>] [--status <status>]"
+        "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]"
     );
     eprintln!("  herdr kanban delete <uuid>");
 }
 
 fn kanban_add(args: &[String]) -> std::io::Result<i32> {
     let Some(title) = args.first() else {
-        eprintln!("usage: herdr kanban add <title> [--description <desc>] [--status <todo|in-progress|need-review|done>]");
+        eprintln!("usage: herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
         return Ok(2);
     };
 
@@ -53,7 +53,15 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --description");
                     return Ok(2);
                 };
-                description = Some(val.clone());
+                if val.is_empty() {
+                    description = Some(String::new());
+                } else {
+                    let path = std::path::Path::new(val);
+                    let abs_path = std::fs::canonicalize(path)
+                        .or_else(|_| std::env::current_dir().map(|cwd| cwd.join(path)))
+                        .unwrap_or_else(|_| path.to_path_buf());
+                    description = Some(abs_path.to_string_lossy().to_string());
+                }
                 index += 2;
             }
             "--status" => {
@@ -162,7 +170,7 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
 
 fn kanban_update(args: &[String]) -> std::io::Result<i32> {
     let Some(uuid) = args.first() else {
-        eprintln!("usage: herdr kanban update <uuid> [--title <title>] [--description <desc>] [--status <status>]");
+        eprintln!("usage: herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]");
         return Ok(2);
     };
 
@@ -185,7 +193,15 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --description");
                     return Ok(2);
                 };
-                description = Some(val.clone());
+                if val.is_empty() {
+                    description = Some(String::new());
+                } else {
+                    let path = std::path::Path::new(val);
+                    let abs_path = std::fs::canonicalize(path)
+                        .or_else(|_| std::env::current_dir().map(|cwd| cwd.join(path)))
+                        .unwrap_or_else(|_| path.to_path_buf());
+                    description = Some(abs_path.to_string_lossy().to_string());
+                }
                 index += 2;
             }
             "--status" => {

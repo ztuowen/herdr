@@ -1424,12 +1424,18 @@ mod tests {
 
     #[test]
     fn test_kanban_detail_scrolling() {
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!("herdr-test-scroll-{}.md", uuid::Uuid::new_v4()));
+        let desc_text = "A very long description. ".repeat(50);
+        std::fs::write(&plan_file, &desc_text).unwrap();
+        let plan_path = plan_file.to_string_lossy().to_string();
+
         let mut state = state_with_workspaces(&["test"]);
         state.mode = Mode::Kanban;
         state.kanban_items.clear();
         let item = state.add_kanban_item(
             "Scroll Task".to_string(),
-            Some("A very long description. ".repeat(50)),
+            Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
@@ -1495,5 +1501,7 @@ mod tests {
             KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty()),
         );
         assert_eq!(state.kanban_detail_scroll, 0);
+
+        let _ = std::fs::remove_file(plan_file);
     }
 }

@@ -2966,9 +2966,15 @@ mod tests {
         assert_eq!(app.state.kanban_selected_row, 0);
 
         // Test scrolling when detailed modal is open
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!("herdr-test-mouse-{}.md", uuid::Uuid::new_v4()));
+        let desc_text = "A very long description. ".repeat(50);
+        std::fs::write(&plan_file, &desc_text).unwrap();
+        let plan_path = plan_file.to_string_lossy().to_string();
+
         let item = app.state.add_kanban_item(
             "Scroll Task".to_string(),
-            Some("A very long description. ".repeat(50)),
+            Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
@@ -3022,5 +3028,7 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 60, 20));
         assert_eq!(app.state.kanban_detail_uuid, None);
         assert!(app.state.kanban_items.is_empty());
+
+        let _ = std::fs::remove_file(plan_file);
     }
 }

@@ -1625,12 +1625,8 @@ impl AppState {
         .split(inner);
         let desc_area = rows[5];
 
-        let display_desc = if item.description.is_empty() {
-            "No description provided."
-        } else {
-            item.description.as_str()
-        };
-        let desc_lines = crate::ui::count_wrapped_lines(display_desc, desc_area.width as usize);
+        let (display_desc, _) = crate::ui::get_description_text(&item.description);
+        let desc_lines = crate::ui::count_wrapped_lines(&display_desc, desc_area.width as usize);
         let total_lines = desc_lines + 1; // plus 1 for "Description:" heading
         total_lines.saturating_sub(desc_area.height as usize) as u16
     }

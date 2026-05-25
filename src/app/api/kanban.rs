@@ -6,6 +6,18 @@ use crate::app::App;
 
 impl App {
     pub(super) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
+        if let Some(ref path_str) = params.description {
+            if !path_str.is_empty() {
+                let path = std::path::Path::new(path_str);
+                if std::fs::File::open(path).is_err() {
+                    return encode_error(
+                        id,
+                        "kanban_description_not_accessible",
+                        format!("Description path {} is not accessible", path_str),
+                    );
+                }
+            }
+        }
         let item = self.state.add_kanban_item(
             params.title,
             params.description,
@@ -35,6 +47,18 @@ impl App {
         id: String,
         params: KanbanUpdateParams,
     ) -> String {
+        if let Some(ref path_str) = params.description {
+            if !path_str.is_empty() {
+                let path = std::path::Path::new(path_str);
+                if std::fs::File::open(path).is_err() {
+                    return encode_error(
+                        id,
+                        "kanban_description_not_accessible",
+                        format!("Description path {} is not accessible", path_str),
+                    );
+                }
+            }
+        }
         match self.state.update_kanban_item(
             &params.uuid,
             params.title,
@@ -81,6 +105,11 @@ mod tests {
 
     #[test]
     fn test_kanban_api_handlers() {
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!("herdr-test-plan-{}.md", uuid::Uuid::new_v4()));
+        std::fs::write(&plan_file, "API test plan content").unwrap();
+        let plan_path = plan_file.to_string_lossy().to_string();
+
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &Config::default(),
@@ -95,7 +124,7 @@ mod tests {
             "1".into(),
             KanbanAddParams {
                 title: "Test Kanban".into(),
-                description: Some("Description".into()),
+                description: Some(plan_path.clone()),
                 status: None,
                 pane_id: None,
             },
@@ -156,5 +185,59 @@ mod tests {
             _ => panic!("Expected ResponseResult::KanbanList"),
         };
         assert_eq!(items.len(), 0);
+
+        let _ = std::fs::remove_file(plan_file);
+    }
+
+    #[test]
+    fn test_kanban_api_validation_and_rendering() {
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!("herdr-test-validation-{}.md", uuid::Uuid::new_v4()));
+        let plan_path = plan_file.to_string_lossy().to_string();
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        // 1. Validation fails when file does not exist
+        let add_res = app.handle_kanban_add(
+            "1".into(),
+            KanbanAddParams {
+                title: "Test Plan Validation".into(),
+                description: Some(plan_path.clone()),
+                status: None,
+                pane_id: None,
+            },
+        );
+        assert!(add_res.contains("kanban_description_not_accessible"));
+
+        // 2. Validation succeeds once file is written
+        std::fs::write(&plan_file, "API validation check").unwrap();
+        let add_res2 = app.handle_kanban_add(
+            "2".into(),
+            KanbanAddParams {
+                title: "Test Plan Validation".into(),
+                description: Some(plan_path.clone()),
+                status: None,
+                pane_id: None,
+            },
+        );
+        assert!(add_res2.contains("\"type\":\"kanban_item\""));
+
+        // 3. UI Helper behaves correctly
+        let (text, is_err) = crate::ui::get_description_text(&plan_path);
+        assert_eq!(text, "API validation check");
+        assert!(!is_err);
+
+        // 4. UI Helper handles deleted file correctly
+        std::fs::remove_file(&plan_file).unwrap();
+        let (text2, is_err2) = crate::ui::get_description_text(&plan_path);
+        assert_eq!(text2, "NO DESCRIPTION FOUND");
+        assert!(is_err2);
     }
 }

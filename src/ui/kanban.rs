@@ -251,11 +251,7 @@ fn render_kanban_detail_modal(
         "Description:",
         Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
     );
-    let display_desc = if item.description.is_empty() {
-        "No description provided."
-    } else {
-        item.description.as_str()
-    };
+    let (display_desc, is_error) = get_description_text(&item.description);
 
     let max_scroll = app.kanban_detail_max_scroll();
     let metrics = crate::pane::ScrollMetrics {
@@ -276,8 +272,15 @@ fn render_kanban_detail_modal(
         .unwrap_or(rows[5]);
 
     let mut desc_lines = vec![Line::from(desc_title)];
-    for line in display_desc.split('\n') {
-        desc_lines.push(Line::from(Span::styled(line, Style::default().fg(p.text))));
+    if is_error {
+        desc_lines.push(Line::from(Span::styled(
+            display_desc,
+            Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        for line in display_desc.split('\n') {
+            desc_lines.push(Line::from(Span::styled(line, Style::default().fg(p.text))));
+        }
     }
 
     let desc_text = Paragraph::new(desc_lines)
@@ -348,4 +351,15 @@ pub(crate) fn count_wrapped_lines(text: &str, width: usize) -> usize {
         total_lines += line_count;
     }
     total_lines
+}
+
+pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
+    if path_str.is_empty() {
+        ("No description provided.".to_string(), false)
+    } else {
+        match std::fs::read_to_string(path_str) {
+            Ok(content) => (content, false),
+            Err(_) => ("NO DESCRIPTION FOUND".to_string(), true),
+        }
+    }
 }

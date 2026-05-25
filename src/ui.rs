@@ -27,7 +27,6 @@ use self::dialogs::{
 };
 pub(crate) use self::kanban::count_wrapped_lines;
 use self::kanban::render_kanban;
-pub(crate) use self::kanban::KANBAN_DETAIL_MODAL_SIZE;
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,

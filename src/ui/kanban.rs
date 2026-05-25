@@ -9,8 +9,6 @@ use ratatui::{
 use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::AppState;
 
-pub(crate) const KANBAN_DETAIL_MODAL_SIZE: (u16, u16) = (80, 20);
-
 pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
 
@@ -177,9 +175,8 @@ fn render_kanban_detail_modal(
     item: &crate::api::schema::KanbanItem,
 ) {
     let p = &app.palette;
-    let Some(popup) =
-        centered_popup_rect(area, KANBAN_DETAIL_MODAL_SIZE.0, KANBAN_DETAIL_MODAL_SIZE.1)
-    else {
+    let (width, height) = app.kanban_detail_modal_size();
+    let Some(popup) = centered_popup_rect(area, width, height) else {
         return;
     };
 

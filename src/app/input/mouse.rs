@@ -66,11 +66,9 @@ impl AppState {
             if self.kanban_detail_uuid.is_some() {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let popup = crate::ui::centered_popup_rect(
-                            self.view.terminal_area,
-                            crate::ui::KANBAN_DETAIL_MODAL_SIZE.0,
-                            crate::ui::KANBAN_DETAIL_MODAL_SIZE.1,
-                        );
+                        let (width, height) = self.kanban_detail_modal_size();
+                        let popup =
+                            crate::ui::centered_popup_rect(self.view.terminal_area, width, height);
                         if let Some(rect) = popup {
                             let inside = mouse.column >= rect.x
                                 && mouse.column < rect.x + rect.width

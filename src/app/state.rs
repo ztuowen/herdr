@@ -1583,6 +1583,13 @@ impl AppState {
         }
     }
 
+    pub fn kanban_detail_modal_size(&self) -> (u16, u16) {
+        let area = self.view.terminal_area;
+        let width = 80.max(area.width.saturating_mul(8) / 10);
+        let height = 20.max(area.height.saturating_mul(8) / 10);
+        (width, height)
+    }
+
     pub fn set_kanban_detail_uuid(&mut self, uuid: Option<String>) {
         self.kanban_detail_uuid = uuid;
         self.kanban_detail_scroll = 0;
@@ -1595,11 +1602,9 @@ impl AppState {
         let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
             return 0;
         };
-        let Some(popup) = crate::ui::centered_popup_rect(
-            self.view.terminal_area,
-            crate::ui::KANBAN_DETAIL_MODAL_SIZE.0,
-            crate::ui::KANBAN_DETAIL_MODAL_SIZE.1,
-        ) else {
+        let (width, height) = self.kanban_detail_modal_size();
+        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
+        else {
             return 0;
         };
         let inner = ratatui::widgets::Block::default()

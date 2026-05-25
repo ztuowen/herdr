@@ -999,6 +999,8 @@ pub struct KanbanItem {
     pub title: String,
     pub description: String,
     pub status: KanbanStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1008,6 +1010,8 @@ pub struct KanbanAddParams {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<KanbanStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1025,6 +1029,8 @@ pub struct KanbanUpdateParams {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<KanbanStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

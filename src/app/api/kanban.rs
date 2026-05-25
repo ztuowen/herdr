@@ -6,9 +6,12 @@ use crate::app::App;
 
 impl App {
     pub(super) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
-        let item = self
-            .state
-            .add_kanban_item(params.title, params.description, params.status);
+        let item = self.state.add_kanban_item(
+            params.title,
+            params.description,
+            params.status,
+            params.pane_id,
+        );
         self.schedule_session_save();
         encode_success(id, ResponseResult::KanbanItem { item })
     }
@@ -37,6 +40,7 @@ impl App {
             params.title,
             params.description,
             params.status,
+            params.pane_id,
         ) {
             Some(item) => {
                 self.schedule_session_save();
@@ -93,6 +97,7 @@ mod tests {
                 title: "Test Kanban".into(),
                 description: Some("Description".into()),
                 status: None,
+                pane_id: None,
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&add_res).unwrap();
@@ -119,6 +124,7 @@ mod tests {
                 title: Some("Updated Title".into()),
                 description: None,
                 status: Some(crate::api::schema::KanbanStatus::InProgress),
+                pane_id: None,
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&update_res).unwrap();

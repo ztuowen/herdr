@@ -86,6 +86,7 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
             title: title.clone(),
             description,
             status,
+            pane_id: std::env::var("HERDR_PANE_ID").ok(),
         }),
     })?)
 }
@@ -119,6 +120,7 @@ fn kanban_move(args: &[String]) -> std::io::Result<i32> {
             title: None,
             description: None,
             status: Some(status),
+            pane_id: std::env::var("HERDR_PANE_ID").ok(),
         }),
     })?)
 }
@@ -217,6 +219,7 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
             title,
             description,
             status,
+            pane_id: std::env::var("HERDR_PANE_ID").ok(),
         }),
     })?)
 }

@@ -1322,12 +1322,14 @@ impl AppState {
         title: String,
         description: Option<String>,
         status: Option<crate::api::schema::KanbanStatus>,
+        pane_id: Option<String>,
     ) -> crate::api::schema::KanbanItem {
         let item = crate::api::schema::KanbanItem {
             uuid: uuid::Uuid::new_v4().to_string(),
             title,
             description: description.unwrap_or_default(),
             status: status.unwrap_or(crate::api::schema::KanbanStatus::Todo),
+            pane_id,
         };
         self.kanban_items.push(item.clone());
         self.mark_session_dirty();
@@ -1340,6 +1342,7 @@ impl AppState {
         title: Option<String>,
         description: Option<String>,
         status: Option<crate::api::schema::KanbanStatus>,
+        pane_id: Option<String>,
     ) -> Option<crate::api::schema::KanbanItem> {
         let cloned_item = {
             let item = self.kanban_items.iter_mut().find(|it| it.uuid == uuid)?;
@@ -1352,6 +1355,9 @@ impl AppState {
             if let Some(s) = status {
                 item.status = s;
             }
+            if pane_id.is_some() {
+                item.pane_id = pane_id;
+            }
             item.clone()
         };
         self.mark_session_dirty();
@@ -1363,6 +1369,119 @@ impl AppState {
         let removed = self.kanban_items.remove(pos);
         self.mark_session_dirty();
         Some(removed)
+    }
+
+    pub fn parse_workspace_id(&self, id: &str) -> Option<usize> {
+        self.workspaces
+            .iter()
+            .position(|workspace| workspace.id == id)
+            .or_else(|| id.strip_prefix("w_")?.parse::<usize>().ok()?.checked_sub(1))
+            .or_else(|| id.parse::<usize>().ok()?.checked_sub(1))
+    }
+
+    pub fn find_pane_by_id_str(&self, id: &str) -> Option<(usize, usize, crate::layout::PaneId)> {
+        if let Some(rest) = id.strip_prefix("p_") {
+            if let Some((ws_raw, pane_raw)) = rest.rsplit_once('_') {
+                let ws_idx = self.parse_workspace_id(ws_raw)?;
+                let pane_id = crate::layout::PaneId::from_raw(pane_raw.parse::<u32>().ok()?);
+                let ws = self.workspaces.get(ws_idx)?;
+                let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+                return Some((ws_idx, tab_idx, pane_id));
+            }
+
+            let pane_id = crate::layout::PaneId::from_raw(rest.parse::<u32>().ok()?);
+            for (ws_idx, ws) in self.workspaces.iter().enumerate() {
+                if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
+                    return Some((ws_idx, tab_idx, pane_id));
+                }
+            }
+            return None;
+        }
+
+        let (ws_raw, pane_number_raw) = id.rsplit_once('-')?;
+        let ws_idx = self.parse_workspace_id(ws_raw)?;
+        let pane_number = pane_number_raw.parse::<usize>().ok()?;
+        let ws = self.workspaces.get(ws_idx)?;
+        let pane_id = ws
+            .public_pane_numbers
+            .iter()
+            .find_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id))?;
+        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+        Some((ws_idx, tab_idx, pane_id))
+    }
+
+    pub fn kanban_item_at(
+        &self,
+        col_x: u16,
+        row_y: u16,
+    ) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
+        let area = self.view.terminal_area;
+        let cols = ratatui::layout::Layout::horizontal([
+            ratatui::layout::Constraint::Percentage(25),
+            ratatui::layout::Constraint::Percentage(25),
+            ratatui::layout::Constraint::Percentage(25),
+            ratatui::layout::Constraint::Percentage(25),
+        ])
+        .split(area);
+
+        for col_idx in 0..4 {
+            let col_area = cols[col_idx];
+            let inner_area = Rect::new(
+                col_area.x.saturating_add(1),
+                col_area.y.saturating_add(1),
+                col_area.width.saturating_sub(2),
+                col_area.height.saturating_sub(2),
+            );
+
+            let items = self.kanban_items_in_column(col_idx);
+            let count = items.len();
+            if count == 0 {
+                continue;
+            }
+
+            let is_col_focused = self.kanban_selected_col == col_idx;
+            let card_height: u16 = 4;
+            let spacing: u16 = 1;
+            let total_card_height = card_height + spacing;
+
+            let max_visible_cards = inner_area
+                .height
+                .checked_div(total_card_height)
+                .map(usize::from)
+                .unwrap_or(0);
+
+            let scroll_offset = if is_col_focused {
+                let row = self.kanban_selected_row;
+                if max_visible_cards == 0 {
+                    0
+                } else if row >= max_visible_cards {
+                    row - max_visible_cards + 1
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+            for (idx, item) in visible_items.enumerate() {
+                let actual_idx = scroll_offset + idx;
+                let card_y = inner_area.y + (idx as u16 * total_card_height);
+                if card_y + card_height > inner_area.y + inner_area.height {
+                    break;
+                }
+
+                let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
+                if col_x >= card_area.x
+                    && col_x < card_area.x + card_area.width
+                    && row_y >= card_area.y
+                    && row_y < card_area.y + card_area.height
+                {
+                    return Some((col_idx, actual_idx, (*item).clone()));
+                }
+            }
+        }
+        None
     }
 
     pub fn kanban_items_in_column(&self, col: usize) -> Vec<&crate::api::schema::KanbanItem> {
@@ -1420,7 +1539,7 @@ impl AppState {
                 2 => crate::api::schema::KanbanStatus::NeedReview,
                 _ => return,
             };
-            self.update_kanban_item(&uuid, None, None, Some(new_status));
+            self.update_kanban_item(&uuid, None, None, Some(new_status), None);
             self.kanban_selected_col = col - 1;
             let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
             self.kanban_selected_row = new_count.saturating_sub(1);
@@ -1441,7 +1560,7 @@ impl AppState {
                 3 => crate::api::schema::KanbanStatus::Done,
                 _ => return,
             };
-            self.update_kanban_item(&uuid, None, None, Some(new_status));
+            self.update_kanban_item(&uuid, None, None, Some(new_status), None);
             self.kanban_selected_col = col + 1;
             let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
             self.kanban_selected_row = new_count.saturating_sub(1);
@@ -1773,6 +1892,7 @@ mod tests {
             "Task 1".to_string(),
             Some("Desc 1".to_string()),
             Some(crate::api::schema::KanbanStatus::Todo),
+            None,
         );
         assert!(!item1.uuid.is_empty());
         assert_eq!(item1.title, "Task 1");
@@ -1783,6 +1903,7 @@ mod tests {
             "Task 2".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::InProgress),
+            None,
         );
         assert_eq!(item2.description, "");
 
@@ -1796,6 +1917,7 @@ mod tests {
                 Some("Task 1 Updated".to_string()),
                 None,
                 Some(crate::api::schema::KanbanStatus::InProgress),
+                None,
             )
             .unwrap();
         assert_eq!(updated.title, "Task 1 Updated");
@@ -1812,9 +1934,34 @@ mod tests {
         assert_eq!(state.kanban_selected_col, 2);
         assert_eq!(state.kanban_items_in_column(2).len(), 1);
 
+        // find_pane_by_id_str test
+        let ws = Workspace::test_new("ws1");
+        let pane_id = ws.tabs[0].root_pane;
+        state.workspaces = vec![ws];
+
+        let pane_id_str = format!("p_{}", pane_id.raw());
+        let res = state.find_pane_by_id_str(&pane_id_str);
+        assert_eq!(res, Some((0, 0, pane_id)));
+
+        // kanban_item_at test
+        state.view.terminal_area = Rect::new(0, 0, 100, 20);
+        state.kanban_items.clear();
+        state.add_kanban_item(
+            "Task 1".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        let hit = state.kanban_item_at(5, 3);
+        assert!(hit.is_some());
+        let (col, idx, item) = hit.unwrap();
+        assert_eq!(col, 0);
+        assert_eq!(idx, 0);
+        assert_eq!(item.title, "Task 1");
+
         // Delete item
-        let deleted = state.delete_kanban_item(&item2.uuid).unwrap();
-        assert_eq!(deleted.uuid, item2.uuid);
-        assert_eq!(state.kanban_items.len(), 1);
+        let deleted = state.delete_kanban_item(&item.uuid).unwrap();
+        assert_eq!(deleted.uuid, item.uuid);
+        assert_eq!(state.kanban_items.len(), 0);
     }
 }

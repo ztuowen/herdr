@@ -62,6 +62,118 @@ impl AppState {
             return None;
         }
 
+        if self.mode == Mode::Kanban {
+            if self.kanban_detail_uuid.is_some() {
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    let popup = crate::ui::centered_popup_rect(self.view.terminal_area, 64, 14);
+                    if let Some(rect) = popup {
+                        let inside = mouse.column >= rect.x
+                            && mouse.column < rect.x + rect.width
+                            && mouse.row >= rect.y
+                            && mouse.row < rect.y + rect.height;
+                        if !inside {
+                            self.kanban_detail_uuid = None;
+                        }
+                    } else {
+                        self.kanban_detail_uuid = None;
+                    }
+                }
+                return None;
+            }
+
+            let sidebar = self.view.sidebar_rect;
+            let in_sidebar = sidebar.width > 0
+                && mouse.column >= sidebar.x
+                && mouse.column < sidebar.x + sidebar.width
+                && mouse.row >= sidebar.y
+                && mouse.row < sidebar.y + sidebar.height;
+
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Down(MouseButton::Right)
+                    if !in_sidebar =>
+                {
+                    if let Some((col_idx, row_idx, item)) =
+                        self.kanban_item_at(mouse.column, mouse.row)
+                    {
+                        self.kanban_selected_col = col_idx;
+                        self.kanban_selected_row = row_idx;
+
+                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+                            self.kanban_detail_uuid = Some(item.uuid.clone());
+                        } else {
+                            let mut navigated = false;
+                            if let Some(ref pane_id_str) = item.pane_id {
+                                if let Some((ws_idx, tab_idx, pane_id)) =
+                                    self.find_pane_by_id_str(pane_id_str)
+                                {
+                                    self.focus_navigator_target(
+                                        crate::app::state::NavigatorTarget::Pane {
+                                            ws_idx,
+                                            tab_idx,
+                                            pane_id,
+                                        },
+                                    );
+                                    navigated = true;
+                                }
+                            }
+                            if !navigated {
+                                self.kanban_detail_uuid = Some(item.uuid.clone());
+                            }
+                        }
+                    }
+                    return None;
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if !in_sidebar => {
+                    let cols = ratatui::layout::Layout::horizontal([
+                        ratatui::layout::Constraint::Percentage(25),
+                        ratatui::layout::Constraint::Percentage(25),
+                        ratatui::layout::Constraint::Percentage(25),
+                        ratatui::layout::Constraint::Percentage(25),
+                    ])
+                    .split(self.view.terminal_area);
+
+                    let mut hovered_col = None;
+                    for col_idx in 0..4 {
+                        let col_area = cols[col_idx];
+                        if mouse.column >= col_area.x && mouse.column < col_area.x + col_area.width
+                        {
+                            hovered_col = Some(col_idx);
+                            break;
+                        }
+                    }
+
+                    if let Some(col_idx) = hovered_col {
+                        if self.kanban_selected_col != col_idx {
+                            self.kanban_selected_col = col_idx;
+                            self.kanban_selected_row = 0;
+                        }
+
+                        let items_count = self.kanban_items_in_column(col_idx).len();
+                        if items_count > 0 {
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    self.kanban_selected_row =
+                                        self.kanban_selected_row.saturating_sub(1);
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    self.kanban_selected_row =
+                                        (self.kanban_selected_row + 1).min(items_count - 1);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+
+            if !in_sidebar {
+                return None;
+            }
+        }
+
         if self.mode == Mode::Terminal
             && self.clickable_toast_at(mouse.column, mouse.row)
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -1013,7 +1125,7 @@ impl AppState {
         }
 
         if self.mode != Mode::Navigate {
-            if !matches!(self.mode, Mode::Terminal | Mode::Resize) {
+            if !matches!(self.mode, Mode::Terminal | Mode::Resize | Mode::Kanban) {
                 return false;
             }
             if rect_contains(self.view.mobile_menu_hit_area, mouse.column, mouse.row) {
@@ -2718,5 +2830,89 @@ mod tests {
         // Exiting settings should return us back to Kanban mode
         assert_eq!(app.state.mode, Mode::Kanban);
         assert_eq!(app.state.prefix_previous_mode, None);
+    }
+
+    #[test]
+    fn kanban_card_click_and_scroll() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("one");
+        let pane_id = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Kanban;
+
+        // Add an item with pane_id
+        let pane_id_str = format!("p_{}", pane_id.raw());
+        app.state.kanban_items.clear();
+        app.state.add_kanban_item(
+            "Tracked Task".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            Some(pane_id_str.clone()),
+        );
+
+        app.state.view.terminal_area = Rect::new(26, 0, 84, 20);
+
+        // 1. Click on the first card
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 30, 3));
+
+        // Click should switch mode to Terminal and focus the pane
+        assert_eq!(app.state.mode, Mode::Terminal);
+
+        // Reset to Kanban mode and right click the card
+        app.state.mode = Mode::Kanban;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 30, 3));
+
+        // Right click should stay in Kanban mode and open the detailed modal
+        assert_eq!(app.state.mode, Mode::Kanban);
+        let tracked_item = app.state.kanban_items.first().unwrap().clone();
+        assert_eq!(app.state.kanban_detail_uuid, Some(tracked_item.uuid));
+        app.state.kanban_detail_uuid = None;
+
+        // Reset to Kanban mode and clear pane_id to test fallback to detail modal
+        app.state.mode = Mode::Kanban;
+        app.state.kanban_items.clear();
+        let item = app.state.add_kanban_item(
+            "Fallback Task".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 30, 3));
+        assert_eq!(app.state.mode, Mode::Kanban);
+        assert_eq!(app.state.kanban_detail_uuid, Some(item.uuid.clone()));
+
+        // Click outside the modal to close it
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            1, // in sidebar area, which is outside detailed modal
+            1,
+        ));
+        assert_eq!(app.state.kanban_detail_uuid, None);
+
+        // Test scrolling over Kanban columns
+        app.state.kanban_items.clear();
+        for i in 0..5 {
+            app.state.add_kanban_item(
+                format!("Task {i}"),
+                None,
+                Some(crate::api::schema::KanbanStatus::Todo),
+                None,
+            );
+        }
+        app.state.kanban_selected_col = 0;
+        app.state.kanban_selected_row = 0;
+
+        // Scroll down
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 30, 3));
+        assert_eq!(app.state.kanban_selected_col, 0);
+        assert_eq!(app.state.kanban_selected_row, 1);
+
+        // Scroll up
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 30, 3));
+        assert_eq!(app.state.kanban_selected_col, 0);
+        assert_eq!(app.state.kanban_selected_row, 0);
     }
 }

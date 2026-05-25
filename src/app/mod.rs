@@ -505,6 +505,7 @@ impl App {
             kanban_selected_col: 0,
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
+            kanban_detail_scroll: 0,
             prefix_previous_mode: None,
         };
 

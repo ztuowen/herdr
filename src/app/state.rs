@@ -1166,6 +1166,7 @@ pub struct AppState {
     pub kanban_selected_col: usize,
     pub kanban_selected_row: usize,
     pub kanban_detail_uuid: Option<String>,
+    pub kanban_detail_scroll: u16,
     pub prefix_previous_mode: Option<Mode>,
 }
 
@@ -1581,6 +1582,60 @@ impl AppState {
             }
         }
     }
+
+    pub fn set_kanban_detail_uuid(&mut self, uuid: Option<String>) {
+        self.kanban_detail_uuid = uuid;
+        self.kanban_detail_scroll = 0;
+    }
+
+    pub fn kanban_detail_max_scroll(&self) -> u16 {
+        let Some(ref uuid) = self.kanban_detail_uuid else {
+            return 0;
+        };
+        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
+            return 0;
+        };
+        let Some(popup) = crate::ui::centered_popup_rect(
+            self.view.terminal_area,
+            crate::ui::KANBAN_DETAIL_MODAL_SIZE.0,
+            crate::ui::KANBAN_DETAIL_MODAL_SIZE.1,
+        ) else {
+            return 0;
+        };
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(popup);
+        if inner.height < 6 || inner.width < 4 {
+            return 0;
+        }
+        let rows = ratatui::layout::Layout::vertical([
+            ratatui::layout::Constraint::Length(1), // Header title
+            ratatui::layout::Constraint::Length(1), // Divider
+            ratatui::layout::Constraint::Length(1), // Card Title
+            ratatui::layout::Constraint::Length(1), // Status Badge
+            ratatui::layout::Constraint::Length(1), // UUID
+            ratatui::layout::Constraint::Min(1),    // Description
+            ratatui::layout::Constraint::Length(1), // Footer hint
+        ])
+        .split(inner);
+        let desc_area = rows[5];
+
+        let display_desc = if item.description.is_empty() {
+            "No description provided."
+        } else {
+            item.description.as_str()
+        };
+        let desc_lines = crate::ui::count_wrapped_lines(display_desc, desc_area.width as usize);
+        let total_lines = desc_lines + 1; // plus 1 for "Description:" heading
+        total_lines.saturating_sub(desc_area.height as usize) as u16
+    }
+
+    pub fn scroll_kanban_detail(&mut self, delta: i16) {
+        let max_scroll = self.kanban_detail_max_scroll();
+        let current = self.kanban_detail_scroll as i16;
+        self.kanban_detail_scroll =
+            current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
+    }
 }
 
 #[cfg(test)]
@@ -1727,6 +1782,7 @@ impl AppState {
             kanban_selected_col: 0,
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
+            kanban_detail_scroll: 0,
             prefix_previous_mode: None,
         }
     }

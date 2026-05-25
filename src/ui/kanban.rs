@@ -7,8 +7,9 @@ use ratatui::{
 };
 
 use super::widgets::{centered_popup_rect, render_panel_shell};
-use crate::app::state::Palette;
 use crate::app::AppState;
+
+pub(crate) const KANBAN_DETAIL_MODAL_SIZE: (u16, u16) = (80, 20);
 
 pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
@@ -164,18 +165,21 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     // Render detailed modal if app.kanban_detail_uuid is Some
     if let Some(ref uuid) = app.kanban_detail_uuid {
         if let Some(item) = app.kanban_items.iter().find(|it| it.uuid == *uuid) {
-            render_kanban_detail_modal(frame, area, item, p);
+            render_kanban_detail_modal(app, frame, area, item);
         }
     }
 }
 
 fn render_kanban_detail_modal(
+    app: &AppState,
     frame: &mut Frame,
     area: Rect,
     item: &crate::api::schema::KanbanItem,
-    p: &Palette,
 ) {
-    let Some(popup) = centered_popup_rect(area, 64, 15) else {
+    let p = &app.palette;
+    let Some(popup) =
+        centered_popup_rect(area, KANBAN_DETAIL_MODAL_SIZE.0, KANBAN_DETAIL_MODAL_SIZE.1)
+    else {
         return;
     };
 
@@ -247,7 +251,7 @@ fn render_kanban_detail_modal(
 
     // Description block
     let desc_title = Span::styled(
-        "Description:\n",
+        "Description:",
         Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
     );
     let display_desc = if item.description.is_empty() {
@@ -255,12 +259,38 @@ fn render_kanban_detail_modal(
     } else {
         item.description.as_str()
     };
-    let desc_text = Paragraph::new(vec![
-        Line::from(desc_title),
-        Line::from(Span::styled(display_desc, Style::default().fg(p.text))),
-    ])
-    .wrap(Wrap { trim: true });
-    frame.render_widget(desc_text, rows[5]);
+
+    let max_scroll = app.kanban_detail_max_scroll();
+    let metrics = crate::pane::ScrollMetrics {
+        offset_from_bottom: max_scroll.saturating_sub(app.kanban_detail_scroll) as usize,
+        max_offset_from_bottom: max_scroll as usize,
+        viewport_rows: rows[5].height.max(1) as usize,
+    };
+    let track = super::release_notes_scrollbar_rect(rows[5], metrics);
+    let desc_area = track
+        .map(|_| {
+            Rect::new(
+                rows[5].x,
+                rows[5].y,
+                rows[5].width.saturating_sub(1),
+                rows[5].height,
+            )
+        })
+        .unwrap_or(rows[5]);
+
+    let mut desc_lines = vec![Line::from(desc_title)];
+    for line in display_desc.split('\n') {
+        desc_lines.push(Line::from(Span::styled(line, Style::default().fg(p.text))));
+    }
+
+    let desc_text = Paragraph::new(desc_lines)
+        .wrap(Wrap { trim: true })
+        .scroll((app.kanban_detail_scroll, 0));
+    frame.render_widget(desc_text, desc_area);
+
+    if let Some(track) = track {
+        super::render_scrollbar(frame, metrics, track, p.overlay0, p.overlay1, "▐");
+    }
 
     // Footer hint
     let footer_hints = Line::from(vec![
@@ -284,4 +314,41 @@ fn render_kanban_detail_modal(
         Paragraph::new(footer_hints).alignment(ratatui::layout::Alignment::Center),
         rows[6],
     );
+}
+
+pub(crate) fn count_wrapped_lines(text: &str, width: usize) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    if width == 0 {
+        return 0;
+    }
+    let mut total_lines = 0;
+    for line in text.lines() {
+        if line.is_empty() {
+            total_lines += 1;
+            continue;
+        }
+        let mut current_width = 0;
+        let mut line_count = 1;
+        for word in line.split(' ') {
+            if word.is_empty() {
+                current_width += 1;
+                if current_width > width {
+                    line_count += 1;
+                    current_width = 1;
+                }
+                continue;
+            }
+            let word_width = UnicodeWidthStr::width(word);
+            if current_width == 0 {
+                current_width = word_width;
+            } else if current_width + 1 + word_width <= width {
+                current_width += 1 + word_width;
+            } else {
+                line_count += 1;
+                current_width = word_width;
+            }
+        }
+        total_lines += line_count;
+    }
+    total_lines
 }

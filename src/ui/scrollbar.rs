@@ -132,7 +132,7 @@ pub(crate) fn scrollbar_offset_from_drag_row(
     scrollbar_offset_from_thumb_top(metrics, track, desired_top)
 }
 
-pub(super) fn render_scrollbar(
+pub(crate) fn render_scrollbar(
     frame: &mut Frame,
     metrics: crate::pane::ScrollMetrics,
     track: Rect,

@@ -25,7 +25,9 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
+pub(crate) use self::kanban::count_wrapped_lines;
 use self::kanban::render_kanban;
+pub(crate) use self::kanban::KANBAN_DETAIL_MODAL_SIZE;
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,
@@ -47,8 +49,9 @@ pub(crate) use self::release_notes::{
 };
 use self::release_notes::{render_product_announcement_overlay, render_release_notes_overlay};
 pub(crate) use self::scrollbar::{
-    pane_scrollbar_rect, release_notes_scrollbar_rect, scrollbar_offset_from_drag_row,
-    scrollbar_offset_from_row, scrollbar_thumb_grab_offset, should_show_scrollbar,
+    pane_scrollbar_rect, release_notes_scrollbar_rect, render_scrollbar,
+    scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
+    should_show_scrollbar,
 };
 use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};

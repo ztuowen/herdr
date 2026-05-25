@@ -64,19 +64,32 @@ impl AppState {
 
         if self.mode == Mode::Kanban {
             if self.kanban_detail_uuid.is_some() {
-                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                    let popup = crate::ui::centered_popup_rect(self.view.terminal_area, 64, 14);
-                    if let Some(rect) = popup {
-                        let inside = mouse.column >= rect.x
-                            && mouse.column < rect.x + rect.width
-                            && mouse.row >= rect.y
-                            && mouse.row < rect.y + rect.height;
-                        if !inside {
-                            self.kanban_detail_uuid = None;
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let popup = crate::ui::centered_popup_rect(
+                            self.view.terminal_area,
+                            crate::ui::KANBAN_DETAIL_MODAL_SIZE.0,
+                            crate::ui::KANBAN_DETAIL_MODAL_SIZE.1,
+                        );
+                        if let Some(rect) = popup {
+                            let inside = mouse.column >= rect.x
+                                && mouse.column < rect.x + rect.width
+                                && mouse.row >= rect.y
+                                && mouse.row < rect.y + rect.height;
+                            if !inside {
+                                self.set_kanban_detail_uuid(None);
+                            }
+                        } else {
+                            self.set_kanban_detail_uuid(None);
                         }
-                    } else {
-                        self.kanban_detail_uuid = None;
                     }
+                    MouseEventKind::ScrollUp => {
+                        self.scroll_kanban_detail(-3);
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.scroll_kanban_detail(3);
+                    }
+                    _ => {}
                 }
                 return None;
             }
@@ -100,7 +113,7 @@ impl AppState {
                         self.kanban_selected_row = row_idx;
 
                         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-                            self.kanban_detail_uuid = Some(item.uuid.clone());
+                            self.set_kanban_detail_uuid(Some(item.uuid.clone()));
                         } else {
                             let mut navigated = false;
                             if let Some(ref pane_id_str) = item.pane_id {
@@ -118,7 +131,7 @@ impl AppState {
                                 }
                             }
                             if !navigated {
-                                self.kanban_detail_uuid = Some(item.uuid.clone());
+                                self.set_kanban_detail_uuid(Some(item.uuid.clone()));
                             }
                         }
                     }
@@ -2868,7 +2881,7 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Kanban);
         let tracked_item = app.state.kanban_items.first().unwrap().clone();
         assert_eq!(app.state.kanban_detail_uuid, Some(tracked_item.uuid));
-        app.state.kanban_detail_uuid = None;
+        app.state.set_kanban_detail_uuid(None);
 
         // Reset to Kanban mode and clear pane_id to test fallback to detail modal
         app.state.mode = Mode::Kanban;
@@ -2914,5 +2927,31 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 30, 3));
         assert_eq!(app.state.kanban_selected_col, 0);
         assert_eq!(app.state.kanban_selected_row, 0);
+
+        // Test scrolling when detailed modal is open
+        let item = app.state.add_kanban_item(
+            "Scroll Task".to_string(),
+            Some("A very long description. ".repeat(50)),
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        app.state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+        app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
+
+        assert_eq!(app.state.kanban_detail_scroll, 0);
+        let max_scroll = app.state.kanban_detail_max_scroll();
+        assert!(max_scroll > 0);
+
+        // Scroll down in modal using mouse wheel
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 40, 10));
+        assert_eq!(app.state.kanban_detail_scroll, 3);
+
+        // Scroll up in modal using mouse wheel
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 40, 10));
+        assert_eq!(app.state.kanban_detail_scroll, 0);
+
+        // Click outside (e.g. sidebar col 1) should close detailed view
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1, 1));
+        assert_eq!(app.state.kanban_detail_uuid, None);
     }
 }

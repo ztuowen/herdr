@@ -796,7 +796,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
     if state.kanban_detail_uuid.is_some() {
         match key.code {
             KeyCode::Esc => {
-                state.kanban_detail_uuid = None;
+                state.set_kanban_detail_uuid(None);
             }
             KeyCode::Char('c') | KeyCode::Char('y') => {
                 if let Some(ref uuid) = state.kanban_detail_uuid {
@@ -805,7 +805,19 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
             }
             KeyCode::Char('d') | KeyCode::Delete => {
                 state.kanban_delete_selected();
-                state.kanban_detail_uuid = None;
+                state.set_kanban_detail_uuid(None);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.scroll_kanban_detail(-1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.scroll_kanban_detail(1);
+            }
+            KeyCode::PageUp => {
+                state.scroll_kanban_detail(-10);
+            }
+            KeyCode::PageDown => {
+                state.scroll_kanban_detail(10);
             }
             _ => {}
         }
@@ -851,7 +863,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
             let col = state.kanban_selected_col;
             let items = state.kanban_items_in_column(col);
             if let Some(item) = items.get(state.kanban_selected_row) {
-                state.kanban_detail_uuid = Some(item.uuid.clone());
+                state.set_kanban_detail_uuid(Some(item.uuid.clone()));
             }
         }
         KeyCode::Char('d') | KeyCode::Delete => {
@@ -1379,7 +1391,7 @@ mod tests {
         );
 
         // 3. Open detailed view
-        state.kanban_detail_uuid = Some(item.uuid.clone());
+        state.set_kanban_detail_uuid(Some(item.uuid.clone()));
         state.request_clipboard_write = None;
 
         // 4. Test copy in detailed view using 'c'
@@ -1408,5 +1420,80 @@ mod tests {
                 .map(|b| String::from_utf8_lossy(b).into_owned()),
             Some(item.uuid.clone())
         );
+    }
+
+    #[test]
+    fn test_kanban_detail_scrolling() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::Kanban;
+        state.kanban_items.clear();
+        let item = state.add_kanban_item(
+            "Scroll Task".to_string(),
+            Some("A very long description. ".repeat(50)),
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        state.view.terminal_area = Rect::new(0, 0, 80, 24);
+        state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+
+        assert_eq!(state.kanban_detail_scroll, 0);
+
+        // Calculate max scroll first
+        let max_scroll = state.kanban_detail_max_scroll();
+        assert!(
+            max_scroll > 0,
+            "max_scroll should be greater than 0, got {}",
+            max_scroll
+        );
+
+        // Scroll down 1 using 'j'
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 1);
+
+        // Scroll down 1 using Down arrow
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 2);
+
+        // Scroll up 1 using 'k'
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 1);
+
+        // Scroll up 1 using Up arrow
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 0);
+
+        // Scroll up at 0 shouldn't underflow
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 0);
+
+        // PageDown scroll
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, max_scroll.min(10));
+
+        // PageUp scroll back to 0
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_detail_scroll, 0);
     }
 }

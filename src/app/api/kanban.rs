@@ -18,11 +18,18 @@ impl App {
                 }
             }
         }
+        let terminal_id = params.terminal_id.map(|tid| {
+            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
+                resolved.terminal_id
+            } else {
+                tid
+            }
+        });
         let item = self.state.add_kanban_item(
             params.title,
             params.description,
             params.status,
-            params.pane_id,
+            terminal_id,
         );
         self.schedule_session_save();
         encode_success(id, ResponseResult::KanbanItem { item })
@@ -59,12 +66,19 @@ impl App {
                 }
             }
         }
+        let terminal_id = params.terminal_id.map(|tid| {
+            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
+                resolved.terminal_id
+            } else {
+                tid
+            }
+        });
         match self.state.update_kanban_item(
             &params.uuid,
             params.title,
             params.description,
             params.status,
-            params.pane_id,
+            terminal_id,
         ) {
             Some(item) => {
                 self.schedule_session_save();
@@ -126,7 +140,7 @@ mod tests {
                 title: "Test Kanban".into(),
                 description: Some(plan_path.clone()),
                 status: None,
-                pane_id: None,
+                terminal_id: None,
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&add_res).unwrap();
@@ -153,7 +167,7 @@ mod tests {
                 title: Some("Updated Title".into()),
                 description: None,
                 status: Some(crate::api::schema::KanbanStatus::InProgress),
-                pane_id: None,
+                terminal_id: None,
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&update_res).unwrap();
@@ -211,7 +225,7 @@ mod tests {
                 title: "Test Plan Validation".into(),
                 description: Some(plan_path.clone()),
                 status: None,
-                pane_id: None,
+                terminal_id: None,
             },
         );
         assert!(add_res.contains("kanban_description_not_accessible"));
@@ -224,7 +238,7 @@ mod tests {
                 title: "Test Plan Validation".into(),
                 description: Some(plan_path.clone()),
                 status: None,
-                pane_id: None,
+                terminal_id: None,
             },
         );
         assert!(add_res2.contains("\"type\":\"kanban_item\""));

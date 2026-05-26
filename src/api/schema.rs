@@ -958,6 +958,18 @@ pub enum AgentStatus {
     Unknown,
 }
 
+impl AgentStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Working => "working",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -1000,7 +1012,24 @@ pub struct KanbanItem {
     pub description: String,
     pub status: KanbanStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane_id: Option<String>,
+    pub terminal_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanPaneStatus {
+    pub exists: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_status: Option<AgentStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1011,7 +1040,7 @@ pub struct KanbanAddParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<KanbanStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane_id: Option<String>,
+    pub terminal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1030,7 +1059,7 @@ pub struct KanbanUpdateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<KanbanStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane_id: Option<String>,
+    pub terminal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

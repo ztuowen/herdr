@@ -282,6 +282,7 @@ fn render_kanban_detail_modal(
         Constraint::Length(1), // Card Title
         Constraint::Length(1), // Status Badge
         Constraint::Length(1), // UUID
+        Constraint::Length(1), // Associated Terminal
         Constraint::Min(1),    // Description
         Constraint::Length(1), // Footer hint
     ])
@@ -336,6 +337,47 @@ fn render_kanban_detail_modal(
     ]);
     frame.render_widget(Paragraph::new(uuid_line), rows[4]);
 
+    // Associated Terminal / Pane status
+    let terminal_line = if let Some(ref tid) = item.terminal_id {
+        let status = app.kanban_item_pane_status(tid);
+        if status.exists {
+            let ws_lbl = status.workspace_id.as_deref().unwrap_or("?");
+            let tab_lbl = status.tab_id.as_deref().unwrap_or("?");
+            let cwd_lbl = status.cwd.as_deref().unwrap_or("?");
+            let agent_lbl = status.agent_label.as_deref().unwrap_or("none");
+            let agent_status_str = status.agent_status.map(|s| s.as_str()).unwrap_or("Unknown");
+            Line::from(vec![
+                Span::styled("Terminal: ", Style::default().fg(p.overlay0)),
+                Span::styled(
+                    "[Active] ",
+                    Style::default().fg(p.green).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "WS: {} ({})  CWD: {}  Agent: {} [{}]",
+                        ws_lbl, tab_lbl, cwd_lbl, agent_lbl, agent_status_str
+                    ),
+                    Style::default().fg(p.text),
+                ),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Terminal: ", Style::default().fg(p.overlay0)),
+                Span::styled(
+                    "[Closed] ",
+                    Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("(ID: {})", tid), Style::default().fg(p.text)),
+            ])
+        }
+    } else {
+        Line::from(vec![
+            Span::styled("Terminal: ", Style::default().fg(p.overlay0)),
+            Span::styled("None", Style::default().fg(p.overlay1)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(terminal_line), rows[5]);
+
     // Description block
     let desc_title = Span::styled(
         "Description:",
@@ -347,21 +389,28 @@ fn render_kanban_detail_modal(
     let metrics = crate::pane::ScrollMetrics {
         offset_from_bottom: max_scroll.saturating_sub(app.kanban_detail_scroll) as usize,
         max_offset_from_bottom: max_scroll as usize,
-        viewport_rows: rows[5].height.max(1) as usize,
+        viewport_rows: rows[6].height.max(1) as usize,
     };
-    let track = super::release_notes_scrollbar_rect(rows[5], metrics);
+    let track = super::release_notes_scrollbar_rect(rows[6], metrics);
     let desc_area = track
         .map(|_| {
             Rect::new(
-                rows[5].x,
-                rows[5].y,
-                rows[5].width.saturating_sub(1),
-                rows[5].height,
+                rows[6].x,
+                rows[6].y,
+                rows[6].width.saturating_sub(1),
+                rows[6].height,
             )
         })
-        .unwrap_or(rows[5]);
+        .unwrap_or(rows[6]);
 
     let mut desc_lines = vec![Line::from(desc_title)];
+    if !item.description.is_empty() {
+        desc_lines.push(Line::from(Span::styled(
+            &item.description,
+            Style::default().fg(p.overlay0),
+        )));
+        desc_lines.push(Line::from(""));
+    }
     if is_error {
         desc_lines.push(Line::from(Span::styled(
             display_desc,
@@ -402,7 +451,7 @@ fn render_kanban_detail_modal(
     ]);
     frame.render_widget(
         Paragraph::new(footer_hints).alignment(ratatui::layout::Alignment::Center),
-        rows[6],
+        rows[7],
     );
 }
 

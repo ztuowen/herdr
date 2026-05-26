@@ -165,9 +165,9 @@ impl AppState {
                             self.set_kanban_detail_uuid(Some(item.uuid.clone()));
                         } else {
                             let mut navigated = false;
-                            if let Some(ref pane_id_str) = item.pane_id {
+                            if let Some(ref term_id_str) = item.terminal_id {
                                 if let Some((ws_idx, tab_idx, pane_id)) =
-                                    self.find_pane_by_id_str(pane_id_str)
+                                    self.find_pane_by_terminal_id_str(term_id_str)
                                 {
                                     self.focus_navigator_target(
                                         crate::app::state::NavigatorTarget::Pane {
@@ -2907,14 +2907,16 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Kanban;
 
-        // Add an item with pane_id
-        let pane_id_str = format!("p_{}", pane_id.raw());
+        // Add an item with terminal_id
+        let term_id_str = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .to_string();
         app.state.kanban_items.clear();
         app.state.add_kanban_item(
             "Tracked Task".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
-            Some(pane_id_str.clone()),
+            Some(term_id_str),
         );
 
         app.state.view.terminal_area = Rect::new(26, 0, 84, 20);

@@ -1323,14 +1323,14 @@ impl AppState {
         title: String,
         description: Option<String>,
         status: Option<crate::api::schema::KanbanStatus>,
-        pane_id: Option<String>,
+        terminal_id: Option<String>,
     ) -> crate::api::schema::KanbanItem {
         let item = crate::api::schema::KanbanItem {
             uuid: uuid::Uuid::new_v4().to_string(),
             title,
             description: description.unwrap_or_default(),
             status: status.unwrap_or(crate::api::schema::KanbanStatus::Todo),
-            pane_id,
+            terminal_id,
         };
         self.kanban_items.push(item.clone());
         self.mark_session_dirty();
@@ -1343,7 +1343,7 @@ impl AppState {
         title: Option<String>,
         description: Option<String>,
         status: Option<crate::api::schema::KanbanStatus>,
-        pane_id: Option<String>,
+        terminal_id: Option<String>,
     ) -> Option<crate::api::schema::KanbanItem> {
         let cloned_item = {
             let item = self.kanban_items.iter_mut().find(|it| it.uuid == uuid)?;
@@ -1356,8 +1356,8 @@ impl AppState {
             if let Some(s) = status {
                 item.status = s;
             }
-            if pane_id.is_some() {
-                item.pane_id = pane_id;
+            if terminal_id.is_some() {
+                item.terminal_id = terminal_id;
             }
             item.clone()
         };
@@ -1365,50 +1365,65 @@ impl AppState {
         Some(cloned_item)
     }
 
+    pub fn find_pane_by_terminal_id_str(
+        &self,
+        term_id_str: &str,
+    ) -> Option<(usize, usize, crate::layout::PaneId)> {
+        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
+            for (tab_idx, tab) in ws.tabs.iter().enumerate() {
+                for (&pane_id, pane_state) in &tab.panes {
+                    if pane_state.attached_terminal_id.to_string() == term_id_str {
+                        return Some((ws_idx, tab_idx, pane_id));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn kanban_item_pane_status(
+        &self,
+        term_id_str: &str,
+    ) -> crate::api::schema::KanbanPaneStatus {
+        if let Some((ws_idx, tab_idx, pane_id)) = self.find_pane_by_terminal_id_str(term_id_str) {
+            if let Some(ws) = self.workspaces.get(ws_idx) {
+                if let Some(pane_state) = ws.pane_state(pane_id) {
+                    if let Some(terminal_state) =
+                        self.terminals.get(&pane_state.attached_terminal_id)
+                    {
+                        let agent_status = crate::app::api_helpers::pane_agent_status(
+                            terminal_state.state,
+                            pane_state.seen,
+                        );
+                        return crate::api::schema::KanbanPaneStatus {
+                            exists: true,
+                            workspace_id: Some(ws.id.clone()),
+                            tab_id: Some(format!("{}:{}", ws.id, tab_idx + 1)),
+                            cwd: Some(terminal_state.cwd.to_string_lossy().to_string()),
+                            agent_status: Some(agent_status),
+                            agent_label: terminal_state.effective_agent_label().map(str::to_string),
+                            revision: Some(terminal_state.revision),
+                        };
+                    }
+                }
+            }
+        }
+        crate::api::schema::KanbanPaneStatus {
+            exists: false,
+            workspace_id: None,
+            tab_id: None,
+            cwd: None,
+            agent_status: None,
+            agent_label: None,
+            revision: None,
+        }
+    }
+
     pub fn delete_kanban_item(&mut self, uuid: &str) -> Option<crate::api::schema::KanbanItem> {
         let pos = self.kanban_items.iter().position(|it| it.uuid == uuid)?;
         let removed = self.kanban_items.remove(pos);
         self.mark_session_dirty();
         Some(removed)
-    }
-
-    pub fn parse_workspace_id(&self, id: &str) -> Option<usize> {
-        self.workspaces
-            .iter()
-            .position(|workspace| workspace.id == id)
-            .or_else(|| id.strip_prefix("w_")?.parse::<usize>().ok()?.checked_sub(1))
-            .or_else(|| id.parse::<usize>().ok()?.checked_sub(1))
-    }
-
-    pub fn find_pane_by_id_str(&self, id: &str) -> Option<(usize, usize, crate::layout::PaneId)> {
-        if let Some(rest) = id.strip_prefix("p_") {
-            if let Some((ws_raw, pane_raw)) = rest.rsplit_once('_') {
-                let ws_idx = self.parse_workspace_id(ws_raw)?;
-                let pane_id = crate::layout::PaneId::from_raw(pane_raw.parse::<u32>().ok()?);
-                let ws = self.workspaces.get(ws_idx)?;
-                let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
-                return Some((ws_idx, tab_idx, pane_id));
-            }
-
-            let pane_id = crate::layout::PaneId::from_raw(rest.parse::<u32>().ok()?);
-            for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-                if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
-                    return Some((ws_idx, tab_idx, pane_id));
-                }
-            }
-            return None;
-        }
-
-        let (ws_raw, pane_number_raw) = id.rsplit_once('-')?;
-        let ws_idx = self.parse_workspace_id(ws_raw)?;
-        let pane_number = pane_number_raw.parse::<usize>().ok()?;
-        let ws = self.workspaces.get(ws_idx)?;
-        let pane_id = ws
-            .public_pane_numbers
-            .iter()
-            .find_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id))?;
-        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
-        Some((ws_idx, tab_idx, pane_id))
     }
 
     pub fn kanban_item_at(
@@ -1665,7 +1680,7 @@ impl AppState {
         let inner = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
             .inner(popup);
-        if inner.height < 6 || inner.width < 4 {
+        if inner.height < 7 || inner.width < 4 {
             return 0;
         }
         let rows = ratatui::layout::Layout::vertical([
@@ -1674,15 +1689,20 @@ impl AppState {
             ratatui::layout::Constraint::Length(1), // Card Title
             ratatui::layout::Constraint::Length(1), // Status Badge
             ratatui::layout::Constraint::Length(1), // UUID
+            ratatui::layout::Constraint::Length(1), // Associated Terminal
             ratatui::layout::Constraint::Min(1),    // Description
             ratatui::layout::Constraint::Length(1), // Footer hint
         ])
         .split(inner);
-        let desc_area = rows[5];
+        let desc_area = rows[6];
 
         let (display_desc, _) = crate::ui::get_description_text(&item.description);
-        let desc_lines = crate::ui::count_wrapped_lines(&display_desc, desc_area.width as usize);
-        let total_lines = desc_lines + 1; // plus 1 for "Description:" heading
+        let mut total_lines =
+            crate::ui::count_wrapped_lines(&display_desc, desc_area.width as usize) + 1;
+        if !item.description.is_empty() {
+            total_lines +=
+                crate::ui::count_wrapped_lines(&item.description, desc_area.width as usize) + 1;
+        }
         total_lines.saturating_sub(desc_area.height as usize) as u16
     }
 
@@ -2046,15 +2066,6 @@ mod tests {
         assert_eq!(state.kanban_selected_col, 2);
         assert_eq!(state.kanban_items_in_column(2).len(), 1);
 
-        // find_pane_by_id_str test
-        let ws = Workspace::test_new("ws1");
-        let pane_id = ws.tabs[0].root_pane;
-        state.workspaces = vec![ws];
-
-        let pane_id_str = format!("p_{}", pane_id.raw());
-        let res = state.find_pane_by_id_str(&pane_id_str);
-        assert_eq!(res, Some((0, 0, pane_id)));
-
         // kanban_item_at test
         state.view.terminal_area = Rect::new(0, 0, 100, 20);
         state.kanban_items.clear();
@@ -2075,5 +2086,68 @@ mod tests {
         let deleted = state.delete_kanban_item(&item.uuid).unwrap();
         assert_eq!(deleted.uuid, item.uuid);
         assert_eq!(state.kanban_items.len(), 0);
+    }
+
+    #[test]
+    fn test_kanban_detail_max_scroll_with_path() {
+        let mut state = AppState::test_new();
+        state.view.terminal_area = Rect::new(0, 0, 100, 24);
+
+        // Create a temporary file to use as description
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!("herdr-test-scroll-max-{}.md", uuid::Uuid::new_v4()));
+        let desc_text = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
+        std::fs::write(&plan_file, desc_text).unwrap();
+        let plan_path = plan_file.to_string_lossy().to_string();
+
+        let item = state.add_kanban_item(
+            "Test Task".to_string(),
+            Some(plan_path.clone()),
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+
+        // Max scroll should correctly calculate the height including the path
+        let max_scroll = state.kanban_detail_max_scroll();
+
+        // Reducing terminal area height should increase max scroll since fewer lines fit
+        state.view.terminal_area = Rect::new(0, 0, 100, 15);
+        let max_scroll_small = state.kanban_detail_max_scroll();
+        assert!(max_scroll_small > max_scroll);
+
+        let _ = std::fs::remove_file(plan_file);
+    }
+
+    #[test]
+    fn test_kanban_pane_status() {
+        let mut state = AppState::test_new();
+        let ws = Workspace::test_new("ws1");
+        let pane_id = ws.tabs[0].root_pane;
+        let attached_terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        state.workspaces = vec![ws];
+        state.ensure_test_terminals();
+
+        // 1. Check pane status for nonexistent terminal
+        let nonexistent_status = state.kanban_item_pane_status("term_nonexistent");
+        assert!(!nonexistent_status.exists);
+
+        // 2. Check pane status for existing terminal
+        let terminal_id_str = attached_terminal_id.to_string();
+        let status = state.kanban_item_pane_status(&terminal_id_str);
+        assert!(status.exists);
+        assert_eq!(
+            status.workspace_id.as_deref(),
+            Some(state.workspaces[0].id.as_str())
+        );
+        assert_eq!(
+            status.tab_id.as_deref(),
+            Some(format!("{}:1", state.workspaces[0].id).as_str())
+        );
+        assert_eq!(
+            status.agent_status,
+            Some(crate::api::schema::AgentStatus::Unknown)
+        );
     }
 }

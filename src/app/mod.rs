@@ -3285,7 +3285,7 @@ mod tests {
             title: "Mock Title".to_string(),
             description: "Mock Description".to_string(),
             status: crate::api::schema::KanbanStatus::InProgress,
-            pane_id: None,
+            terminal_id: None,
         };
 
         let snap = crate::persist::SessionSnapshot {

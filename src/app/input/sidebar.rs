@@ -180,8 +180,7 @@ impl AppState {
         Rect::new(footer.x, footer.y, width, footer.height)
     }
 
-    pub(crate) fn sidebar_kanban_button_rect(&self) -> Rect {
-        let sidebar = self.view.sidebar_rect;
+    pub(crate) fn sidebar_kanban_button_rect_for(&self, sidebar: Rect) -> Rect {
         if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {
             return Rect::default();
         }
@@ -189,7 +188,17 @@ impl AppState {
         if ws_area == Rect::default() || ws_area.height == 0 {
             return Rect::default();
         }
-        Rect::new(ws_area.x, ws_area.y, ws_area.width, 1)
+        let height =
+            if ws_area.height >= crate::ui::MIN_HEIGHT_FOR_EXPANDED_KANBAN && ws_area.width >= 16 {
+                5
+            } else {
+                1
+            };
+        Rect::new(ws_area.x, ws_area.y, ws_area.width, height)
+    }
+
+    pub(crate) fn sidebar_kanban_button_rect(&self) -> Rect {
+        self.sidebar_kanban_button_rect_for(self.view.sidebar_rect)
     }
 
     pub(crate) fn global_launcher_rect(&self) -> Rect {

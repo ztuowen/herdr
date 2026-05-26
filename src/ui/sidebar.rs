@@ -13,7 +13,18 @@ use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
 
-const WORKSPACE_SECTION_HEADER_ROWS: u16 = 3;
+#[cfg(test)]
+pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 999;
+#[cfg(not(test))]
+pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 8;
+
+pub(crate) fn workspace_section_header_rows(ws_area: Rect) -> u16 {
+    if ws_area.height >= MIN_HEIGHT_FOR_EXPANDED_KANBAN && ws_area.width >= 16 {
+        7
+    } else {
+        3
+    }
+}
 const AGENT_PANEL_HEADER_ROWS: u16 = 3;
 
 pub(crate) struct AgentPanelEntry {
@@ -33,14 +44,14 @@ fn sidebar_section_heights(total_h: u16, split_ratio: f32) -> (u16, u16) {
         return (0, 0);
     }
 
-    if total_h < 6 {
+    if total_h < 10 {
         let ws_h = total_h.div_ceil(2);
         return (ws_h, total_h.saturating_sub(ws_h));
     }
 
     let ratio = split_ratio.clamp(0.1, 0.9);
     let ws_h = ((total_h as f32) * ratio).round() as u16;
-    let ws_h = ws_h.clamp(3, total_h.saturating_sub(3));
+    let ws_h = ws_h.clamp(7, total_h.saturating_sub(3));
     let detail_h = total_h.saturating_sub(ws_h);
     (ws_h, detail_h)
 }
@@ -437,11 +448,12 @@ pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
 }
 
 pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= WORKSPACE_SECTION_HEADER_ROWS {
+    let header_rows = workspace_section_header_rows(area);
+    if area.width == 0 || area.height <= header_rows {
         return Rect::default();
     }
 
-    let body_y = area.y.saturating_add(WORKSPACE_SECTION_HEADER_ROWS);
+    let body_y = area.y.saturating_add(header_rows);
     let footer_y = area.y + area.height.saturating_sub(1);
     let body_height = footer_y.saturating_sub(body_y);
     let body_width = area.width.saturating_sub(u16::from(has_scrollbar));
@@ -856,46 +868,137 @@ fn render_workspace_list(
             let done_count = app.kanban_items_in_column(3).len();
 
             let is_active = app.mode == Mode::Kanban;
-            let kanban_style = if is_active {
-                Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+
+            if kanban_rect.height == 5 {
+                // Render Title: ── ⚏ K A N B A N ──
+                let title_text = " ⚏ K A N B A N ";
+                let title_len = title_text.chars().count();
+                let width = kanban_rect.width as usize;
+                let padding = width.saturating_sub(title_len);
+                let left_pad = padding / 2;
+                let right_pad = padding.saturating_sub(left_pad);
+                let line_style = Style::default().fg(p.surface1);
+                let title_style = if is_active {
+                    Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)
+                };
+                let left_line = "─".repeat(left_pad);
+                let right_line = "─".repeat(right_pad);
+                let title_line = Line::from(vec![
+                    Span::styled(left_line, line_style),
+                    Span::styled(title_text, title_style),
+                    Span::styled(right_line, line_style),
+                ]);
+                frame.render_widget(
+                    Paragraph::new(title_line),
+                    Rect::new(kanban_rect.x, kanban_rect.y, kanban_rect.width, 1),
+                );
+
+                // Render 4 status rows
+                let statuses = [
+                    ("todo", todo_count, p.overlay1),
+                    ("in progress", in_progress_count, p.yellow),
+                    ("need review", review_count, p.peach),
+                    ("done", done_count, p.green),
+                ];
+
+                for (idx, (name, count, color)) in statuses.into_iter().enumerate() {
+                    let row_y = kanban_rect.y + 1 + idx as u16;
+                    let is_row_selected = is_active && app.kanban_selected_col == idx;
+
+                    let row_bg_style = if is_row_selected {
+                        Style::default().bg(p.surface0)
+                    } else {
+                        Style::default()
+                    };
+
+                    if is_row_selected {
+                        let buf = frame.buffer_mut();
+                        for x in kanban_rect.x..kanban_rect.x + kanban_rect.width {
+                            buf[(x, row_y)].set_style(row_bg_style);
+                        }
+                    }
+
+                    let icon = " ⚏ ";
+                    let name_style = if is_row_selected {
+                        Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(p.subtext0)
+                    };
+                    let count_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+
+                    let label_text = format!("{}{}", icon, name);
+                    let label_len = label_text.chars().count();
+                    let count_text = count.to_string();
+                    let count_len = count_text.len();
+                    let spaces_needed = (kanban_rect.width as usize)
+                        .saturating_sub(label_len)
+                        .saturating_sub(count_len)
+                        .saturating_sub(1);
+
+                    let line_spans = vec![
+                        Span::styled(label_text, name_style.patch(row_bg_style)),
+                        Span::styled(" ".repeat(spaces_needed), row_bg_style),
+                        Span::styled(count_text, count_style.patch(row_bg_style)),
+                        Span::styled(" ", row_bg_style),
+                    ];
+
+                    frame.render_widget(
+                        Paragraph::new(Line::from(line_spans)),
+                        Rect::new(kanban_rect.x, row_y, kanban_rect.width, 1),
+                    );
+                }
             } else {
-                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD)
-            };
+                // Render original compact single-row design
+                let kanban_style = if is_active {
+                    Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD)
+                };
 
-            let spans = vec![
-                Span::styled(" ⚏ kanban", kanban_style),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    todo_count.to_string(),
-                    Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    in_progress_count.to_string(),
-                    Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    review_count.to_string(),
-                    Style::default().fg(p.peach).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    done_count.to_string(),
-                    Style::default().fg(p.green).add_modifier(Modifier::BOLD),
-                ),
-            ];
+                let spans = vec![
+                    Span::styled(" ⚏ kanban", kanban_style),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(
+                        todo_count.to_string(),
+                        Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(
+                        in_progress_count.to_string(),
+                        Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(
+                        review_count.to_string(),
+                        Style::default().fg(p.peach).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(
+                        done_count.to_string(),
+                        Style::default().fg(p.green).add_modifier(Modifier::BOLD),
+                    ),
+                ];
 
-            frame.render_widget(Paragraph::new(Line::from(spans)), kanban_rect);
+                frame.render_widget(Paragraph::new(Line::from(spans)), kanban_rect);
+            }
         }
     }
-    if area.height > 1 {
+
+    let spaces_y = if let Some(h) = app.sidebar_kanban_button_rect().height.checked_sub(1) {
+        area.y + 1 + h
+    } else {
+        area.y + 1
+    };
+
+    if area.height > spaces_y - area.y {
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
                 " spaces",
                 Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
             )])),
-            Rect::new(area.x, area.y + 1, area.width, 1),
+            Rect::new(area.x, spaces_y, area.width, 1),
         );
     }
 

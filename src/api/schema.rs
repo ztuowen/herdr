@@ -959,6 +959,8 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
+    // Allowed because this helper is part of the schema API surface for external callers/cues.
+    #[allow(dead_code)]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Idle => "idle",

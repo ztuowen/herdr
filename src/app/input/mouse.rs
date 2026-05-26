@@ -101,12 +101,41 @@ impl AppState {
                                     ratatui::layout::Constraint::Length(1), // Card Title
                                     ratatui::layout::Constraint::Length(1), // Status Badge
                                     ratatui::layout::Constraint::Length(1), // UUID
+                                    ratatui::layout::Constraint::Length(1), // Associated Terminal
                                     ratatui::layout::Constraint::Min(1),    // Description
                                     ratatui::layout::Constraint::Length(1), // Footer hint
                                 ])
                                 .split(inner);
 
-                                let footer_row = rows[6];
+                                // Check if user clicked on the terminal row (rows[5])
+                                let terminal_row = rows[5];
+                                if mouse.row == terminal_row.y {
+                                    if let Some(ref uuid) = self.kanban_detail_uuid {
+                                        if let Some(item) =
+                                            self.kanban_items.iter().find(|it| it.uuid == *uuid)
+                                        {
+                                            if let Some(ref tid) = item.terminal_id {
+                                                let status = self.kanban_item_pane_status(tid);
+                                                if status.exists {
+                                                    if let Some((ws_idx, tab_idx, pane_id)) =
+                                                        self.find_pane_by_terminal_id_str(tid)
+                                                    {
+                                                        self.focus_navigator_target(
+                                                            crate::app::state::NavigatorTarget::Pane {
+                                                                ws_idx,
+                                                                tab_idx,
+                                                                pane_id,
+                                                            },
+                                                        );
+                                                        self.set_kanban_detail_uuid(None);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                let footer_row = rows[7];
                                 if mouse.row == footer_row.y {
                                     let text_len = 54;
                                     let x_start = footer_row.x
@@ -2950,7 +2979,32 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Kanban);
         let tracked_item = app.state.kanban_items.first().unwrap().clone();
         assert_eq!(app.state.kanban_detail_uuid, Some(tracked_item.uuid));
-        app.state.set_kanban_detail_uuid(None);
+        // Insert active terminal state to make the terminal clickable/jumpable
+        let terminal_state = crate::terminal::TerminalState::new(
+            app.state.workspaces[0].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone(),
+            std::path::PathBuf::from("/tmp"),
+        );
+        app.state.terminals.insert(
+            app.state.workspaces[0].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone(),
+            terminal_state,
+        );
+
+        // Adjust terminal area size to 100x30 to make the centered popup calculations predictable
+        app.state.view.terminal_area = Rect::new(0, 0, 100, 30);
+
+        // Click on the terminal row (y = 9, x = 20) inside the popup
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 20, 9));
+
+        // Click should jump to Terminal mode, focus the pane, and close detail modal
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.kanban_detail_uuid, None);
+
+        // Restore terminal area for the rest of the test
+        app.state.view.terminal_area = Rect::new(26, 0, 84, 20);
 
         // Reset to Kanban mode and clear pane_id to test fallback to detail modal
         app.state.mode = Mode::Kanban;

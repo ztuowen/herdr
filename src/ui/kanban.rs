@@ -341,33 +341,25 @@ fn render_kanban_detail_modal(
     let terminal_line = if let Some(ref tid) = item.terminal_id {
         let status = app.kanban_item_pane_status(tid);
         if status.exists {
-            let ws_lbl = status.workspace_id.as_deref().unwrap_or("?");
-            let tab_lbl = status.tab_id.as_deref().unwrap_or("?");
-            let cwd_lbl = status.cwd.as_deref().unwrap_or("?");
-            let agent_lbl = status.agent_label.as_deref().unwrap_or("none");
-            let agent_status_str = status.agent_status.map(|s| s.as_str()).unwrap_or("Unknown");
+            let agent_lbl = status
+                .agent_label
+                .clone()
+                .unwrap_or_else(|| "none".to_string());
             Line::from(vec![
                 Span::styled("Terminal: ", Style::default().fg(p.overlay0)),
                 Span::styled(
                     "[Active] ",
                     Style::default().fg(p.green).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!(
-                        "WS: {} ({})  CWD: {}  Agent: {} [{}]",
-                        ws_lbl, tab_lbl, cwd_lbl, agent_lbl, agent_status_str
-                    ),
-                    Style::default().fg(p.text),
-                ),
+                Span::styled(agent_lbl, Style::default().fg(p.text)),
             ])
         } else {
             Line::from(vec![
                 Span::styled("Terminal: ", Style::default().fg(p.overlay0)),
                 Span::styled(
-                    "[Closed] ",
+                    "[Closed]",
                     Style::default().fg(p.red).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("(ID: {})", tid), Style::default().fg(p.text)),
             ])
         }
     } else {

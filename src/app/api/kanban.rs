@@ -36,16 +36,33 @@ impl App {
     }
 
     pub(super) fn handle_kanban_list(&mut self, id: String, params: KanbanListParams) -> String {
-        let items = if let Some(status) = params.status {
-            self.state
-                .kanban_items
-                .iter()
-                .filter(|item| item.status == status)
-                .cloned()
-                .collect()
-        } else {
-            self.state.kanban_items.clone()
-        };
+        let target_terminal_id = params.terminal_id.map(|tid| {
+            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
+                resolved.terminal_id
+            } else {
+                tid
+            }
+        });
+
+        let items = self
+            .state
+            .kanban_items
+            .iter()
+            .filter(|item| {
+                if let Some(ref status) = params.status {
+                    if item.status != *status {
+                        return false;
+                    }
+                }
+                if let Some(ref target_tid) = target_terminal_id {
+                    if item.terminal_id.as_ref() != Some(target_tid) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
         encode_success(id, ResponseResult::KanbanList { items })
     }
 
@@ -151,13 +168,63 @@ mod tests {
         assert_eq!(item.title, "Test Kanban");
 
         // List
-        let list_res = app.handle_kanban_list("2".into(), KanbanListParams { status: None });
+        let list_res = app.handle_kanban_list(
+            "2".into(),
+            KanbanListParams {
+                status: None,
+                terminal_id: None,
+            },
+        );
         let resp: SuccessResponse = serde_json::from_str(&list_res).unwrap();
         let items = match resp.result {
             ResponseResult::KanbanList { items } => items,
             _ => panic!("Expected ResponseResult::KanbanList"),
         };
         assert_eq!(items.len(), 1);
+
+        // List with terminal_id: Some("other-terminal") (should return 0 items)
+        let list_res = app.handle_kanban_list(
+            "2a".into(),
+            KanbanListParams {
+                status: None,
+                terminal_id: Some("other-terminal".into()),
+            },
+        );
+        let resp: SuccessResponse = serde_json::from_str(&list_res).unwrap();
+        let items = match resp.result {
+            ResponseResult::KanbanList { items } => items,
+            _ => panic!("Expected ResponseResult::KanbanList"),
+        };
+        assert_eq!(items.len(), 0);
+
+        // Update item with terminal_id: Some("my-terminal")
+        let update_res = app.handle_kanban_update(
+            "2b".into(),
+            KanbanUpdateParams {
+                uuid: item.uuid.clone(),
+                title: None,
+                description: None,
+                status: None,
+                terminal_id: Some("my-terminal".into()),
+            },
+        );
+        assert!(update_res.contains("\"type\":\"kanban_item\""));
+
+        // List with terminal_id: Some("my-terminal") (should return 1 item)
+        let list_res = app.handle_kanban_list(
+            "2c".into(),
+            KanbanListParams {
+                status: None,
+                terminal_id: Some("my-terminal".into()),
+            },
+        );
+        let resp: SuccessResponse = serde_json::from_str(&list_res).unwrap();
+        let items = match resp.result {
+            ResponseResult::KanbanList { items } => items,
+            _ => panic!("Expected ResponseResult::KanbanList"),
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].terminal_id, Some("my-terminal".to_string()));
 
         // Update
         let update_res = app.handle_kanban_update(
@@ -192,7 +259,13 @@ mod tests {
         assert!(matches!(resp.result, ResponseResult::KanbanItem { .. }));
 
         // List after delete should be empty
-        let list_res = app.handle_kanban_list("5".into(), KanbanListParams { status: None });
+        let list_res = app.handle_kanban_list(
+            "5".into(),
+            KanbanListParams {
+                status: None,
+                terminal_id: None,
+            },
+        );
         let resp: SuccessResponse = serde_json::from_str(&list_res).unwrap();
         let items = match resp.result {
             ResponseResult::KanbanList { items } => items,

@@ -30,7 +30,7 @@ fn print_kanban_help() {
     eprintln!("herdr kanban commands:");
     eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>] [--detached]");
     eprintln!("  herdr kanban move <uuid> <status> [--detached]");
-    eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>]");
+    eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>] [--pane]");
     eprintln!(
         "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>] [--detached]"
     );
@@ -152,6 +152,7 @@ fn kanban_move(args: &[String]) -> std::io::Result<i32> {
 
 fn kanban_list(args: &[String]) -> std::io::Result<i32> {
     let mut status = None;
+    let mut pane = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -172,6 +173,10 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
                 status = Some(parsed_status);
                 index += 2;
             }
+            "--pane" => {
+                pane = true;
+                index += 1;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -179,9 +184,22 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
+    let terminal_id = if pane {
+        let Some(tid) = std::env::var("HERDR_PANE_ID").ok() else {
+            eprintln!("error: HERDR_PANE_ID environment variable is not set");
+            return Ok(1);
+        };
+        Some(tid)
+    } else {
+        None
+    };
+
     super::print_response(&super::send_request(&Request {
         id: "cli:kanban:list".into(),
-        method: Method::KanbanList(KanbanListParams { status }),
+        method: Method::KanbanList(KanbanListParams {
+            status,
+            terminal_id,
+        }),
     })?)
 }
 

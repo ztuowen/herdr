@@ -2727,6 +2727,75 @@ fn kanban_cli_detached_behavior() {
     cleanup_test_base(&base);
 }
 
+#[test]
+fn kanban_cli_list_pane_behavior() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let socket_path = base.join("herdr.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            reader.read_line(&mut line).unwrap();
+
+            let req_json: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let req_id = req_json["id"].as_str().unwrap_or("cli:request");
+            let response = serde_json::json!({
+                "id": req_id,
+                "result": {
+                    "type": "kanban_list",
+                    "items": []
+                }
+            });
+            let response_bytes = serde_json::to_vec(&response).unwrap();
+            stream.write_all(&response_bytes).unwrap();
+            stream.write_all(b"\n").unwrap();
+            stream.flush().unwrap();
+            requests.push(line);
+        }
+        requests
+    });
+
+    // 1. herdr kanban list: by default, does not attach terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "list"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 2. herdr kanban list --pane: attaches terminal_id "p_123"
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "list", "--pane"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 3. herdr kanban list --pane without HERDR_PANE_ID: should fail
+    let res = run_cli(&socket_path, &["kanban", "list", "--pane"]);
+    assert_eq!(res.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert!(stderr.contains("HERDR_PANE_ID environment variable is not set"));
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+
+    let req1: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+    assert_eq!(req1["method"], "kanban.list");
+    assert_eq!(req1["params"]["terminal_id"], serde_json::Value::Null);
+
+    let req2: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
+    assert_eq!(req2["method"], "kanban.list");
+    assert_eq!(req2["params"]["terminal_id"], "p_123");
+
+    cleanup_test_base(&base);
+}
+
 fn run_cli_with_env(
     socket_path: &Path,
     args: &[&str],

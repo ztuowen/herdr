@@ -905,27 +905,9 @@ fn render_workspace_list(
 
                 for (idx, (name, count, color)) in statuses.into_iter().enumerate() {
                     let row_y = kanban_rect.y + 1 + idx as u16;
-                    let is_row_selected = is_active && app.kanban_selected_col == idx;
-
-                    let row_bg_style = if is_row_selected {
-                        Style::default().bg(p.surface0)
-                    } else {
-                        Style::default()
-                    };
-
-                    if is_row_selected {
-                        let buf = frame.buffer_mut();
-                        for x in kanban_rect.x..kanban_rect.x + kanban_rect.width {
-                            buf[(x, row_y)].set_style(row_bg_style);
-                        }
-                    }
 
                     let icon = " ⚏ ";
-                    let name_style = if is_row_selected {
-                        Style::default().fg(p.text).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(p.subtext0)
-                    };
+                    let name_style = Style::default().fg(p.subtext0);
                     let count_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
 
                     let label_text = format!("{}{}", icon, name);
@@ -938,10 +920,10 @@ fn render_workspace_list(
                         .saturating_sub(1);
 
                     let line_spans = vec![
-                        Span::styled(label_text, name_style.patch(row_bg_style)),
-                        Span::styled(" ".repeat(spaces_needed), row_bg_style),
-                        Span::styled(count_text, count_style.patch(row_bg_style)),
-                        Span::styled(" ", row_bg_style),
+                        Span::styled(label_text, name_style),
+                        Span::styled(" ".repeat(spaces_needed), Style::default()),
+                        Span::styled(count_text, count_style),
+                        Span::styled(" ", Style::default()),
                     ];
 
                     frame.render_widget(

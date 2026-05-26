@@ -2623,7 +2623,7 @@ fn wait_agent_status_exits_when_done_status_matches() {
 }
 
 #[test]
-fn kanban_cli_detached_behavior() {
+fn kanban_cli_attach_detach_behavior() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
     let socket_path = base.join("herdr.sock");
@@ -2662,15 +2662,7 @@ fn kanban_cli_detached_behavior() {
     );
     assert!(res.status.success());
 
-    // 2. herdr kanban add --detached: does not attach terminal_id
-    let res = run_cli_with_env(
-        &socket_path,
-        &["kanban", "add", "Task B", "--detached"],
-        &[("HERDR_PANE_ID", "p_123")],
-    );
-    assert!(res.status.success());
-
-    // 3. herdr kanban move without --detached: attaches terminal_id
+    // 2. herdr kanban move: by default, does not attach terminal_id
     let res = run_cli_with_env(
         &socket_path,
         &["kanban", "move", "uuid-123", "in-progress"],
@@ -2678,28 +2670,35 @@ fn kanban_cli_detached_behavior() {
     );
     assert!(res.status.success());
 
-    // 4. herdr kanban move with --detached: does not attach terminal_id
+    // 3. herdr kanban update: by default, does not attach terminal_id
     let res = run_cli_with_env(
         &socket_path,
-        &["kanban", "move", "uuid-123", "done", "--detached"],
+        &["kanban", "update", "uuid-123", "--status", "need-review"],
         &[("HERDR_PANE_ID", "p_123")],
     );
     assert!(res.status.success());
 
-    // 5. herdr kanban update with --detached: does not attach terminal_id
+    // 4. herdr kanban attach: attaches to current pane
     let res = run_cli_with_env(
         &socket_path,
-        &[
-            "kanban",
-            "update",
-            "uuid-123",
-            "--status",
-            "need-review",
-            "--detached",
-        ],
+        &["kanban", "attach", "uuid-123"],
         &[("HERDR_PANE_ID", "p_123")],
     );
     assert!(res.status.success());
+
+    // 5. herdr kanban detach: detaches task
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "detach", "uuid-123"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 6. herdr kanban attach without HERDR_PANE_ID: should fail
+    let res = run_cli(&socket_path, &["kanban", "attach", "uuid-123"]);
+    assert_eq!(res.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert!(stderr.contains("HERDR_PANE_ID environment variable is not set"));
 
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 5);
@@ -2709,20 +2708,22 @@ fn kanban_cli_detached_behavior() {
     assert_eq!(req1["params"]["terminal_id"], serde_json::Value::Null);
 
     let req2: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
-    assert_eq!(req2["method"], "kanban.add");
+    assert_eq!(req2["method"], "kanban.update");
     assert_eq!(req2["params"]["terminal_id"], serde_json::Value::Null);
 
     let req3: serde_json::Value = serde_json::from_str(&requests[2]).unwrap();
     assert_eq!(req3["method"], "kanban.update");
-    assert_eq!(req3["params"]["terminal_id"], "p_123");
+    assert_eq!(req3["params"]["terminal_id"], serde_json::Value::Null);
 
     let req4: serde_json::Value = serde_json::from_str(&requests[3]).unwrap();
     assert_eq!(req4["method"], "kanban.update");
-    assert_eq!(req4["params"]["terminal_id"], serde_json::Value::Null);
+    assert_eq!(req4["params"]["terminal_id"], "p_123");
+    assert_eq!(req4["params"]["clear_terminal_id"], serde_json::Value::Null);
 
     let req5: serde_json::Value = serde_json::from_str(&requests[4]).unwrap();
     assert_eq!(req5["method"], "kanban.update");
     assert_eq!(req5["params"]["terminal_id"], serde_json::Value::Null);
+    assert_eq!(req5["params"]["clear_terminal_id"], true);
 
     cleanup_test_base(&base);
 }

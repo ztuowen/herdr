@@ -1064,6 +1064,8 @@ pub struct KanbanUpdateParams {
     pub status: Option<KanbanStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_terminal_id: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

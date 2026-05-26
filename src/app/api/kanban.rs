@@ -96,6 +96,7 @@ impl App {
             params.description,
             params.status,
             terminal_id,
+            params.clear_terminal_id,
         ) {
             Some(item) => {
                 self.schedule_session_save();
@@ -206,6 +207,7 @@ mod tests {
                 description: None,
                 status: None,
                 terminal_id: Some("my-terminal".into()),
+                clear_terminal_id: None,
             },
         );
         assert!(update_res.contains("\"type\":\"kanban_item\""));
@@ -235,6 +237,7 @@ mod tests {
                 description: None,
                 status: Some(crate::api::schema::KanbanStatus::InProgress),
                 terminal_id: None,
+                clear_terminal_id: None,
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&update_res).unwrap();

@@ -1344,6 +1344,7 @@ impl AppState {
         description: Option<String>,
         status: Option<crate::api::schema::KanbanStatus>,
         terminal_id: Option<String>,
+        clear_terminal_id: Option<bool>,
     ) -> Option<crate::api::schema::KanbanItem> {
         let cloned_item = {
             let item = self.kanban_items.iter_mut().find(|it| it.uuid == uuid)?;
@@ -1356,7 +1357,9 @@ impl AppState {
             if let Some(s) = status {
                 item.status = s;
             }
-            if terminal_id.is_some() {
+            if clear_terminal_id.unwrap_or(false) {
+                item.terminal_id = None;
+            } else if terminal_id.is_some() {
                 item.terminal_id = terminal_id;
             }
             item.clone()
@@ -1610,7 +1613,7 @@ impl AppState {
                 2 => crate::api::schema::KanbanStatus::NeedReview,
                 _ => return,
             };
-            self.update_kanban_item(&uuid, None, None, Some(new_status), None);
+            self.update_kanban_item(&uuid, None, None, Some(new_status), None, None);
             self.kanban_selected_col = col - 1;
             let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
             self.kanban_selected_row = new_count.saturating_sub(1);
@@ -1631,7 +1634,7 @@ impl AppState {
                 3 => crate::api::schema::KanbanStatus::Done,
                 _ => return,
             };
-            self.update_kanban_item(&uuid, None, None, Some(new_status), None);
+            self.update_kanban_item(&uuid, None, None, Some(new_status), None, None);
             self.kanban_selected_col = col + 1;
             let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
             self.kanban_selected_row = new_count.saturating_sub(1);
@@ -2049,6 +2052,7 @@ mod tests {
                 Some("Task 1 Updated".to_string()),
                 None,
                 Some(crate::api::schema::KanbanStatus::InProgress),
+                None,
                 None,
             )
             .unwrap();

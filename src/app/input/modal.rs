@@ -819,6 +819,8 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
+    let is_portrait = state.view.terminal_area.height > state.view.terminal_area.width;
+
     match key.code {
         KeyCode::Esc => {
             leave_modal(state);
@@ -830,29 +832,57 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
                 state.request_clipboard_write = Some(item.uuid.clone().into_bytes());
             }
         }
-        KeyCode::Left if key.modifiers == KeyModifiers::SHIFT => {
+        KeyCode::Left if key.modifiers == KeyModifiers::SHIFT && !is_portrait => {
             state.kanban_shift_item_left();
         }
-        KeyCode::Char('H') => {
+        KeyCode::Char('H') if !is_portrait => {
             state.kanban_shift_item_left();
         }
-        KeyCode::Right if key.modifiers == KeyModifiers::SHIFT => {
+        KeyCode::Right if key.modifiers == KeyModifiers::SHIFT && !is_portrait => {
             state.kanban_shift_item_right();
         }
-        KeyCode::Char('L') => {
+        KeyCode::Char('L') if !is_portrait => {
+            state.kanban_shift_item_right();
+        }
+        KeyCode::Up if key.modifiers == KeyModifiers::SHIFT && is_portrait => {
+            state.kanban_shift_item_left();
+        }
+        KeyCode::Char('K') if is_portrait => {
+            state.kanban_shift_item_left();
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::SHIFT && is_portrait => {
+            state.kanban_shift_item_right();
+        }
+        KeyCode::Char('J') if is_portrait => {
             state.kanban_shift_item_right();
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            state.kanban_move_col_left();
+            if is_portrait {
+                state.kanban_move_row_up();
+            } else {
+                state.kanban_move_col_left();
+            }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            state.kanban_move_col_right();
+            if is_portrait {
+                state.kanban_move_row_down();
+            } else {
+                state.kanban_move_col_right();
+            }
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            state.kanban_move_row_up();
+            if is_portrait {
+                state.kanban_move_col_left();
+            } else {
+                state.kanban_move_row_up();
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            state.kanban_move_row_down();
+            if is_portrait {
+                state.kanban_move_col_right();
+            } else {
+                state.kanban_move_row_down();
+            }
         }
         KeyCode::Char(' ') | KeyCode::Enter => {
             let col = state.kanban_selected_col;
@@ -1498,5 +1528,77 @@ mod tests {
         assert_eq!(state.kanban_detail_scroll, 0);
 
         let _ = std::fs::remove_file(plan_file);
+    }
+
+    #[test]
+    fn test_kanban_portrait_navigation() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::Kanban;
+        state.kanban_items.clear();
+
+        let _item0_0 = state.add_kanban_item(
+            "Task 1".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        let _item0_1 = state.add_kanban_item(
+            "Task 2".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        let _item1_0 = state.add_kanban_item(
+            "Task 3".to_string(),
+            None,
+            Some(crate::api::schema::KanbanStatus::InProgress),
+            None,
+        );
+
+        // Set terminal area size to portrait (height > width)
+        state.view.terminal_area = Rect::new(0, 0, 20, 40);
+
+        state.kanban_selected_col = 0;
+        state.kanban_selected_row = 0;
+
+        // Down should move to next column (InProgress = 1)
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_selected_col, 1);
+        assert_eq!(state.kanban_selected_row, 0);
+
+        // Up should move to previous column (Todo = 0)
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_selected_col, 0);
+        assert_eq!(state.kanban_selected_row, 0);
+
+        // Right should move to next row (item index 1)
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_selected_col, 0);
+        assert_eq!(state.kanban_selected_row, 1);
+
+        // Left should move to previous row (item index 0)
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::empty()),
+        );
+        assert_eq!(state.kanban_selected_col, 0);
+        assert_eq!(state.kanban_selected_row, 0);
+
+        // Shift+Down should shift item right/down (from Todo to InProgress)
+        handle_kanban_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
+        );
+        assert_eq!(state.kanban_selected_col, 1);
+        assert_eq!(state.kanban_items_in_column(1).len(), 2);
     }
 }

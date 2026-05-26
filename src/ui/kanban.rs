@@ -12,14 +12,26 @@ use crate::app::AppState;
 pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
 
-    // Split main area into 4 columns
-    let cols = Layout::horizontal([
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-    ])
-    .split(area);
+    let is_portrait = area.height > area.width;
+
+    // Split main area into 4 columns/rows
+    let sections = if is_portrait {
+        Layout::vertical([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area)
+    } else {
+        Layout::horizontal([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area)
+    };
 
     let statuses = [
         ("todo", p.overlay1, 0),
@@ -29,7 +41,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     ];
 
     for (name, color, col_idx) in statuses {
-        let col_area = cols[col_idx];
+        let col_area = sections[col_idx];
         let items = app.kanban_items_in_column(col_idx);
         let count = items.len();
 
@@ -58,91 +70,186 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
         // Draw cards in this column
         if count > 0 {
-            let card_height: u16 = 4; // Title + description + borders
-            let spacing: u16 = 1;
-            let total_card_height = card_height + spacing;
-            let max_visible_cards = inner_area
-                .height
-                .checked_div(total_card_height)
-                .map(usize::from)
-                .unwrap_or(0);
+            if !is_portrait {
+                let card_height: u16 = 4; // Title + description + borders
+                let spacing: u16 = 1;
+                let total_card_height = card_height + spacing;
+                let max_visible_cards = inner_area
+                    .height
+                    .checked_div(total_card_height)
+                    .map(usize::from)
+                    .unwrap_or(0);
 
-            // Compute scroll offset for the focused column
-            let scroll_offset = if is_col_focused {
-                let row = app.kanban_selected_row;
-                if max_visible_cards == 0 {
-                    0
-                } else if row >= max_visible_cards {
-                    row - max_visible_cards + 1
+                // Compute scroll offset for the focused column
+                let scroll_offset = if is_col_focused {
+                    let row = app.kanban_selected_row;
+                    if max_visible_cards == 0 {
+                        0
+                    } else if row >= max_visible_cards {
+                        row - max_visible_cards + 1
+                    } else {
+                        0
+                    }
                 } else {
                     0
+                };
+
+                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+                for (idx, item) in visible_items.enumerate() {
+                    let actual_idx = scroll_offset + idx;
+                    let card_y = inner_area.y + (idx as u16 * total_card_height);
+                    if card_y + card_height > inner_area.y + inner_area.height {
+                        break;
+                    }
+
+                    let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
+
+                    let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+                    let card_border_color = if is_card_selected {
+                        p.accent
+                    } else {
+                        p.surface0
+                    };
+                    let card_bg = if is_card_selected {
+                        p.surface0
+                    } else {
+                        p.surface_dim
+                    };
+
+                    let card_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(if is_card_selected {
+                            BorderType::Double
+                        } else {
+                            BorderType::Plain
+                        })
+                        .border_style(Style::default().fg(card_border_color))
+                        .style(Style::default().bg(card_bg));
+
+                    let card_inner = card_block.inner(card_area);
+                    frame.render_widget(card_block, card_area);
+
+                    if card_inner.height > 0 {
+                        let card_title_style =
+                            Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        frame.render_widget(
+                            Paragraph::new(item.title.as_str())
+                                .style(card_title_style)
+                                .wrap(Wrap { trim: true }),
+                            Rect::new(card_inner.x, card_inner.y, card_inner.width, 1),
+                        );
+                    }
+                    if card_inner.height > 1 {
+                        let desc_style = Style::default().fg(p.overlay0);
+                        let display_desc = if item.description.is_empty() {
+                            "No description."
+                        } else {
+                            item.description.as_str()
+                        };
+                        frame.render_widget(
+                            Paragraph::new(display_desc)
+                                .style(desc_style)
+                                .wrap(Wrap { trim: true }),
+                            Rect::new(
+                                card_inner.x,
+                                card_inner.y + 1,
+                                card_inner.width,
+                                card_inner.height - 1,
+                            ),
+                        );
+                    }
                 }
             } else {
-                0
-            };
-
-            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-            for (idx, item) in visible_items.enumerate() {
-                let actual_idx = scroll_offset + idx;
-                let card_y = inner_area.y + (idx as u16 * total_card_height);
-                if card_y + card_height > inner_area.y + inner_area.height {
-                    break;
-                }
-
-                let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
-
-                let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
-                let card_border_color = if is_card_selected {
-                    p.accent
+                // Portrait mode: horizontal cards inside status rows
+                let card_width: u16 = 25;
+                let card_width = card_width.min(inner_area.width);
+                let spacing: u16 = 1;
+                let total_card_width = card_width + spacing;
+                let max_visible_cards = if inner_area.width <= card_width {
+                    1
                 } else {
-                    p.surface0
-                };
-                let card_bg = if is_card_selected {
-                    p.surface0
-                } else {
-                    p.surface_dim
+                    ((inner_area.width + spacing) / total_card_width) as usize
                 };
 
-                let card_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(if is_card_selected {
-                        BorderType::Double
+                // Compute scroll offset for the focused column (now row)
+                let scroll_offset = if is_col_focused {
+                    let row = app.kanban_selected_row;
+                    if max_visible_cards == 0 {
+                        0
+                    } else if row >= max_visible_cards {
+                        row - max_visible_cards + 1
                     } else {
-                        BorderType::Plain
-                    })
-                    .border_style(Style::default().fg(card_border_color))
-                    .style(Style::default().bg(card_bg));
+                        0
+                    }
+                } else {
+                    0
+                };
 
-                let card_inner = card_block.inner(card_area);
-                frame.render_widget(card_block, card_area);
+                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+                for (idx, item) in visible_items.enumerate() {
+                    let actual_idx = scroll_offset + idx;
+                    let card_x = inner_area.x + (idx as u16 * total_card_width);
+                    if card_x + card_width > inner_area.x + inner_area.width {
+                        break;
+                    }
 
-                if card_inner.height > 0 {
-                    let card_title_style = Style::default().fg(p.text).add_modifier(Modifier::BOLD);
-                    frame.render_widget(
-                        Paragraph::new(item.title.as_str())
-                            .style(card_title_style)
-                            .wrap(Wrap { trim: true }),
-                        Rect::new(card_inner.x, card_inner.y, card_inner.width, 1),
-                    );
-                }
-                if card_inner.height > 1 {
-                    let desc_style = Style::default().fg(p.overlay0);
-                    let display_desc = if item.description.is_empty() {
-                        "No description."
+                    let card_height = 4u16.min(inner_area.height);
+                    let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
+
+                    let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+                    let card_border_color = if is_card_selected {
+                        p.accent
                     } else {
-                        item.description.as_str()
+                        p.surface0
                     };
-                    frame.render_widget(
-                        Paragraph::new(display_desc)
-                            .style(desc_style)
-                            .wrap(Wrap { trim: true }),
-                        Rect::new(
-                            card_inner.x,
-                            card_inner.y + 1,
-                            card_inner.width,
-                            card_inner.height - 1,
-                        ),
-                    );
+                    let card_bg = if is_card_selected {
+                        p.surface0
+                    } else {
+                        p.surface_dim
+                    };
+
+                    let card_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(if is_card_selected {
+                            BorderType::Double
+                        } else {
+                            BorderType::Plain
+                        })
+                        .border_style(Style::default().fg(card_border_color))
+                        .style(Style::default().bg(card_bg));
+
+                    let card_inner = card_block.inner(card_area);
+                    frame.render_widget(card_block, card_area);
+
+                    if card_inner.height > 0 {
+                        let card_title_style =
+                            Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        frame.render_widget(
+                            Paragraph::new(item.title.as_str())
+                                .style(card_title_style)
+                                .wrap(Wrap { trim: true }),
+                            Rect::new(card_inner.x, card_inner.y, card_inner.width, 1),
+                        );
+                    }
+                    if card_inner.height > 1 {
+                        let desc_style = Style::default().fg(p.overlay0);
+                        let display_desc = if item.description.is_empty() {
+                            "No description."
+                        } else {
+                            item.description.as_str()
+                        };
+                        frame.render_widget(
+                            Paragraph::new(display_desc)
+                                .style(desc_style)
+                                .wrap(Wrap { trim: true }),
+                            Rect::new(
+                                card_inner.x,
+                                card_inner.y + 1,
+                                card_inner.width,
+                                card_inner.height - 1,
+                            ),
+                        );
+                    }
                 }
             }
         } else {

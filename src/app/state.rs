@@ -1417,72 +1417,145 @@ impl AppState {
         row_y: u16,
     ) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
         let area = self.view.terminal_area;
-        let cols = ratatui::layout::Layout::horizontal([
-            ratatui::layout::Constraint::Percentage(25),
-            ratatui::layout::Constraint::Percentage(25),
-            ratatui::layout::Constraint::Percentage(25),
-            ratatui::layout::Constraint::Percentage(25),
-        ])
-        .split(area);
+        let is_portrait = area.height > area.width;
 
-        for col_idx in 0..4 {
-            let col_area = cols[col_idx];
-            let inner_area = Rect::new(
-                col_area.x.saturating_add(1),
-                col_area.y.saturating_add(1),
-                col_area.width.saturating_sub(2),
-                col_area.height.saturating_sub(2),
-            );
+        if !is_portrait {
+            let cols = ratatui::layout::Layout::horizontal([
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+            ])
+            .split(area);
 
-            let items = self.kanban_items_in_column(col_idx);
-            let count = items.len();
-            if count == 0 {
-                continue;
-            }
+            for col_idx in 0..4 {
+                let col_area = cols[col_idx];
+                let inner_area = Rect::new(
+                    col_area.x.saturating_add(1),
+                    col_area.y.saturating_add(1),
+                    col_area.width.saturating_sub(2),
+                    col_area.height.saturating_sub(2),
+                );
 
-            let is_col_focused = self.kanban_selected_col == col_idx;
-            let card_height: u16 = 4;
-            let spacing: u16 = 1;
-            let total_card_height = card_height + spacing;
+                let items = self.kanban_items_in_column(col_idx);
+                let count = items.len();
+                if count == 0 {
+                    continue;
+                }
 
-            let max_visible_cards = inner_area
-                .height
-                .checked_div(total_card_height)
-                .map(usize::from)
-                .unwrap_or(0);
+                let is_col_focused = self.kanban_selected_col == col_idx;
+                let card_height: u16 = 4;
+                let spacing: u16 = 1;
+                let total_card_height = card_height + spacing;
 
-            let scroll_offset = if is_col_focused {
-                let row = self.kanban_selected_row;
-                if max_visible_cards == 0 {
-                    0
-                } else if row >= max_visible_cards {
-                    row - max_visible_cards + 1
+                let max_visible_cards = inner_area
+                    .height
+                    .checked_div(total_card_height)
+                    .map(usize::from)
+                    .unwrap_or(0);
+
+                let scroll_offset = if is_col_focused {
+                    let row = self.kanban_selected_row;
+                    if max_visible_cards == 0 {
+                        0
+                    } else if row >= max_visible_cards {
+                        row - max_visible_cards + 1
+                    } else {
+                        0
+                    }
                 } else {
                     0
-                }
-            } else {
-                0
-            };
+                };
 
-            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-            for (idx, item) in visible_items.enumerate() {
-                let actual_idx = scroll_offset + idx;
-                let card_y = inner_area.y + (idx as u16 * total_card_height);
-                if card_y + card_height > inner_area.y + inner_area.height {
-                    break;
-                }
+                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+                for (idx, item) in visible_items.enumerate() {
+                    let actual_idx = scroll_offset + idx;
+                    let card_y = inner_area.y + (idx as u16 * total_card_height);
+                    if card_y + card_height > inner_area.y + inner_area.height {
+                        break;
+                    }
 
-                let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
-                if col_x >= card_area.x
-                    && col_x < card_area.x + card_area.width
-                    && row_y >= card_area.y
-                    && row_y < card_area.y + card_area.height
-                {
-                    return Some((col_idx, actual_idx, (*item).clone()));
+                    let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
+                    if col_x >= card_area.x
+                        && col_x < card_area.x + card_area.width
+                        && row_y >= card_area.y
+                        && row_y < card_area.y + card_area.height
+                    {
+                        return Some((col_idx, actual_idx, (*item).clone()));
+                    }
                 }
             }
+            None
+        } else {
+            let rows = ratatui::layout::Layout::vertical([
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+                ratatui::layout::Constraint::Percentage(25),
+            ])
+            .split(area);
+
+            for col_idx in 0..4 {
+                let col_area = rows[col_idx];
+                let inner_area = Rect::new(
+                    col_area.x.saturating_add(1),
+                    col_area.y.saturating_add(1),
+                    col_area.width.saturating_sub(2),
+                    col_area.height.saturating_sub(2),
+                );
+
+                let items = self.kanban_items_in_column(col_idx);
+                let count = items.len();
+                if count == 0 {
+                    continue;
+                }
+
+                let is_col_focused = self.kanban_selected_col == col_idx;
+                let card_width: u16 = 25;
+                let card_width = card_width.min(inner_area.width);
+                let spacing: u16 = 1;
+                let total_card_width = card_width + spacing;
+
+                let max_visible_cards = if inner_area.width <= card_width {
+                    1
+                } else {
+                    ((inner_area.width + spacing) / total_card_width) as usize
+                };
+
+                let scroll_offset = if is_col_focused {
+                    let row = self.kanban_selected_row;
+                    if max_visible_cards == 0 {
+                        0
+                    } else if row >= max_visible_cards {
+                        row - max_visible_cards + 1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+                for (idx, item) in visible_items.enumerate() {
+                    let actual_idx = scroll_offset + idx;
+                    let card_x = inner_area.x + (idx as u16 * total_card_width);
+                    if card_x + card_width > inner_area.x + inner_area.width {
+                        break;
+                    }
+
+                    let card_height = 4u16.min(inner_area.height);
+                    let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
+                    if col_x >= card_area.x
+                        && col_x < card_area.x + card_area.width
+                        && row_y >= card_area.y
+                        && row_y < card_area.y + card_area.height
+                    {
+                        return Some((col_idx, actual_idx, (*item).clone()));
+                    }
+                }
+            }
+            None
         }
-        None
     }
 
     pub fn kanban_items_in_column(&self, col: usize) -> Vec<&crate::api::schema::KanbanItem> {

@@ -71,7 +71,6 @@ pub(crate) use self::{
         normalized_workspace_scroll, sidebar_section_divider_rect, workspace_drop_indicator_row,
         workspace_list_entries, workspace_list_rect, workspace_list_scroll_metrics,
         workspace_list_scrollbar_rect, workspace_parent_group_state, WorkspaceListEntry,
-        MIN_HEIGHT_FOR_EXPANDED_KANBAN,
     },
 };
 pub(crate) use self::{
@@ -172,6 +171,12 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    if app.mode == Mode::Kanban {
+        app.kanban_selected_col = app.kanban_selected_col.min(3);
+        let items_len = app.kanban_items_in_column(app.kanban_selected_col).len();
+        app.kanban_selected_row = app.kanban_selected_row.min(items_len.saturating_sub(1));
+    }
+
     if is_mobile_width(area) {
         compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
         return;

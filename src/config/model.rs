@@ -169,7 +169,7 @@ pub struct KeysConfig {
     pub detach: BindingConfig,
     /// Reload config.toml in the running app/server. Default: "prefix+shift+r".
     pub reload_config: BindingConfig,
-    /// Toggle Kanban view. Default: "prefix+shift+k"
+    /// Toggle Kanban view. Default: "ctrl+k"
     pub toggle_kanban: BindingConfig,
     /// Focus the currently visible notification target. Default: "prefix+o".
     pub open_notification_target: BindingConfig,

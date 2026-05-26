@@ -47,6 +47,20 @@ pub(super) fn keybind_help_groups(
     let kb = &app.keybinds;
     let mut groups = Vec::new();
 
+    if app.mode == crate::app::Mode::Kanban {
+        groups.push((
+            "kanban",
+            vec![
+                ("esc".to_string(), "exit kanban mode"),
+                ("h / j / k / l / arrows".to_string(), "navigate cards"),
+                ("H / L / shift+arrows".to_string(), "move card left/right"),
+                ("space / enter".to_string(), "view card details"),
+                ("c / y".to_string(), "copy card UUID"),
+                ("d / delete".to_string(), "delete card"),
+            ],
+        ));
+    }
+
     groups.push((
         "global",
         vec![

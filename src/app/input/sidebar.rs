@@ -188,13 +188,7 @@ impl AppState {
         if ws_area == Rect::default() || ws_area.height == 0 {
             return Rect::default();
         }
-        let height =
-            if ws_area.height >= crate::ui::MIN_HEIGHT_FOR_EXPANDED_KANBAN && ws_area.width >= 16 {
-                5
-            } else {
-                1
-            };
-        Rect::new(ws_area.x, ws_area.y, ws_area.width, height)
+        Rect::new(ws_area.x, ws_area.y, ws_area.width, 1)
     }
 
     pub(crate) fn sidebar_kanban_button_rect(&self) -> Rect {

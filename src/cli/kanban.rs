@@ -11,7 +11,6 @@ pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
 
     match subcommand {
         "add" => kanban_add(&args[1..]),
-        "move" => kanban_move(&args[1..]),
         "list" => kanban_list(&args[1..]),
         "update" => kanban_update(&args[1..]),
         "delete" => kanban_delete(&args[1..]),
@@ -31,7 +30,6 @@ pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
 fn print_kanban_help() {
     eprintln!("herdr kanban commands:");
     eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
-    eprintln!("  herdr kanban move <uuid> <status>");
     eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>] [--pane]");
     eprintln!(
         "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]"
@@ -103,40 +101,6 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
-fn kanban_move(args: &[String]) -> std::io::Result<i32> {
-    let Some(uuid) = args.first() else {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
-        return Ok(2);
-    };
-    let Some(status_str) = args.get(1) else {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
-        return Ok(2);
-    };
-    if args.len() != 2 {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
-        return Ok(2);
-    }
-
-    let status = match KanbanStatus::from_str(status_str) {
-        Some(s) => s,
-        None => {
-            eprintln!("invalid status: {status_str} (expected todo|in-progress|need-review|done)");
-            return Ok(2);
-        }
-    };
-
-    super::print_response(&super::send_request(&Request {
-        id: "cli:kanban:move".into(),
-        method: Method::KanbanUpdate(KanbanUpdateParams {
-            uuid: uuid.clone(),
-            title: None,
-            description: None,
-            status: Some(status),
-            terminal_id: None,
-            clear_terminal_id: None,
-        }),
-    })?)
-}
 
 fn kanban_list(args: &[String]) -> std::io::Result<i32> {
     let mut status = None;

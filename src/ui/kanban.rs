@@ -71,7 +71,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
         // Draw cards in this column
         if count > 0 {
             if !is_portrait {
-                let card_height: u16 = 4; // Title + description + borders
+                let card_height: u16 = 4; // Title (up to 2 lines) + borders
                 let spacing: u16 = 1;
                 let total_card_height = card_height + spacing;
                 let max_visible_cards = inner_area
@@ -132,30 +132,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     if card_inner.height > 0 {
                         let card_title_style =
                             Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        let formatted_title =
+                            format_kanban_title(item.title.as_str(), card_inner.width);
                         frame.render_widget(
-                            Paragraph::new(item.title.as_str())
-                                .style(card_title_style)
-                                .wrap(Wrap { trim: true }),
-                            Rect::new(card_inner.x, card_inner.y, card_inner.width, 1),
-                        );
-                    }
-                    if card_inner.height > 1 {
-                        let desc_style = Style::default().fg(p.overlay0);
-                        let display_desc = if item.description.is_empty() {
-                            "No description."
-                        } else {
-                            item.description.as_str()
-                        };
-                        frame.render_widget(
-                            Paragraph::new(display_desc)
-                                .style(desc_style)
-                                .wrap(Wrap { trim: true }),
-                            Rect::new(
-                                card_inner.x,
-                                card_inner.y + 1,
-                                card_inner.width,
-                                card_inner.height - 1,
-                            ),
+                            Paragraph::new(formatted_title).style(card_title_style),
+                            card_inner,
                         );
                     }
                 }
@@ -207,30 +188,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     if card_inner.height > 0 {
                         let card_title_style =
                             Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        let formatted_title =
+                            format_kanban_title(item.title.as_str(), card_inner.width);
                         frame.render_widget(
-                            Paragraph::new(item.title.as_str())
-                                .style(card_title_style)
-                                .wrap(Wrap { trim: true }),
-                            Rect::new(card_inner.x, card_inner.y, card_inner.width, 1),
-                        );
-                    }
-                    if card_inner.height > 1 {
-                        let desc_style = Style::default().fg(p.overlay0);
-                        let display_desc = if item.description.is_empty() {
-                            "No description."
-                        } else {
-                            item.description.as_str()
-                        };
-                        frame.render_widget(
-                            Paragraph::new(display_desc)
-                                .style(desc_style)
-                                .wrap(Wrap { trim: true }),
-                            Rect::new(
-                                card_inner.x,
-                                card_inner.y + 1,
-                                card_inner.width,
-                                card_inner.height - 1,
-                            ),
+                            Paragraph::new(formatted_title).style(card_title_style),
+                            card_inner,
                         );
                     }
                 }
@@ -493,4 +455,35 @@ pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
             Err(_) => ("NO DESCRIPTION FOUND".to_string(), true),
         }
     }
+}
+
+pub(crate) fn format_kanban_title(title: &str, width: u16) -> String {
+    use unicode_width::UnicodeWidthChar;
+    if width == 0 {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+
+    for c in title.chars() {
+        if c == '\n' || c == '\r' {
+            continue;
+        }
+        let w = c.width().unwrap_or(0) as u16;
+        if current_width + w > width {
+            lines.push(current_line.clone());
+            current_line.clear();
+            current_width = 0;
+            if lines.len() == 2 {
+                break;
+            }
+        }
+        current_line.push(c);
+        current_width += w;
+    }
+    if lines.len() < 2 && !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    lines.join("\n")
 }

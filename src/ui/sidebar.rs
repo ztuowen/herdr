@@ -16,7 +16,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 #[cfg(test)]
 pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 999;
 #[cfg(not(test))]
-pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 8;
+pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 16;
 
 pub(crate) fn workspace_section_header_rows(ws_area: Rect) -> u16 {
     if ws_area.height >= MIN_HEIGHT_FOR_EXPANDED_KANBAN && ws_area.width >= 16 {

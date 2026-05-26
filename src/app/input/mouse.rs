@@ -187,19 +187,34 @@ impl AppState {
                     return None;
                 }
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if !in_sidebar => {
-                    let cols = ratatui::layout::Layout::horizontal([
-                        ratatui::layout::Constraint::Percentage(25),
-                        ratatui::layout::Constraint::Percentage(25),
-                        ratatui::layout::Constraint::Percentage(25),
-                        ratatui::layout::Constraint::Percentage(25),
-                    ])
-                    .split(self.view.terminal_area);
+                    let is_portrait = self.view.layout == ViewLayout::Mobile;
+                    let sections = if is_portrait {
+                        ratatui::layout::Layout::vertical([
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                        ])
+                        .split(self.view.terminal_area)
+                    } else {
+                        ratatui::layout::Layout::horizontal([
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                            ratatui::layout::Constraint::Percentage(25),
+                        ])
+                        .split(self.view.terminal_area)
+                    };
 
                     let mut hovered_col = None;
                     for col_idx in 0..4 {
-                        let col_area = cols[col_idx];
-                        if mouse.column >= col_area.x && mouse.column < col_area.x + col_area.width
-                        {
+                        let col_area = sections[col_idx];
+                        let inside = if is_portrait {
+                            mouse.row >= col_area.y && mouse.row < col_area.y + col_area.height
+                        } else {
+                            mouse.column >= col_area.x && mouse.column < col_area.x + col_area.width
+                        };
+                        if inside {
                             hovered_col = Some(col_idx);
                             break;
                         }
@@ -2981,6 +2996,40 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 30, 3));
         assert_eq!(app.state.kanban_selected_col, 0);
         assert_eq!(app.state.kanban_selected_row, 0);
+
+        // Test scrolling over Kanban columns in Mobile layout (vertical splits/rows)
+        app.state.view.layout = ViewLayout::Mobile;
+        let old_sidebar = app.state.view.sidebar_rect;
+        app.state.view.sidebar_rect = Rect::default();
+        app.state.view.terminal_area = Rect::new(0, 0, 80, 20); // y from 0 to 20
+                                                                // Four rows/vertical columns, each gets 5 rows:
+                                                                // Todo: y=0..5, InProgress: y=5..10, NeedReview: y=10..15, Done: y=15..20
+
+        app.state.kanban_items.clear();
+        for i in 0..5 {
+            app.state.add_kanban_item(
+                format!("Task {i}"),
+                None,
+                Some(crate::api::schema::KanbanStatus::InProgress), // Column 1
+                None,
+            );
+        }
+        app.state.kanban_selected_col = 0;
+        app.state.kanban_selected_row = 0;
+
+        // Scroll down on In Progress (hover at y = 7, inside y = 5..10)
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 10, 7));
+        assert_eq!(app.state.kanban_selected_col, 1);
+        assert_eq!(app.state.kanban_selected_row, 1);
+
+        // Scroll up on In Progress (hover at y = 7)
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 10, 7));
+        assert_eq!(app.state.kanban_selected_col, 1);
+        assert_eq!(app.state.kanban_selected_row, 0);
+
+        // Reset layout to Desktop
+        app.state.view.layout = ViewLayout::Desktop;
+        app.state.view.sidebar_rect = old_sidebar;
 
         // Test scrolling when detailed modal is open
         let temp_dir = std::env::temp_dir();

@@ -819,7 +819,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
-    let is_portrait = state.view.terminal_area.height > state.view.terminal_area.width;
+    let is_portrait = state.view.layout == crate::app::state::ViewLayout::Mobile;
 
     match key.code {
         KeyCode::Esc => {
@@ -1555,8 +1555,8 @@ mod tests {
             None,
         );
 
-        // Set terminal area size to portrait (height > width)
-        state.view.terminal_area = Rect::new(0, 0, 20, 40);
+        // Set layout to mobile (which triggers row-wise Kanban layout and keybindings)
+        state.view.layout = crate::app::state::ViewLayout::Mobile;
 
         state.kanban_selected_col = 0;
         state.kanban_selected_row = 0;

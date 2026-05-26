@@ -1417,7 +1417,7 @@ impl AppState {
         row_y: u16,
     ) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
         let area = self.view.terminal_area;
-        let is_portrait = area.height > area.width;
+        let is_portrait = self.view.layout == ViewLayout::Mobile;
 
         if !is_portrait {
             let cols = ratatui::layout::Layout::horizontal([

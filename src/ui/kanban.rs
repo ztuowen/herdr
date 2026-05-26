@@ -12,7 +12,7 @@ use crate::app::AppState;
 pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
 
-    let is_portrait = area.height > area.width;
+    let is_portrait = app.view.layout == crate::app::state::ViewLayout::Mobile;
 
     // Split main area into 4 columns/rows
     let sections = if is_portrait {

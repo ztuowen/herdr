@@ -787,9 +787,29 @@ impl AppState {
     }
 }
 
-pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
+pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
+    if state.is_prefix_key(key) {
+        state.prefix_previous_mode = Some(Mode::Kanban);
+        state.mode = Mode::Prefix;
+        return;
+    }
+
+    if state.keybinds.toggle_kanban.matches_direct_key(key) {
+        if state.mode == Mode::Kanban {
+            if state.active.is_some() {
+                state.mode = Mode::Terminal;
+            } else {
+                state.mode = Mode::Navigate;
+            }
+        } else {
+            state.mode = Mode::Kanban;
+        }
+        return;
+    }
+
+    let key_event = key.as_key_event();
     if state.kanban_detail_uuid.is_some() {
-        match key.code {
+        match key_event.code {
             KeyCode::Esc => {
                 state.set_kanban_detail_uuid(None);
             }
@@ -821,7 +841,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
 
     let is_portrait = state.view.layout == crate::app::state::ViewLayout::Mobile;
 
-    match key.code {
+    match key_event.code {
         KeyCode::Esc => {
             leave_modal(state);
         }
@@ -832,25 +852,25 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: KeyEvent) {
                 state.request_clipboard_write = Some(item.uuid.clone().into_bytes());
             }
         }
-        KeyCode::Left if key.modifiers == KeyModifiers::SHIFT && !is_portrait => {
+        KeyCode::Left if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
             state.kanban_shift_item_left();
         }
         KeyCode::Char('H') if !is_portrait => {
             state.kanban_shift_item_left();
         }
-        KeyCode::Right if key.modifiers == KeyModifiers::SHIFT && !is_portrait => {
+        KeyCode::Right if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
             state.kanban_shift_item_right();
         }
         KeyCode::Char('L') if !is_portrait => {
             state.kanban_shift_item_right();
         }
-        KeyCode::Up if key.modifiers == KeyModifiers::SHIFT && is_portrait => {
+        KeyCode::Up if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
             state.kanban_shift_item_left();
         }
         KeyCode::Char('K') if is_portrait => {
             state.kanban_shift_item_left();
         }
-        KeyCode::Down if key.modifiers == KeyModifiers::SHIFT && is_portrait => {
+        KeyCode::Down if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
             state.kanban_shift_item_right();
         }
         KeyCode::Char('J') if is_portrait => {
@@ -1391,7 +1411,7 @@ mod tests {
         state.request_clipboard_write = None;
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty())),
         );
         assert_eq!(
             state
@@ -1405,7 +1425,7 @@ mod tests {
         state.request_clipboard_write = None;
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty())),
         );
         assert_eq!(
             state
@@ -1422,7 +1442,7 @@ mod tests {
         // 4. Test copy in detailed view using 'c'
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty())),
         );
         assert_eq!(
             state
@@ -1436,7 +1456,7 @@ mod tests {
         state.request_clipboard_write = None;
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty())),
         );
         assert_eq!(
             state
@@ -1481,49 +1501,49 @@ mod tests {
         // Scroll down 1 using 'j'
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 1);
 
         // Scroll down 1 using Down arrow
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 2);
 
         // Scroll up 1 using 'k'
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 1);
 
         // Scroll up 1 using Up arrow
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 0);
 
         // Scroll up at 0 shouldn't underflow
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 0);
 
         // PageDown scroll
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::PageDown, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::PageDown, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, max_scroll.min(10));
 
         // PageUp scroll back to 0
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 0);
 
@@ -1564,7 +1584,7 @@ mod tests {
         // Down should move to next column (InProgress = 1)
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_selected_col, 1);
         assert_eq!(state.kanban_selected_row, 0);
@@ -1572,7 +1592,7 @@ mod tests {
         // Up should move to previous column (Todo = 0)
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_selected_col, 0);
         assert_eq!(state.kanban_selected_row, 0);
@@ -1580,7 +1600,7 @@ mod tests {
         // Right should move to next row (item index 1)
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Right, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Right, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_selected_col, 0);
         assert_eq!(state.kanban_selected_row, 1);
@@ -1588,7 +1608,7 @@ mod tests {
         // Left should move to previous row (item index 0)
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Left, KeyModifiers::empty()),
+            TerminalKey::from(KeyEvent::new(KeyCode::Left, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_selected_col, 0);
         assert_eq!(state.kanban_selected_row, 0);
@@ -1596,7 +1616,7 @@ mod tests {
         // Shift+Down should shift item right/down (from Todo to InProgress)
         handle_kanban_key(
             &mut state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
+            TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
         );
         assert_eq!(state.kanban_selected_col, 1);
         assert_eq!(state.kanban_items_in_column(1).len(), 2);

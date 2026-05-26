@@ -1331,19 +1331,7 @@ impl App {
                 // Should not be called in terminal mode.
             }
             Mode::Kanban => {
-                if self.state.is_prefix_key(key) {
-                    self.state.prefix_previous_mode = Some(Mode::Kanban);
-                    self.state.mode = Mode::Prefix;
-                } else if self.state.keybinds.toggle_kanban.matches_direct_key(key) {
-                    input::execute_navigate_action_in_context(
-                        &mut self.state,
-                        &mut self.terminal_runtimes,
-                        input::NavigateAction::ToggleKanban,
-                        input::ActionContext::Direct,
-                    );
-                } else {
-                    input::handle_kanban_key(&mut self.state, key_event);
-                }
+                input::handle_kanban_key(&mut self.state, key);
             }
         }
 

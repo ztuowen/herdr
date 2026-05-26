@@ -37,10 +37,7 @@ pub(crate) use self::{
         handle_kanban_key, handle_keybind_help_key, handle_navigator_key, handle_rename_key,
         handle_resize_key,
     },
-    navigate::{
-        execute_navigate_action_in_context, terminal_direct_navigation_action, ActionContext,
-        NavigateAction,
-    },
+    navigate::terminal_direct_navigation_action,
     settings::open_settings_at,
 };
 use self::{
@@ -89,19 +86,7 @@ impl App {
                     Mode::KeybindHelp => handle_keybind_help_key(&mut self.state, key_event),
                     Mode::Navigator => handle_navigator_key(&mut self.state, key_event),
                     Mode::Kanban => {
-                        if self.state.is_prefix_key(key) {
-                            self.state.prefix_previous_mode = Some(Mode::Kanban);
-                            self.state.mode = Mode::Prefix;
-                        } else if self.state.keybinds.toggle_kanban.matches_direct_key(key) {
-                            navigate::execute_navigate_action_in_context(
-                                &mut self.state,
-                                &mut self.terminal_runtimes,
-                                navigate::NavigateAction::ToggleKanban,
-                                navigate::ActionContext::Direct,
-                            );
-                        } else {
-                            handle_kanban_key(&mut self.state, key_event);
-                        }
+                        handle_kanban_key(&mut self.state, key);
                     }
                     Mode::Terminal => unreachable!(),
                 }

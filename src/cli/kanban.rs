@@ -101,7 +101,6 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
-
 fn kanban_list(args: &[String]) -> std::io::Result<i32> {
     let mut status = None;
     let mut pane = false;

@@ -105,8 +105,18 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
 
                     let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+
+                    let mut has_active_terminal = false;
+                    if let Some(ref tid) = item.terminal_id {
+                        if app.kanban_item_pane_status(tid).exists {
+                            has_active_terminal = true;
+                        }
+                    }
+
                     let card_border_color = if is_card_selected {
                         p.accent
+                    } else if has_active_terminal {
+                        p.green
                     } else {
                         p.surface0
                     };
@@ -116,13 +126,17 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         p.surface_dim
                     };
 
+                    let border_type = if is_card_selected {
+                        BorderType::Double
+                    } else if has_active_terminal {
+                        BorderType::Thick
+                    } else {
+                        BorderType::Plain
+                    };
+
                     let card_block = Block::default()
                         .borders(Borders::ALL)
-                        .border_type(if is_card_selected {
-                            BorderType::Double
-                        } else {
-                            BorderType::Plain
-                        })
+                        .border_type(border_type)
                         .border_style(Style::default().fg(card_border_color))
                         .style(Style::default().bg(card_bg));
 
@@ -161,8 +175,18 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
 
                     let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+
+                    let mut has_active_terminal = false;
+                    if let Some(ref tid) = item.terminal_id {
+                        if app.kanban_item_pane_status(tid).exists {
+                            has_active_terminal = true;
+                        }
+                    }
+
                     let card_border_color = if is_card_selected {
                         p.accent
+                    } else if has_active_terminal {
+                        p.green
                     } else {
                         p.surface0
                     };
@@ -172,13 +196,17 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         p.surface_dim
                     };
 
+                    let border_type = if is_card_selected {
+                        BorderType::Double
+                    } else if has_active_terminal {
+                        BorderType::Thick
+                    } else {
+                        BorderType::Plain
+                    };
+
                     let card_block = Block::default()
                         .borders(Borders::ALL)
-                        .border_type(if is_card_selected {
-                            BorderType::Double
-                        } else {
-                            BorderType::Plain
-                        })
+                        .border_type(border_type)
                         .border_style(Style::default().fg(card_border_color))
                         .style(Style::default().bg(card_bg));
 

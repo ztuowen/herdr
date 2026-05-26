@@ -1368,6 +1368,31 @@ impl AppState {
         Some(cloned_item)
     }
 
+    pub fn clear_dead_kanban_terminals(&mut self) -> bool {
+        let mut tids_to_clear = Vec::new();
+        for item in self.kanban_items.iter() {
+            if let Some(ref tid) = item.terminal_id {
+                if self.find_pane_by_terminal_id_str(tid).is_none() {
+                    tids_to_clear.push(item.uuid.clone());
+                }
+            }
+        }
+
+        let mut any_cleared = false;
+        for item in self.kanban_items.iter_mut() {
+            if tids_to_clear.contains(&item.uuid) {
+                item.terminal_id = None;
+                any_cleared = true;
+            }
+        }
+
+        if any_cleared {
+            self.mark_session_dirty();
+        }
+
+        any_cleared
+    }
+
     pub fn find_pane_by_terminal_id_str(
         &self,
         term_id_str: &str,

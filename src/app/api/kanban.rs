@@ -25,6 +25,10 @@ impl App {
                 tid
             }
         });
+        if self.state.clear_dead_kanban_terminals() {
+            self.schedule_session_save();
+        }
+
         let item = self.state.add_kanban_item(
             params.title,
             params.description,
@@ -43,6 +47,10 @@ impl App {
                 tid
             }
         });
+
+        if self.state.clear_dead_kanban_terminals() {
+            self.schedule_session_save();
+        }
 
         let items = self
             .state
@@ -90,6 +98,10 @@ impl App {
                 tid
             }
         });
+        if self.state.clear_dead_kanban_terminals() {
+            self.schedule_session_save();
+        }
+
         match self.state.update_kanban_item(
             &params.uuid,
             params.title,
@@ -115,6 +127,10 @@ impl App {
         id: String,
         params: KanbanDeleteParams,
     ) -> String {
+        if self.state.clear_dead_kanban_terminals() {
+            self.schedule_session_save();
+        }
+
         match self.state.delete_kanban_item(&params.uuid) {
             Some(item) => {
                 self.schedule_session_save();
@@ -198,6 +214,17 @@ mod tests {
         };
         assert_eq!(items.len(), 0);
 
+        let terminal_id = crate::terminal::TerminalId::alloc();
+        let term_id_str = terminal_id.to_string();
+
+        // Add a fake workspace/pane so "my-terminal" is considered alive
+        let mut ws = crate::workspace::Workspace::test_new("test");
+        let pane = crate::pane::PaneState::new(terminal_id);
+        ws.tabs[0]
+            .panes
+            .insert(crate::layout::PaneId::from_raw(1), pane);
+        app.state.workspaces.push(ws);
+
         // Update item with terminal_id: Some("my-terminal")
         let update_res = app.handle_kanban_update(
             "2b".into(),
@@ -206,7 +233,7 @@ mod tests {
                 title: None,
                 description: None,
                 status: None,
-                terminal_id: Some("my-terminal".into()),
+                terminal_id: Some(term_id_str.clone()),
                 clear_terminal_id: None,
             },
         );
@@ -217,7 +244,7 @@ mod tests {
             "2c".into(),
             KanbanListParams {
                 status: None,
-                terminal_id: Some("my-terminal".into()),
+                terminal_id: Some(term_id_str.clone()),
             },
         );
         let resp: SuccessResponse = serde_json::from_str(&list_res).unwrap();
@@ -226,7 +253,7 @@ mod tests {
             _ => panic!("Expected ResponseResult::KanbanList"),
         };
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].terminal_id, Some("my-terminal".to_string()));
+        assert_eq!(items[0].terminal_id, Some(term_id_str));
 
         // Update
         let update_res = app.handle_kanban_update(

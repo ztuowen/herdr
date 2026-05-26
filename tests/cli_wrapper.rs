@@ -2621,3 +2621,122 @@ fn wait_agent_status_exits_when_done_status_matches() {
 
     cleanup_spawned_herdr(herdr, base);
 }
+
+#[test]
+fn kanban_cli_detached_behavior() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let socket_path = base.join("herdr.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for _ in 0..5 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            reader.read_line(&mut line).unwrap();
+
+            let req_json: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let req_id = req_json["id"].as_str().unwrap_or("cli:request");
+            let response = serde_json::json!({
+                "id": req_id,
+                "result": {
+                    "type": "ok"
+                }
+            });
+            let response_bytes = serde_json::to_vec(&response).unwrap();
+            stream.write_all(&response_bytes).unwrap();
+            stream.write_all(b"\n").unwrap();
+            stream.flush().unwrap();
+            requests.push(line);
+        }
+        requests
+    });
+
+    // 1. herdr kanban add: by default, does not attach terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "add", "Task A"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 2. herdr kanban add --detached: does not attach terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "add", "Task B", "--detached"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 3. herdr kanban move without --detached: attaches terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "move", "uuid-123", "in-progress"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 4. herdr kanban move with --detached: does not attach terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &["kanban", "move", "uuid-123", "done", "--detached"],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    // 5. herdr kanban update with --detached: does not attach terminal_id
+    let res = run_cli_with_env(
+        &socket_path,
+        &[
+            "kanban",
+            "update",
+            "uuid-123",
+            "--status",
+            "need-review",
+            "--detached",
+        ],
+        &[("HERDR_PANE_ID", "p_123")],
+    );
+    assert!(res.status.success());
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 5);
+
+    let req1: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+    assert_eq!(req1["method"], "kanban.add");
+    assert_eq!(req1["params"]["terminal_id"], serde_json::Value::Null);
+
+    let req2: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
+    assert_eq!(req2["method"], "kanban.add");
+    assert_eq!(req2["params"]["terminal_id"], serde_json::Value::Null);
+
+    let req3: serde_json::Value = serde_json::from_str(&requests[2]).unwrap();
+    assert_eq!(req3["method"], "kanban.update");
+    assert_eq!(req3["params"]["terminal_id"], "p_123");
+
+    let req4: serde_json::Value = serde_json::from_str(&requests[3]).unwrap();
+    assert_eq!(req4["method"], "kanban.update");
+    assert_eq!(req4["params"]["terminal_id"], serde_json::Value::Null);
+
+    let req5: serde_json::Value = serde_json::from_str(&requests[4]).unwrap();
+    assert_eq!(req5["method"], "kanban.update");
+    assert_eq!(req5["params"]["terminal_id"], serde_json::Value::Null);
+
+    cleanup_test_base(&base);
+}
+
+fn run_cli_with_env(
+    socket_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
+    command.args(args);
+    command.env("HERDR_SOCKET_PATH", socket_path);
+    for (k, v) in envs {
+        command.env(k, v);
+    }
+    command.output().unwrap()
+}

@@ -28,23 +28,25 @@ pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
 
 fn print_kanban_help() {
     eprintln!("herdr kanban commands:");
-    eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
-    eprintln!("  herdr kanban move <uuid> <status>");
+    eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>] [--detached]");
+    eprintln!("  herdr kanban move <uuid> <status> [--detached]");
     eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>]");
     eprintln!(
-        "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]"
+        "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>] [--detached]"
     );
+    eprintln!("    updates task details; running with only <uuid> (and without --detached) updates the terminal tracking to the current terminal and lists the current status");
     eprintln!("  herdr kanban delete <uuid>");
 }
 
 fn kanban_add(args: &[String]) -> std::io::Result<i32> {
     let Some(title) = args.first() else {
-        eprintln!("usage: herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
+        eprintln!("usage: herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>] [--detached]");
         return Ok(2);
     };
 
     let mut description = None;
     let mut status = None;
+    let mut _detached = false;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -81,6 +83,10 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
                 status = Some(parsed_status);
                 index += 2;
             }
+            "--detached" => {
+                _detached = true;
+                index += 1;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -94,22 +100,29 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
             title: title.clone(),
             description,
             status,
-            terminal_id: std::env::var("HERDR_PANE_ID").ok(),
+            terminal_id: None,
         }),
     })?)
 }
 
 fn kanban_move(args: &[String]) -> std::io::Result<i32> {
-    let Some(uuid) = args.first() else {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
+    let detached = args.iter().any(|arg| arg == "--detached");
+    let clean_args: Vec<String> = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--detached")
+        .cloned()
+        .collect();
+
+    let Some(uuid) = clean_args.first() else {
+        eprintln!("usage: herdr kanban move <uuid> <status> [--detached]");
         return Ok(2);
     };
-    let Some(status_str) = args.get(1) else {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
+    let Some(status_str) = clean_args.get(1) else {
+        eprintln!("usage: herdr kanban move <uuid> <status> [--detached]");
         return Ok(2);
     };
-    if args.len() != 2 {
-        eprintln!("usage: herdr kanban move <uuid> <status>");
+    if clean_args.len() != 2 {
+        eprintln!("usage: herdr kanban move <uuid> <status> [--detached]");
         return Ok(2);
     }
 
@@ -128,7 +141,11 @@ fn kanban_move(args: &[String]) -> std::io::Result<i32> {
             title: None,
             description: None,
             status: Some(status),
-            terminal_id: std::env::var("HERDR_PANE_ID").ok(),
+            terminal_id: if detached {
+                None
+            } else {
+                std::env::var("HERDR_PANE_ID").ok()
+            },
         }),
     })?)
 }
@@ -170,13 +187,14 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
 
 fn kanban_update(args: &[String]) -> std::io::Result<i32> {
     let Some(uuid) = args.first() else {
-        eprintln!("usage: herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]");
+        eprintln!("usage: herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>] [--detached]");
         return Ok(2);
     };
 
     let mut title = None;
     let mut description = None;
     let mut status = None;
+    let mut detached = false;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -221,6 +239,10 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
                 status = Some(parsed_status);
                 index += 2;
             }
+            "--detached" => {
+                detached = true;
+                index += 1;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -235,7 +257,11 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
             title,
             description,
             status,
-            terminal_id: std::env::var("HERDR_PANE_ID").ok(),
+            terminal_id: if detached {
+                None
+            } else {
+                std::env::var("HERDR_PANE_ID").ok()
+            },
         }),
     })?)
 }

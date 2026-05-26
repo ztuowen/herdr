@@ -871,7 +871,7 @@ fn render_workspace_list(
 
             if kanban_rect.height == 5 {
                 // Render Title: ── ⚏ K A N B A N ──
-                let title_text = " ⚏ K A N B A N ";
+                let title_text = " K A N B A N ";
                 let title_len = title_text.chars().count();
                 let width = kanban_rect.width as usize;
                 let padding = width.saturating_sub(title_len);

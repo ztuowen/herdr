@@ -57,6 +57,18 @@ impl AppState {
         terminal_runtimes: &mut TerminalRuntimeRegistry,
         mouse: MouseEvent,
     ) -> Option<SettingsAction> {
+        if self.view.layout == ViewLayout::Mobile
+            && self.mode != Mode::Navigate
+            && matches!(self.mode, Mode::Terminal | Mode::Resize | Mode::Kanban)
+            && rect_contains(self.view.mobile_menu_hit_area, mouse.column, mouse.row)
+        {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.mobile_switcher_scroll = 0;
+                self.mode = Mode::Navigate;
+            }
+            return None;
+        }
+
         if self.mode == Mode::Onboarding {
             self.handle_onboarding_mouse(mouse);
             return None;
@@ -1206,6 +1218,9 @@ impl AppState {
             Some(crate::ui::MobileSwitcherTarget::Tab(tab_idx)) => {
                 self.switch_tab(tab_idx);
                 self.mode = Mode::Terminal;
+            }
+            Some(crate::ui::MobileSwitcherTarget::Kanban) => {
+                self.mode = Mode::Kanban;
             }
             Some(crate::ui::MobileSwitcherTarget::Agent {
                 ws_idx,
@@ -2599,7 +2614,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 6,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -2637,7 +2652,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 2,
+            viewport.y + 4,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -2680,7 +2695,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 6,
         ));
         assert_eq!(app.state.workspaces[0].active_tab, 2);
     }
@@ -2707,7 +2722,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 1,
+            viewport.y + 3,
         ));
         assert!(app.state.request_new_workspace);
 
@@ -2716,7 +2731,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 5,
+            viewport.y + 7,
         ));
         assert_eq!(app.state.mode, Mode::RenameTab);
         assert!(app.state.creating_new_tab);

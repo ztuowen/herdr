@@ -74,12 +74,10 @@ pub(crate) enum GlobalMenuAction {
     Keybinds,
     ReloadConfig,
     Settings,
-    Kanban,
 }
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
-        GlobalMenuAction::Kanban,
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
@@ -139,9 +137,6 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
-        GlobalMenuAction::Kanban => {
-            state.mode = Mode::Kanban;
-        }
     }
 }
 

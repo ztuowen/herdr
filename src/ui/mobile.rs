@@ -9,7 +9,7 @@ use ratatui::{
 use super::sidebar::{agent_panel_entries, agent_panel_entries_from, AgentPanelEntry};
 use super::status::{agent_icon, state_dot};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
-use crate::app::AppState;
+use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -40,6 +40,7 @@ pub(crate) enum MobileSwitcherTarget {
         pane_id: PaneId,
     },
     Menu(usize),
+    Kanban,
 }
 
 pub(crate) fn is_mobile_width(area: Rect) -> bool {
@@ -91,7 +92,7 @@ pub(crate) fn mobile_switcher_max_scroll_for_height(app: &AppState, viewport_hei
 }
 
 pub(crate) fn mobile_switcher_workspace_doc_range(idx: usize) -> std::ops::Range<usize> {
-    let start = 2 + idx * 2;
+    let start = 4 + idx * 2;
     start..start + 2
 }
 
@@ -114,6 +115,12 @@ pub(crate) fn mobile_switcher_target_at(
         .mobile_switcher_scroll
         .saturating_add(row.saturating_sub(areas.viewport.y) as usize);
     let mut cursor = 0usize;
+
+    cursor += 1; // kanban title
+    if doc_row == cursor {
+        return Some(MobileSwitcherTarget::Kanban);
+    }
+    cursor += 1;
 
     cursor += 1; // spaces title
     if doc_row == cursor {
@@ -393,6 +400,7 @@ fn render_close_button(app: &AppState, frame: &mut Frame, area: Rect) {
 }
 
 fn mobile_switcher_content_height(app: &AppState) -> usize {
+    let kanban_h = 2;
     let spaces_h = 2 + app.workspaces.len() * 2;
     let tabs_h = app
         .active
@@ -401,7 +409,7 @@ fn mobile_switcher_content_height(app: &AppState) -> usize {
         .unwrap_or(0);
     let agents_h = 1 + agent_panel_entries(app).len() * 2;
     let menu_h = 1 + app.global_menu_labels().len();
-    spaces_h + tabs_h + agents_h + menu_h
+    kanban_h + spaces_h + tabs_h + agents_h + menu_h
 }
 
 fn render_mobile_switcher_content(
@@ -430,6 +438,82 @@ fn render_mobile_switcher_content(
     }
 
     let mut doc_y = 0usize;
+    render_section_title_at(
+        frame,
+        viewport,
+        content,
+        doc_y,
+        app.mobile_switcher_scroll,
+        "kanban",
+        p,
+    );
+    doc_y += 1;
+
+    let active = app.mode == Mode::Kanban;
+    let bg = mobile_item_bg(false, active, p);
+    let todo_count = app.kanban_items_in_column(0).len();
+    let in_progress_count = app.kanban_items_in_column(1).len();
+    let review_count = app.kanban_items_in_column(2).len();
+    let done_count = app.kanban_items_in_column(3).len();
+
+    let kanban_style = if active {
+        Style::default()
+            .fg(p.accent)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(p.text)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let spans = vec![
+        Span::styled("  ⚏ kanban ", kanban_style),
+        Span::styled(
+            todo_count.to_string(),
+            Style::default()
+                .fg(p.overlay1)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            in_progress_count.to_string(),
+            Style::default()
+                .fg(p.yellow)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            review_count.to_string(),
+            Style::default()
+                .fg(p.peach)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            done_count.to_string(),
+            Style::default()
+                .fg(p.green)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    render_one_line_item(
+        frame,
+        viewport,
+        content,
+        doc_y,
+        app.mobile_switcher_scroll,
+        bg,
+        Line::from(spans),
+    );
+    doc_y += 1;
+
     render_section_title_at(
         frame,
         viewport,

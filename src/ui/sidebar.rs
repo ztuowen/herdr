@@ -20,7 +20,7 @@ pub(crate) const MIN_HEIGHT_FOR_EXPANDED_KANBAN: u16 = 8;
 
 pub(crate) fn workspace_section_header_rows(ws_area: Rect) -> u16 {
     if ws_area.height >= MIN_HEIGHT_FOR_EXPANDED_KANBAN && ws_area.width >= 16 {
-        7
+        8
     } else {
         3
     }
@@ -986,11 +986,21 @@ fn render_workspace_list(
         }
     }
 
-    let spaces_y = if let Some(h) = app.sidebar_kanban_button_rect().height.checked_sub(1) {
-        area.y + 1 + h
+    let has_separator = app.sidebar_kanban_button_rect().height == 5;
+    let separator_y = area.y + 5;
+    let spaces_y = if has_separator {
+        area.y + 6
     } else {
         area.y + 1
     };
+
+    if has_separator && area.height > 5 {
+        let buf = frame.buffer_mut();
+        for x in area.x..area.x + area.width {
+            buf[(x, separator_y)].set_symbol("─");
+            buf[(x, separator_y)].set_style(Style::default().fg(p.surface1));
+        }
+    }
 
     if area.height > spaces_y - area.y {
         frame.render_widget(

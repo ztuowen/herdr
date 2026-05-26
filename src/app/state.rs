@@ -1511,26 +1511,11 @@ impl AppState {
                 }
 
                 let is_col_focused = self.kanban_selected_col == col_idx;
-                let card_width: u16 = 25;
-                let card_width = card_width.min(inner_area.width);
-                let spacing: u16 = 1;
-                let total_card_width = card_width + spacing;
-
-                let max_visible_cards = if inner_area.width <= card_width {
-                    1
-                } else {
-                    ((inner_area.width + spacing) / total_card_width) as usize
-                };
+                let card_width = inner_area.width;
+                let max_visible_cards = 1;
 
                 let scroll_offset = if is_col_focused {
-                    let row = self.kanban_selected_row;
-                    if max_visible_cards == 0 {
-                        0
-                    } else if row >= max_visible_cards {
-                        row - max_visible_cards + 1
-                    } else {
-                        0
-                    }
+                    self.kanban_selected_row
                 } else {
                     0
                 };
@@ -1538,10 +1523,7 @@ impl AppState {
                 let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
                 for (idx, item) in visible_items.enumerate() {
                     let actual_idx = scroll_offset + idx;
-                    let card_x = inner_area.x + (idx as u16 * total_card_width);
-                    if card_x + card_width > inner_area.x + inner_area.width {
-                        break;
-                    }
+                    let card_x = inner_area.x;
 
                     let card_height = 4u16.min(inner_area.height);
                     let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);

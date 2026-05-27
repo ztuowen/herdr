@@ -113,9 +113,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         }
                     }
 
-                    let card_border_color = if is_card_selected {
-                        p.accent
-                    } else if has_active_terminal {
+                    let card_border_color = if has_active_terminal {
                         p.green
                     } else {
                         p.surface0
@@ -126,9 +124,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         p.surface_dim
                     };
 
-                    let border_type = if is_card_selected {
-                        BorderType::Double
-                    } else if has_active_terminal {
+                    let border_type = if has_active_terminal {
                         BorderType::Thick
                     } else {
                         BorderType::Plain
@@ -144,8 +140,14 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     frame.render_widget(card_block, card_area);
 
                     if card_inner.height > 0 {
-                        let card_title_style =
-                            Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        let mut card_title_style = Style::default().add_modifier(Modifier::BOLD);
+                        if has_active_terminal {
+                            card_title_style =
+                                card_title_style.fg(p.green).add_modifier(Modifier::ITALIC);
+                        } else {
+                            card_title_style = card_title_style.fg(p.text);
+                        }
+
                         let formatted_title =
                             format_kanban_title(item.title.as_str(), card_inner.width);
                         frame.render_widget(
@@ -183,9 +185,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         }
                     }
 
-                    let card_border_color = if is_card_selected {
-                        p.accent
-                    } else if has_active_terminal {
+                    let card_border_color = if has_active_terminal {
                         p.green
                     } else {
                         p.surface0
@@ -196,9 +196,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                         p.surface_dim
                     };
 
-                    let border_type = if is_card_selected {
-                        BorderType::Double
-                    } else if has_active_terminal {
+                    let border_type = if has_active_terminal {
                         BorderType::Thick
                     } else {
                         BorderType::Plain
@@ -214,8 +212,14 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     frame.render_widget(card_block, card_area);
 
                     if card_inner.height > 0 {
-                        let card_title_style =
-                            Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+                        let mut card_title_style = Style::default().add_modifier(Modifier::BOLD);
+                        if has_active_terminal {
+                            card_title_style =
+                                card_title_style.fg(p.green).add_modifier(Modifier::ITALIC);
+                        } else {
+                            card_title_style = card_title_style.fg(p.text);
+                        }
+
                         let formatted_title =
                             format_kanban_title(item.title.as_str(), card_inner.width);
                         frame.render_widget(

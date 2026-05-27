@@ -36,6 +36,9 @@ const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500)
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
+const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
+const PANE_COPY_HIGHLIGHT_DURATION: Duration = Duration::from_millis(500);
+const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -61,6 +64,23 @@ pub(crate) struct OverlayPaneState {
     temp_files: Vec<std::path::PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PaneClickState {
+    pane_id: crate::layout::PaneId,
+    viewport_row: u16,
+    col: u16,
+    at: Instant,
+}
+
+impl PaneClickState {
+    fn is_double_click_for(self, next: Self) -> bool {
+        self.pane_id == next.pane_id
+            && next.at.duration_since(self.at) <= PANE_DOUBLE_CLICK_WINDOW
+            && self.viewport_row.abs_diff(next.viewport_row) <= 1
+            && self.col.abs_diff(next.col) <= 1
+    }
+}
+
 pub struct App {
     pub state: AppState,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
@@ -74,13 +94,17 @@ pub struct App {
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
     pub(crate) toast_deadline: Option<Instant>,
+    pub(crate) copy_feedback_deadline: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
+    pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) next_resize_poll: Instant,
     pub(crate) next_animation_tick: Option<Instant>,
     pub(crate) next_auto_update_check: Option<Instant>,
+    pub(crate) agent_metadata_deadline: Option<Instant>,
     pub(crate) selection_autoscroll_deadline: Option<Instant>,
+    pub(crate) selection_highlight_clear_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
     pub(crate) persist_pane_history: bool,
     pub(crate) last_render_at: Option<Instant>,
@@ -376,6 +400,7 @@ impl App {
             direct_attach_resize_locks: std::collections::HashSet::new(),
             workspaces,
             active,
+            previous_pane_focus: None,
             selected,
             mode,
             should_quit: false,
@@ -450,6 +475,7 @@ impl App {
             update_dismissed: false,
             config_diagnostic,
             toast: None,
+            copy_feedback: None,
             outer_terminal_focus: None,
             prefix_code,
             prefix_mods,
@@ -457,6 +483,7 @@ impl App {
             sidebar_width,
             sidebar_min_width,
             sidebar_max_width,
+            mobile_width_threshold: config.ui.mobile_width_threshold,
             sidebar_width_source,
             sidebar_width_auto: false,
             sidebar_collapsed: false,
@@ -536,6 +563,7 @@ impl App {
         Self {
             config_diagnostic_deadline: None,
             toast_deadline: None,
+            copy_feedback_deadline: None,
             state,
             terminal_runtimes: restored_terminal_runtimes,
             event_tx,
@@ -543,12 +571,15 @@ impl App {
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             git_refresh_in_flight: false,
             last_sidebar_divider_click: None,
+            last_pane_click: None,
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
             next_animation_tick: None,
             next_auto_update_check: auto_updates_enabled(no_session)
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
+            agent_metadata_deadline: None,
             session_save_deadline: None,
             selection_autoscroll_deadline: None,
+            selection_highlight_clear_deadline: None,
             persist_pane_history: config.experimental.pane_history,
             last_render_at: None,
             suppressed_repeat_keys: HashSet::new(),
@@ -1061,6 +1092,7 @@ impl App {
                 }
                 self.state.sidebar_min_width = config.ui.sidebar_min_width;
                 self.state.sidebar_max_width = config.ui.sidebar_max_width;
+                self.state.mobile_width_threshold = config.ui.mobile_width_threshold;
                 // Re-clamp the live width to the new bounds. No source guard — bounds
                 // always apply, including to widths owned by Persisted or Manual.
                 self.state.sidebar_width = self
@@ -1466,6 +1498,45 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_write_event_shows_feedback_toast() {
+        let mut app = test_app();
+
+        app.handle_internal_event(AppEvent::ClipboardWrite {
+            content: b"copied".to_vec(),
+        });
+
+        assert!(app.state.toast.is_none());
+        let feedback = app.state.copy_feedback.as_ref().expect("copy feedback");
+        assert_eq!(feedback.message, "copied to clipboard");
+        assert!(app.copy_feedback_deadline.is_some());
+    }
+
+    #[test]
+    fn clipboard_feedback_does_not_replace_notification_toast() {
+        let mut app = test_app();
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: "pi needs attention".to_string(),
+            context: "background · 2".to_string(),
+            target: None,
+        });
+        let original_toast = app.state.toast.clone();
+
+        app.handle_internal_event(AppEvent::ClipboardWrite {
+            content: b"copied".to_vec(),
+        });
+
+        assert_eq!(app.state.toast, original_toast);
+        assert_eq!(
+            app.state
+                .copy_feedback
+                .as_ref()
+                .map(|feedback| feedback.message.as_str()),
+            Some("copied to clipboard")
+        );
+    }
+
+    #[test]
     fn internal_event_drain_limits_work_per_tick() {
         let mut app = test_app();
         for i in 0..=APP_EVENT_DRAIN_LIMIT {
@@ -1734,6 +1805,10 @@ mod tests {
         // Default bounds.
         assert_eq!(app.state.sidebar_min_width, 18);
         assert_eq!(app.state.sidebar_max_width, 36);
+        assert_eq!(
+            app.state.mobile_width_threshold,
+            crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD
+        );
 
         // Manually set a width and flip the source so the existing
         // sidebar_width-only-when-config-owned guard does NOT update it.
@@ -1768,6 +1843,29 @@ mod tests {
             app.state.sidebar_width, 30,
             "manual width must re-clamp up to new min"
         );
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_updates_mobile_width_threshold() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-config-mobile-width-threshold");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        assert_eq!(
+            app.state.mobile_width_threshold,
+            crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD
+        );
+
+        std::fs::write(&path, "[ui]\nmobile_width_threshold = 96\n").unwrap();
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(app.state.mobile_width_threshold, 96);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2552,6 +2650,9 @@ mod tests {
             .cwd = split_cwd.clone();
         app.state.active = Some(0);
         app.state.selected = 0;
+        app.state
+            .focus_pane_in_workspace(0, background_previous_focus);
+        app.state.focus_pane_in_workspace(0, active_pane);
 
         let target_pane_id = app.pane_info(0, target_pane).unwrap().pane_id;
         let target_tab_id = app.public_tab_id(0, background_tab).unwrap();
@@ -2593,6 +2694,14 @@ mod tests {
                 .layout
                 .pane_count(),
             3
+        );
+        app.state.last_pane();
+        assert_eq!(app.state.workspaces[0].active_tab, background_tab);
+        assert_eq!(
+            app.state.workspaces[0].tabs[background_tab]
+                .layout
+                .focused(),
+            background_previous_focus
         );
 
         let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
@@ -2649,6 +2758,44 @@ mod tests {
         match original_shell {
             Some(value) => std::env::set_var("SHELL", value),
             None => std::env::remove_var("SHELL"),
+        }
+    }
+
+    #[tokio::test]
+    async fn focused_agent_start_records_previous_pane() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("agent-start-focus");
+        let root = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_agent_start_focus".into(),
+            method: crate::api::schema::Method::AgentStart(crate::api::schema::AgentStartParams {
+                name: "worker".into(),
+                cwd: None,
+                workspace_id: None,
+                tab_id: None,
+                split: Some(crate::api::schema::SplitDirection::Right),
+                focus: true,
+                argv: vec!["/usr/bin/true".into()],
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "agent_started");
+        assert_ne!(app.state.workspaces[0].focused_pane_id(), Some(root));
+
+        app.state.last_pane();
+
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(root));
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
         }
     }
 
@@ -2984,6 +3131,45 @@ mod tests {
             Mode::Terminal,
             "q should leave navigate mode"
         );
+    }
+
+    #[test]
+    fn route_client_input_prefix_tab_dispatches_global_last_pane() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+last_pane = "prefix+tab"
+"#,
+        )
+        .unwrap();
+        let mut app = test_app();
+        let mut first = Workspace::test_new("one");
+        let first_second_tab = first.test_add_tab(Some("logs"));
+        let first_second_root = first.tabs[first_second_tab].root_pane;
+        let second = Workspace::test_new("two");
+        let second_root = second.tabs[0].root_pane;
+        app.state.workspaces = vec![first, second];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.keybinds = config.keybinds();
+        app.state.mode = Mode::Terminal;
+        app.state.switch_workspace_tab(0, first_second_tab);
+        app.state.switch_workspace_tab(1, 0);
+
+        app.route_client_input(vec![0x02, b'\t']);
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.workspaces[0].active_tab, first_second_tab);
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(first_second_root)
+        );
+
+        app.route_client_input(vec![0x02, b'\t']);
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(second_root));
     }
 
     #[tokio::test]

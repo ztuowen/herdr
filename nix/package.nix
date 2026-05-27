@@ -42,7 +42,8 @@ rustPlatform.buildRustPackage {
     );
   };
 
-  cargoLock.lockFile = ../Cargo.lock;
+  cargoHash = "sha256-yRT31RnfjSQy5bxFXVvM9zRM59WAPrBozu3S2tag6s8=";
+  cargoDepsName = "herdr";
 
   nativeBuildInputs = [
     git

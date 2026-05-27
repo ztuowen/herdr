@@ -102,7 +102,7 @@ ssh you@yourserver
 herdr
 ```
 
-or attach from your local terminal through ssh without opening a shell first. your local herdr acts as a thin client, connects over ssh, starts or attaches to the remote herdr server, and streams the ui back to your terminal. remote attach uses your local keybindings by default; pass `--remote-keybindings server` to use the remote server config instead. pass `--handoff` to opt into live handoff if remote attach needs to replace a supported running remote server.
+or attach from your local terminal through ssh without opening a shell first. your local herdr acts as a thin client, connects over ssh, starts or attaches to the remote herdr server, and streams the ui back to your terminal. remote attach uses your local keybindings by default; pass `--remote-keybindings server` to use the remote server config instead. pass `--handoff` to opt into live handoff if remote attach needs to replace a supported running remote server. Homebrew and Nix clients bootstrap remote hosts from the matching release asset instead of copying the package-manager-managed local binary.
 
 ```bash
 herdr --remote workbox
@@ -147,7 +147,7 @@ not a gui window, not a web dashboard, not electron. herdr runs inside whatever 
 
 - **workspaces** — organized around git repos or folder names, each with its own tabs and panes
 - **tabs** — first-class in the socket api and cli
-- **mouse-native** — click panes/tabs/workspaces/agents, drag borders, select text to copy, right-click menus; not keyboard-only
+- **mouse-native** — click panes/tabs/workspaces/agents, drag borders, drag-select text to copy, double-click tokens to copy, right-click menus; not keyboard-only
 - **notifications** — sounds and toasts for background events; tab-aware suppression
 - **18 built-in themes** — catppuccin, terminal, tokyo night, gruvbox, one, solarized, kanagawa, rosé pine, vesper, and light variants for the main palettes
 - **session persistence** — pane processes survive client detach; sessions restore panes after full restart, with opt-in recent screen history
@@ -195,6 +195,7 @@ automatic detection works out of the box. process name matching plus terminal ou
 | antigravity cli | ✓ | ✓ | ✓ |
 | kimi code cli | ✓ | ✓ | ✓ |
 | [github copilot cli](https://github.com/features/copilot) | ✓ | ✓ | ✓ |
+| qoder cli | ✓ | ✓ | ✓ |
 | [kiro cli](https://kiro.dev/docs/cli/) | ✓ | ✓ | — |
 
 detected but not fully tested: gemini cli, cline.
@@ -203,7 +204,7 @@ for agents outside the built-in list, herdr still works as a terminal multiplexe
 
 ### direct integrations
 
-the built-in pi, omp, claude code, codex, opencode, and hermes integrations forward semantic state to herdr over the socket api. install with:
+the built-in pi, omp, claude code, codex, opencode, hermes, and qoder cli integrations forward semantic state to herdr over the socket api. install with:
 
 ```bash
 herdr integration install pi
@@ -212,6 +213,7 @@ herdr integration install claude
 herdr integration install codex
 herdr integration install opencode
 herdr integration install hermes
+herdr integration install qodercli
 ```
 
 see the [integrations docs](https://herdr.dev/docs/integrations/) for setup details.
@@ -242,6 +244,8 @@ press `ctrl+b` to enter prefix mode. default actions are prefix-first and tmux-l
 resize mode: `h`/`l` resize width, `j`/`k` resize height, `esc` exit.
 
 session navigator opens a searchable workspace, tab, and pane tree. use `/` for text search, `b`/`w`/`i`/`d` for blocked, working, idle, and done filters, `a` or backspace to clear a state filter, and enter to switch to the highlighted row.
+
+last-pane is available but unset by default. bind `last_pane` in `[keys]` if you want tmux-style back-and-forth navigation to the last focused pane across workspaces and tabs; for example, `last_pane = "prefix+tab"`.
 
 custom command keybindings can launch detached shell helpers or temporary panes:
 
@@ -293,7 +297,7 @@ full logging and environment variable details: [configuration docs](https://herd
 ## docs
 
 - [configuration](https://herdr.dev/docs/configuration/) — keybindings, themes, notifications, environment variables
-- [integrations](https://herdr.dev/docs/integrations/) — pi, omp, claude code, codex, opencode, hermes integrations
+- [integrations](https://herdr.dev/docs/integrations/) — pi, omp, claude code, codex, opencode, hermes, qoder cli integrations
 - [`SKILL.md`](./SKILL.md) — reusable agent skill
 - [socket api](https://herdr.dev/docs/socket-api/) — socket protocol and cli reference
 
@@ -335,7 +339,12 @@ just check       # formatting, tests, and maintenance checks
 
 ## license
 
-agpl-3.0: free to use, modify, and distribute. modified versions must be open-sourced under the same license.
+Herdr is dual-licensed:
+
+1. Open source: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+2. Commercial: commercial licenses are available for organizations that cannot comply with AGPL.
+
+Contact: hey@herdr.dev
 
 ## pi, ghostty, and shift+enter
 

@@ -1151,8 +1151,8 @@ impl HeadlessServer {
                     let data = base64::engine::general_purpose::STANDARD.encode(content.as_slice());
                     self.send_to_client(client_id, ServerMessage::Clipboard { data });
                 }
-                // ClipboardWrite doesn't change visual state — no render needed.
-                false
+                self.app.show_clipboard_feedback();
+                true
             }
             AppEvent::StateChanged { pane_id, agent, .. } => {
                 // Capture toast before handling.
@@ -2429,6 +2429,16 @@ impl HeadlessServer {
 
         if self
             .app
+            .copy_feedback_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.app.copy_feedback_deadline = None;
+            self.app.state.copy_feedback = None;
+            changed = true;
+        }
+
+        if self
+            .app
             .next_animation_tick
             .is_some_and(|deadline| now >= deadline)
         {
@@ -2450,6 +2460,8 @@ impl HeadlessServer {
             changed = true;
         }
 
+        changed |= self.app.clear_due_selection_highlight(now);
+
         self.app.start_git_status_refresh_if_due(now);
 
         if self
@@ -2466,6 +2478,18 @@ impl HeadlessServer {
             .is_some_and(|deadline| now >= deadline)
         {
             self.app.save_session_now();
+        }
+
+        if let Some(deadline) = self
+            .app
+            .agent_metadata_deadline
+            .filter(|deadline| now >= *deadline)
+        {
+            for update in self.app.state.expire_agent_metadata_at(deadline, now) {
+                self.app.emit_pane_state_update(&update);
+            }
+            self.app.sync_agent_metadata_deadline();
+            changed = true;
         }
 
         self.app.sync_headless_animation_timer(now);
@@ -2605,6 +2629,7 @@ fn is_keybinding_config_diagnostic(diagnostic: &str) -> bool {
 /// Run the headless server. This is the entry point called from main.rs.
 pub fn run_server() -> io::Result<()> {
     init_logging();
+    crate::platform::raise_server_nofile_limit();
 
     let args: Vec<String> = std::env::args().collect();
     if args.get(2).map(String::as_str) == Some("--handoff-import") {
@@ -3438,6 +3463,96 @@ next_tab = ""
         drop(runtime);
         drop(_runtime_guard);
         rt.shutdown_timeout(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn headless_scheduled_tasks_expire_agent_metadata() {
+        let mut server = test_headless_server();
+        let workspace = crate::workspace::Workspace::test_new("metadata");
+        let pane_id = workspace.tabs[0].root_pane;
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.ensure_test_terminals();
+
+        assert!(
+            server.handle_internal_event_with_forwarding(AppEvent::HookStateReported {
+                pane_id,
+                source: "herdr:pi".into(),
+                agent_label: "pi".into(),
+                state: crate::detect::AgentState::Working,
+                message: None,
+                custom_status: None,
+                seq: None,
+                session_ref: None,
+            })
+        );
+        assert!(
+            server.handle_internal_event_with_forwarding(AppEvent::HookMetadataReported {
+                pane_id,
+                source: "user:pi-display".into(),
+                agent_label: Some("pi".into()),
+                applies_to_source: Some("herdr:pi".into()),
+                title: None,
+                display_agent: None,
+                custom_status: Some("short lived".into()),
+                state_labels: HashMap::new(),
+                clear_title: false,
+                clear_display_agent: false,
+                clear_custom_status: false,
+                clear_state_labels: false,
+                seq: None,
+                ttl: Some(Duration::from_millis(1)),
+            })
+        );
+
+        let deadline = server
+            .app
+            .agent_metadata_deadline
+            .expect("metadata deadline");
+        let terminal_id = server.app.state.workspaces[0]
+            .pane_state(pane_id)
+            .expect("pane")
+            .attached_terminal_id
+            .clone();
+        assert_eq!(
+            server
+                .app
+                .state
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal")
+                .effective_custom_status()
+                .as_deref(),
+            Some("short lived")
+        );
+
+        assert!(server.handle_scheduled_tasks_headless(deadline + Duration::from_millis(1)));
+
+        assert_eq!(server.app.agent_metadata_deadline, None);
+        assert_eq!(
+            server
+                .app
+                .state
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal")
+                .effective_custom_status(),
+            None
+        );
+        assert!(server
+            .app
+            .event_hub
+            .events_after(0)
+            .iter()
+            .any(|(_, event)| {
+                event.event == crate::api::schema::EventKind::PaneAgentStatusChanged
+                    && matches!(
+                        &event.data,
+                        crate::api::schema::EventData::PaneAgentStatusChanged {
+                            custom_status,
+                            ..
+                        } if custom_status.is_none()
+                    )
+            }));
     }
 
     #[test]
@@ -4543,7 +4658,16 @@ next_tab = ""
             content: b"test".to_vec(),
         });
 
-        assert!(!changed);
+        assert!(changed);
+        assert_eq!(
+            server
+                .app
+                .state
+                .copy_feedback
+                .as_ref()
+                .map(|feedback| feedback.message.as_str()),
+            Some("copied to clipboard")
+        );
         match read_server_message(
             foreground_control_rx
                 .recv_timeout(Duration::from_millis(100))

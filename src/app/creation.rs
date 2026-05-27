@@ -115,7 +115,7 @@ impl App {
         self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.terminals.insert(terminal.id.clone(), terminal);
         if focus {
-            ws.switch_tab(idx);
+            self.state.switch_workspace_tab(ws_idx, idx);
             self.state.mode = Mode::Terminal;
         }
         let workspace_id = self.state.workspaces[ws_idx].id.clone();
@@ -274,6 +274,7 @@ impl App {
             && ws
                 .focused_pane_id()
                 .is_some_and(|focused| focused == pane_id);
+        let presentation = terminal.effective_presentation();
         Some(crate::api::schema::PaneInfo {
             pane_id: self.public_pane_id(ws_idx, pane_id)?,
             terminal_id: terminal.id.to_string(),
@@ -285,8 +286,11 @@ impl App {
                 .map(|cwd| cwd.display().to_string()),
             label: terminal.manual_label.clone(),
             agent: terminal.effective_agent_label().map(str::to_string),
+            title: presentation.title,
+            display_agent: presentation.display_agent,
             agent_status: pane_agent_status(terminal.state, pane.seen),
-            custom_status: terminal.effective_custom_status().map(str::to_string),
+            custom_status: presentation.custom_status,
+            state_labels: presentation.state_labels,
             revision: terminal.revision,
         })
     }

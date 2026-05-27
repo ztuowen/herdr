@@ -9,6 +9,8 @@ use super::{
     LimitedRead, Signal,
 };
 
+pub fn raise_server_nofile_limit() {}
+
 /// Collect the foreground terminal job for a given child PID.
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     let tpgid = foreground_process_group_id(child_pid)?;
@@ -51,6 +53,25 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     Some(ForegroundJob {
         process_group_id: tpgid,
         processes,
+    })
+}
+
+pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJob> {
+    let (pgrp, name) = process_pgrp_and_comm(process_group_id)?;
+    if pgrp as u32 != process_group_id {
+        return None;
+    }
+
+    let argv = process_argv(process_group_id);
+    Some(ForegroundJob {
+        process_group_id,
+        processes: vec![ForegroundProcess {
+            pid: process_group_id,
+            name,
+            argv0: None,
+            cmdline: argv.as_ref().map(|parts| parts.join(" ")),
+            argv,
+        }],
     })
 }
 
@@ -158,6 +179,16 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
         }
     }
     false
+}
+
+pub fn open_url(url: &str) -> std::io::Result<()> {
+    Command::new("xdg-open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
 }
 
 pub fn read_clipboard_image() -> Option<ClipboardImage> {

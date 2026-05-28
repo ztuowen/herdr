@@ -3621,6 +3621,7 @@ last_pane = "prefix+tab"
 
         let event_ok = crate::events::AppEvent::SpeechTranscribed {
             workspace_id: workspace_id.clone(),
+            pane_id: None,
             result: Ok("hello world".to_string()),
         };
         app.handle_internal_event(event_ok);
@@ -3632,6 +3633,7 @@ last_pane = "prefix+tab"
 
         let event_err = crate::events::AppEvent::SpeechTranscribed {
             workspace_id,
+            pane_id: None,
             result: Err("mic failure".to_string()),
         };
         app.handle_internal_event(event_err);

@@ -54,8 +54,117 @@ impl App {
             return;
         }
 
+        if let AppEvent::SpeechRawTranscribed {
+            workspace_id,
+            result,
+        } = ev
+        {
+            let previous_toast = self.state.toast.clone();
+            match result {
+                Ok(raw_text) => {
+                    let mut pane_found = false;
+                    if let Some(ws_idx) = self
+                        .state
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.id == workspace_id)
+                    {
+                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                            if let Some(pane_id) = ws.focused_pane_id() {
+                                pane_found = true;
+
+                                let is_agent = if let Some(pane) = ws.pane_state(pane_id) {
+                                    let term_id = pane.attached_terminal_id.clone();
+                                    if let Some(term) = self.state.terminals.get(&term_id) {
+                                        term.is_agent_terminal()
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+
+                                let system_instruction = if is_agent {
+                                    self.state.speech_to_text.agent_system_instruction.clone()
+                                        .or_else(|| self.state.speech_to_text.system_instruction.clone())
+                                        .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation.".to_string())
+                                } else {
+                                    self.state.speech_to_text.terminal_system_instruction.clone()
+                                        .or_else(|| self.state.speech_to_text.system_instruction.clone())
+                                        .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation.".to_string())
+                                };
+
+                                self.state.toast = Some(crate::app::state::ToastNotification {
+                                    kind: crate::app::state::ToastKind::Finished,
+                                    title: "Speech to Text".into(),
+                                    context: "Refining...".into(),
+                                    target: None,
+                                });
+
+                                let event_tx = self.event_tx.clone();
+                                let api_key = match &self.state.speech_to_text.gemini_api_key {
+                                    Some(k) if !k.trim().is_empty() => k.clone(),
+                                    _ => {
+                                        let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
+                                            workspace_id: workspace_id.clone(),
+                                            pane_id: Some(pane_id),
+                                            result: Err(
+                                                "No Gemini API key configured for post-processing."
+                                                    .to_string(),
+                                            ),
+                                        });
+                                        return;
+                                    }
+                                };
+
+                                let workspace_id_clone = workspace_id.clone();
+                                let raw_text_clone = raw_text.clone();
+                                std::thread::spawn(move || {
+                                    let postprocess_result =
+                                        crate::app::speech::run_gemini_postprocess(
+                                            api_key,
+                                            raw_text_clone,
+                                            system_instruction,
+                                        );
+                                    let _ = event_tx.blocking_send(AppEvent::SpeechTranscribed {
+                                        workspace_id: workspace_id_clone,
+                                        pane_id: Some(pane_id),
+                                        result: postprocess_result,
+                                    });
+                                });
+                            }
+                        }
+                    }
+
+                    if !pane_found {
+                        let event_tx = self.event_tx.clone();
+                        let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
+                            workspace_id,
+                            pane_id: None,
+                            result: Ok(raw_text),
+                        });
+                    }
+                }
+                Err(err) => {
+                    self.state.live_transcription = None;
+                    self.state.recording_workspace = None;
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::NeedsAttention,
+                        title: "Speech to Text Error".into(),
+                        context: err,
+                        target: None,
+                    });
+                }
+            }
+            self.sync_toast_deadline(previous_toast);
+            self.render_dirty.store(true, Ordering::Release);
+            self.render_notify.notify_one();
+            return;
+        }
+
         if let AppEvent::SpeechTranscribed {
             workspace_id,
+            pane_id,
             result,
         } = ev
         {
@@ -78,8 +187,11 @@ impl App {
                         .position(|ws| ws.id == workspace_id)
                     {
                         if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                            if let Some(pane_id) = ws.focused_pane_id() {
-                                if let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) {
+                            let target_pane_id = pane_id.or_else(|| ws.focused_pane_id());
+                            if let Some(focused_pane_id) = target_pane_id {
+                                if let Some(runtime) =
+                                    self.lookup_runtime_sender(ws_idx, focused_pane_id)
+                                {
                                     let bracketed = runtime
                                         .input_state()
                                         .map(|s| s.bracketed_paste)
@@ -92,7 +204,7 @@ impl App {
                                     tracing::info!(
                                         "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, text={:?}",
                                         workspace_id,
-                                        pane_id,
+                                        focused_pane_id,
                                         bracketed,
                                         sanitized
                                     );
@@ -105,7 +217,7 @@ impl App {
                                     tracing::warn!(
                                         "Speech to text: could not find active runtime for workspace={}, pane={:?}",
                                         workspace_id,
-                                        pane_id
+                                        focused_pane_id
                                     );
                                 }
                             } else {
@@ -586,10 +698,19 @@ mod tests {
         assert_eq!(sanitize_transcription_text("hello world"), "hello world");
 
         // Test ASCII control characters (should be removed)
-        assert_eq!(sanitize_transcription_text("hello\x15world\x03\r\n"), "helloworld");
+        assert_eq!(
+            sanitize_transcription_text("hello\x15world\x03\r\n"),
+            "helloworld"
+        );
 
         // Test multiple whitespace characters (should be collapsed to a single space)
-        assert_eq!(sanitize_transcription_text("hello   \t  world"), "hello world");
-        assert_eq!(sanitize_transcription_text("  hello world  "), "hello world");
+        assert_eq!(
+            sanitize_transcription_text("hello   \t  world"),
+            "hello world"
+        );
+        assert_eq!(
+            sanitize_transcription_text("  hello world  "),
+            "hello world"
+        );
     }
 }

@@ -94,9 +94,15 @@ pub enum AppEvent {
     WorktreeAddFinished(WorktreeAddResult),
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(WorktreeRemoveResult),
-    /// Background speech-to-text transcription finished.
+    /// Background speech-to-text transcription finished (raw transcription).
+    SpeechRawTranscribed {
+        workspace_id: String,
+        result: Result<String, String>,
+    },
+    /// Background speech-to-text transcription finished (after post-processing).
     SpeechTranscribed {
         workspace_id: String,
+        pane_id: Option<PaneId>,
         result: Result<String, String>,
     },
     /// Intermediate/partial speech-to-text transcription update.

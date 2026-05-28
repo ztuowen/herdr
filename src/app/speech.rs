@@ -15,29 +15,7 @@ impl App {
             _ => return false,
         };
 
-        let is_agent = if let Some(pane_id) = ws.focused_pane_id() {
-            if let Some(pane) = ws.pane_state(pane_id) {
-                let term_id = pane.attached_terminal_id.clone();
-                if let Some(term) = self.state.terminals.get(&term_id) {
-                    term.is_agent_terminal()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        let system_instruction = if is_agent {
-            self.state.speech_to_text.agent_system_instruction.clone()
-        } else {
-            self.state.speech_to_text.terminal_system_instruction.clone()
-        };
-        let system_instruction = system_instruction
-            .or_else(|| self.state.speech_to_text.system_instruction.clone())
-            .unwrap_or_else(|| "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string());
+        let system_instruction = "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string();
 
         let model = self
             .state
@@ -174,7 +152,7 @@ impl App {
                 Ok(rt) => rt,
                 Err(e) => {
                     tracing::error!("Speech to Text: failed to build tokio runtime: {}", e);
-                    let _ = event_tx.blocking_send(crate::events::AppEvent::SpeechTranscribed {
+                    let _ = event_tx.blocking_send(crate::events::AppEvent::SpeechRawTranscribed {
                         workspace_id: workspace_id.clone(),
                         result: Err(format!("Failed to build tokio runtime: {}", e)),
                     });
@@ -317,7 +295,7 @@ async fn run_websocket_transcription(
                 e
             );
             let _ = event_tx
-                .send(crate::events::AppEvent::SpeechTranscribed {
+                .send(crate::events::AppEvent::SpeechRawTranscribed {
                     workspace_id,
                     result: Err(format!("WebSocket connection failed: {}", e)),
                 })
@@ -356,7 +334,7 @@ async fn run_websocket_transcription(
     {
         tracing::error!("Speech to Text: failed to send setup message: {}", e);
         let _ = event_tx
-            .send(crate::events::AppEvent::SpeechTranscribed {
+            .send(crate::events::AppEvent::SpeechRawTranscribed {
                 workspace_id,
                 result: Err(format!("Failed to send setup message: {}", e)),
             })
@@ -520,7 +498,7 @@ async fn run_websocket_transcription(
     };
 
     let _ = event_tx
-        .send(crate::events::AppEvent::SpeechTranscribed {
+        .send(crate::events::AppEvent::SpeechRawTranscribed {
             workspace_id,
             result,
         })
@@ -583,6 +561,77 @@ fn parse_live_transcription_frame(json_str: &str) -> Option<(String, bool)> {
     Some((text, turn_complete))
 }
 
+pub(crate) fn run_gemini_postprocess(
+    api_key: String,
+    raw_text: String,
+    system_instruction: String,
+) -> Result<String, String> {
+    let payload = serde_json::json!({
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": raw_text
+                    }
+                ]
+            }
+        ],
+        "systemInstruction": {
+            "parts": [
+                {
+                    "text": system_instruction
+                }
+            ]
+        }
+    });
+
+    let payload_str = payload.to_string();
+
+    let output = std::process::Command::new("curl")
+        .args([
+            "-sL",
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", &payload_str,
+            &format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={}", api_key)
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run curl for postprocess: {}", e))?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!(
+            "Gemini postprocess API request failed: {}",
+            err_msg
+        ));
+    }
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse Gemini response JSON: {}", e))?;
+
+    if let Some(err) = response
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+    {
+        return Err(format!("Gemini postprocess API error: {}", err));
+    }
+
+    let processed_text = response
+        .get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|c| c.first())
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.as_array())
+        .and_then(|p| p.first())
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| "Failed to extract text from Gemini postprocess response".to_string())?;
+
+    Ok(processed_text.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::app::tests::test_app;
@@ -595,6 +644,7 @@ mod tests {
 
         let event_ok = crate::events::AppEvent::SpeechTranscribed {
             workspace_id: workspace_id.clone(),
+            pane_id: None,
             result: Ok("hello world".to_string()),
         };
         app.handle_internal_event(event_ok);
@@ -606,6 +656,7 @@ mod tests {
 
         let event_err = crate::events::AppEvent::SpeechTranscribed {
             workspace_id,
+            pane_id: None,
             result: Err("mic failure".to_string()),
         };
         app.handle_internal_event(event_err);

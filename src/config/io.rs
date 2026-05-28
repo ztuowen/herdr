@@ -213,6 +213,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.experimental = section,
     );
+    load_live_section(
+        table,
+        "speech_to_text",
+        "speech_to_text config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.speech_to_text = section,
+    );
 
     Ok(LoadedConfig {
         config,
@@ -482,6 +490,29 @@ resume_agents_on_restore = true
         .unwrap();
 
         assert!(loaded.config.session.resume_agents_on_restore);
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_parses_speech_to_text_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[speech_to_text]
+gemini_api_key = "test_key"
+model = "gemini-2.0-flash"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            loaded.config.speech_to_text.gemini_api_key.as_deref(),
+            Some("test_key")
+        );
+        assert_eq!(
+            loaded.config.speech_to_text.model.as_deref(),
+            Some("gemini-2.0-flash")
+        );
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());
     }

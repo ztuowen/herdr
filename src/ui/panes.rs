@@ -293,6 +293,24 @@ pub(super) fn render_panes(
             rt.render(frame, info.inner_rect, show_cursor);
             render_pane_scrollbar(app, frame, info, rt);
 
+            if show_cursor && app.recording_workspace.as_ref() == Some(&app.workspaces[ws_idx].id) {
+                if let Some(cursor) = rt.cursor_state(info.inner_rect, show_cursor) {
+                    if cursor.visible
+                        && cursor.x < info.inner_rect.width
+                        && cursor.y < info.inner_rect.height
+                    {
+                        let cursor_x = info.inner_rect.x + cursor.x;
+                        let cursor_y = info.inner_rect.y + cursor.y;
+                        let style = Style::default()
+                            .fg(app.palette.red)
+                            .add_modifier(Modifier::BOLD);
+                        frame
+                            .buffer_mut()
+                            .set_string(cursor_x, cursor_y, "🎤", style);
+                    }
+                }
+            }
+
             let should_dim = !info.is_focused && multi_pane && !terminal_active;
             if should_dim {
                 let inner = info.inner_rect;

@@ -119,6 +119,7 @@ pub struct Config {
     pub worktrees: WorktreesConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
+    pub speech_to_text: SpeechToTextConfig,
 }
 
 #[derive(Debug)]
@@ -230,6 +231,8 @@ pub struct KeysConfig {
     pub toggle_sidebar: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
+    /// Toggle speech-to-text recording. Default: "ctrl+space"
+    pub speech_to_text: BindingConfig,
     /// Prefix-mode custom command bindings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<CommandKeybindConfig>,
@@ -354,6 +357,13 @@ pub struct ExperimentalConfig {
     pub cjk_ime_cursor_shape: ImeCursorShape,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SpeechToTextConfig {
+    pub gemini_api_key: Option<String>,
+    pub model: Option<String>,
+}
+
 impl Default for KeysConfig {
     fn default() -> Self {
         Self {
@@ -405,6 +415,7 @@ impl Default for KeysConfig {
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
+            speech_to_text: BindingConfig::one("ctrl+space"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
         }

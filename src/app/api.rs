@@ -44,6 +44,49 @@ impl App {
             return;
         }
 
+        if let AppEvent::SpeechTranscribed {
+            workspace_id,
+            result,
+        } = ev
+        {
+            match result {
+                Ok(transcription) => {
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::Finished,
+                        title: "Speech to Text".into(),
+                        context: transcription.clone(),
+                        target: None,
+                    });
+                    if let Some(ws_idx) = self
+                        .state
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.id == workspace_id)
+                    {
+                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                            if let Some(pane_id) = ws.focused_pane_id() {
+                                if let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) {
+                                    let _ =
+                                        runtime.try_send_bytes(bytes::Bytes::from(transcription));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::NeedsAttention,
+                        title: "Speech to Text Error".into(),
+                        context: err,
+                        target: None,
+                    });
+                }
+            }
+            self.render_dirty.store(true, Ordering::Release);
+            self.render_notify.notify_one();
+            return;
+        }
+
         let overlay_state = if let AppEvent::PaneDied { pane_id } = &ev {
             self.overlay_panes.remove(pane_id)
         } else {

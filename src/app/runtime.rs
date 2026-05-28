@@ -115,6 +115,15 @@ impl App {
             }
             crate::raw_input::RawInputEvent::OuterFocusLost => {
                 self.state.outer_terminal_focus = Some(false);
+                if self.state.recording_workspace.is_some() {
+                    let _ = self.stop_recording();
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::NeedsAttention,
+                        title: "Speech to Text".into(),
+                        context: "Recording aborted due to focus loss.".into(),
+                        target: None,
+                    });
+                }
                 false
             }
             crate::raw_input::RawInputEvent::HostDefaultColor { kind, color } => {

@@ -94,4 +94,9 @@ pub enum AppEvent {
     WorktreeAddFinished(WorktreeAddResult),
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(WorktreeRemoveResult),
+    /// Background speech-to-text transcription finished.
+    SpeechTranscribed {
+        workspace_id: String,
+        result: Result<String, String>,
+    },
 }

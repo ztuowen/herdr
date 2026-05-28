@@ -56,6 +56,10 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
+        if self.handle_speech_to_text_key(key).await {
+            return;
+        }
+
         match self.state.mode {
             Mode::Terminal => self.handle_terminal_key(key).await,
             Mode::Prefix => self.handle_prefix_key(key),
@@ -103,6 +107,72 @@ impl App {
                 tracing::warn!("failed to queue clipboard write event");
             }
         }
+    }
+
+    async fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
+        let api_key = match &self.state.speech_to_text.gemini_api_key {
+            Some(k) if !k.trim().is_empty() => k.clone(),
+            _ => return false,
+        };
+
+        if let Some(recording_ws) = self.state.recording_workspace.clone() {
+            let is_stt_key = self.state.keybinds.speech_to_text.matches_direct_key(key)
+                || self.state.keybinds.speech_to_text.matches_prefix_key(key)
+                || (self.recording_key.is_some() && key.code == self.recording_key.unwrap().code);
+
+            if is_stt_key || key.code == KeyCode::Esc {
+                if key.kind == crossterm::event::KeyEventKind::Repeat {
+                    return true;
+                }
+
+                if key.code == KeyCode::Esc {
+                    let _ = self.stop_recording();
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::NeedsAttention,
+                        title: "Speech to Text".into(),
+                        context: "Recording aborted.".into(),
+                        target: None,
+                    });
+                    return true;
+                }
+
+                if key.kind == crossterm::event::KeyEventKind::Release
+                    || key.kind == crossterm::event::KeyEventKind::Press
+                {
+                    if let Some((samples, sample_rate, channels)) = self.stop_recording() {
+                        self.trigger_transcription(
+                            recording_ws,
+                            samples,
+                            sample_rate,
+                            channels,
+                            api_key,
+                        );
+                    }
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
+        if key.kind == crossterm::event::KeyEventKind::Press {
+            let is_direct_match = self.state.keybinds.speech_to_text.matches_direct_key(key);
+            let is_prefix_match = self.state.mode == Mode::Prefix
+                && self.state.keybinds.speech_to_text.matches_prefix_key(key);
+
+            if is_direct_match || is_prefix_match {
+                if let Some(ws_idx) = self.state.active {
+                    if self.start_recording(ws_idx, key) {
+                        if self.state.mode == Mode::Prefix {
+                            self::navigate::leave_command_mode(&mut self.state);
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        false
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {

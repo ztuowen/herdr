@@ -296,6 +296,7 @@ pub struct Keybinds {
     pub resize_mode: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
     pub toggle_kanban: ActionKeybinds,
+    pub speech_to_text: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -478,6 +479,7 @@ impl Config {
             resize_mode: action!("keys.resize_mode", &self.keys.resize_mode),
             toggle_sidebar: action!("keys.toggle_sidebar", &self.keys.toggle_sidebar),
             toggle_kanban: action!("keys.toggle_kanban", &self.keys.toggle_kanban),
+            speech_to_text: action!("keys.speech_to_text", &self.keys.speech_to_text),
             custom_commands: Vec::new(),
         };
 

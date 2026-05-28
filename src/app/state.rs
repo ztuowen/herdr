@@ -1113,6 +1113,8 @@ pub struct AppState {
     /// Last reported focus state for the outer terminal hosting herdr.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
+    pub recording_workspace: Option<String>,
+    pub speech_to_text: crate::config::SpeechToTextConfig,
     // Config
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
@@ -1849,6 +1851,8 @@ impl AppState {
             toast: None,
             copy_feedback: None,
             outer_terminal_focus: None,
+            recording_workspace: None,
+            speech_to_text: crate::config::SpeechToTextConfig::default(),
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             default_sidebar_width: 26,

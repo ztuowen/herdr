@@ -2054,6 +2054,8 @@ impl AppState {
             AppEvent::SpeechRawTranscribed { .. } => Vec::new(),
             AppEvent::SpeechTranscribed { .. } => Vec::new(),
             AppEvent::SpeechPartialTranscription { .. } => Vec::new(),
+            AppEvent::SpeechStartRecording { .. } => Vec::new(),
+            AppEvent::SpeechStopRecording { .. } => Vec::new(),
         }
     }
 

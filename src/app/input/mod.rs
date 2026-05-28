@@ -114,12 +114,13 @@ impl App {
     }
 
     pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
-        if self
-            .state
-            .speech_to_text
-            .gemini_api_key
-            .as_ref()
-            .is_none_or(|k| k.trim().is_empty())
+        if self.no_session
+            && self
+                .state
+                .speech_to_text
+                .gemini_api_key
+                .as_ref()
+                .is_none_or(|k| k.trim().is_empty())
         {
             return false;
         }
@@ -136,7 +137,7 @@ impl App {
 
                 if key.code == KeyCode::Esc {
                     let previous_toast = self.state.toast.clone();
-                    let _ = self.stop_recording();
+                    let _ = self.stop_recording(true);
                     self.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::NeedsAttention,
                         title: "Speech to Text".into(),
@@ -164,7 +165,7 @@ impl App {
                 };
 
                 if should_stop {
-                    self.stop_recording();
+                    self.stop_recording(false);
                     return true;
                 }
             }

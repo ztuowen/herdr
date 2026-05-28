@@ -107,4 +107,12 @@ pub enum AppEvent {
     },
     /// Intermediate/partial speech-to-text transcription update.
     SpeechPartialTranscription { workspace_id: String, text: String },
+    /// Signal the client to start recording audio.
+    SpeechStartRecording {
+        workspace_id: String,
+        pane_id: Option<PaneId>,
+        is_agent: bool,
+    },
+    /// Signal the client to stop recording audio.
+    SpeechStopRecording { abort: bool },
 }

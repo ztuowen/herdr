@@ -97,6 +97,19 @@ pub(crate) enum ServerEvent {
     ClientDisconnected { client_id: u64 },
     /// A client writer drained its render slot and can accept another render.
     ClientWriterDrained { client_id: u64 },
+    /// A client sent a partial speech-to-text transcription update.
+    ClientSpeechPartialTranscription {
+        client_id: u64,
+        workspace_id: String,
+        text: String,
+    },
+    /// A client sent a final speech-to-text transcription result.
+    ClientSpeechTranscribed {
+        client_id: u64,
+        workspace_id: String,
+        pane_id: Option<crate::layout::PaneId>,
+        result: Result<String, String>,
+    },
     /// Ctrl+C or external shutdown signal received.
     QuitSignal,
 }
@@ -457,6 +470,23 @@ fn client_read_loop(
                 column,
                 row,
                 modifiers,
+            },
+            ClientMessage::SpeechPartialTranscription { workspace_id, text } => {
+                ServerEvent::ClientSpeechPartialTranscription {
+                    client_id,
+                    workspace_id,
+                    text,
+                }
+            }
+            ClientMessage::SpeechTranscribed {
+                workspace_id,
+                pane_id,
+                result,
+            } => ServerEvent::ClientSpeechTranscribed {
+                client_id,
+                workspace_id,
+                pane_id,
+                result,
             },
             ClientMessage::Hello { .. } => {
                 // Duplicate Hello — ignore.

@@ -1376,6 +1376,31 @@ impl HeadlessServer {
 
                 true
             }
+            AppEvent::SpeechStartRecording {
+                workspace_id,
+                pane_id,
+                is_agent,
+            } => {
+                if let Some(client_id) = self.foreground_client_id {
+                    self.send_to_client(
+                        client_id,
+                        ServerMessage::StartRecording {
+                            workspace_id: workspace_id.clone(),
+                            pane_id: *pane_id,
+                            is_agent: *is_agent,
+                        },
+                    );
+                }
+                self.app.handle_internal_event(ev);
+                true
+            }
+            AppEvent::SpeechStopRecording { abort } => {
+                if let Some(client_id) = self.foreground_client_id {
+                    self.send_to_client(client_id, ServerMessage::StopRecording { abort: *abort });
+                }
+                self.app.handle_internal_event(ev);
+                true
+            }
             _ => {
                 self.app.handle_internal_event(ev);
                 true
@@ -1894,6 +1919,40 @@ impl HeadlessServer {
             ServerEvent::QuitSignal => {
                 // The quit check at the top of the loop handles this.
                 // No render needed — the next iteration will initiate shutdown.
+                false
+            }
+            ServerEvent::ClientSpeechPartialTranscription {
+                client_id,
+                workspace_id,
+                text,
+            } => {
+                if Some(client_id) == self.foreground_client_id {
+                    let _ = self
+                        .app
+                        .event_tx
+                        .blocking_send(AppEvent::SpeechPartialTranscription {
+                            workspace_id: workspace_id.clone(),
+                            text: text.clone(),
+                        });
+                }
+                false
+            }
+            ServerEvent::ClientSpeechTranscribed {
+                client_id,
+                workspace_id,
+                pane_id,
+                result,
+            } => {
+                if Some(client_id) == self.foreground_client_id {
+                    let _ = self
+                        .app
+                        .event_tx
+                        .blocking_send(AppEvent::SpeechTranscribed {
+                            workspace_id: workspace_id.clone(),
+                            pane_id,
+                            result: result.clone(),
+                        });
+                }
                 false
             }
         }

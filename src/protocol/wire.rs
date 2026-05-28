@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -124,6 +124,16 @@ pub enum ClientMessage {
         row: Option<u16>,
         /// Crossterm-compatible modifier bits for forwarded mouse wheel events.
         modifiers: u8,
+    },
+
+    /// Partial speech-to-text transcription update.
+    SpeechPartialTranscription { workspace_id: String, text: String },
+
+    /// Final speech-to-text transcription result, including local post-processing.
+    SpeechTranscribed {
+        workspace_id: String,
+        pane_id: Option<crate::layout::PaneId>,
+        result: Result<String, String>,
     },
 }
 
@@ -378,6 +388,16 @@ pub enum ServerMessage {
         /// True when Herdr mouse UI is enabled or the focused pane app requests mouse reporting.
         enabled: bool,
     },
+
+    /// Start client-side speech-to-text audio recording.
+    StartRecording {
+        workspace_id: String,
+        pane_id: Option<crate::layout::PaneId>,
+        is_agent: bool,
+    },
+
+    /// Stop client-side speech-to-text audio recording.
+    StopRecording { abort: bool },
 }
 
 // ---------------------------------------------------------------------------

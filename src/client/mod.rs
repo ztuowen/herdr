@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
     EnableFocusChange, EnableMouseCapture, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
@@ -38,6 +39,11 @@ use crate::protocol::{
 use crate::server::socket_paths::client_socket_path;
 
 static RECEIVED_KITTY_GRAPHICS_IDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+
+#[allow(dead_code)]
+struct SendStream(cpal::Stream);
+unsafe impl Send for SendStream {}
+unsafe impl Sync for SendStream {}
 
 // ---------------------------------------------------------------------------
 // Client state
@@ -61,6 +67,12 @@ struct ClientState {
     mouse_scroll_lines: usize,
     /// Whether outer focus gain should force a full host-terminal redraw.
     redraw_on_focus_gained: bool,
+    /// CPAL recording stream to keep it alive.
+    recording_stream: Option<SendStream>,
+    /// Flags for signaling the recording task.
+    recording_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    recording_aborted: Option<Arc<std::sync::atomic::AtomicBool>>,
+    recording_buffer: Option<Arc<std::sync::Mutex<Vec<f32>>>>,
 }
 
 #[derive(Debug, Default)]
@@ -481,6 +493,10 @@ enum ClientLoopEvent {
     ServerDisconnected,
     /// Timer tick.
     Timer,
+    /// Audio stream started.
+    RecordingStarted(SendStream),
+    /// Background client message to send to server.
+    ClientMessageToSend(ClientMessage),
 }
 
 /// Runs the thin client: connects to the server, performs the handshake,
@@ -674,6 +690,10 @@ async fn run_client_loop(
         attach_escape,
         mouse_scroll_lines,
         redraw_on_focus_gained,
+        recording_stream: None,
+        recording_active: None,
+        recording_aborted: None,
+        recording_buffer: None,
     };
     debug!(?negotiated_encoding, "client render encoding active");
 
@@ -878,6 +898,265 @@ async fn run_client_loop(
                 ServerMessage::Welcome { .. } => {
                     debug!("received unexpected Welcome in main loop");
                 }
+                ServerMessage::StartRecording {
+                    workspace_id,
+                    pane_id,
+                    is_agent,
+                } => {
+                    // Stop any existing recording
+                    if let Some(active) = state.recording_active.take() {
+                        active.store(false, Ordering::Release);
+                    }
+                    if let Some(aborted) = state.recording_aborted.take() {
+                        aborted.store(true, Ordering::Release);
+                    }
+                    state.recording_stream = None;
+                    state.recording_buffer = None;
+
+                    // Load config
+                    let loaded_config = match crate::config::load_live_config() {
+                        Ok(loaded) => loaded,
+                        Err(errs) => {
+                            let err_msg =
+                                format!("Failed to load local config: {}", errs.join("; "));
+                            let error_msg = ClientMessage::SpeechTranscribed {
+                                workspace_id: workspace_id.clone(),
+                                pane_id,
+                                result: Err(err_msg),
+                            };
+                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                                return Err(ClientError::ConnectionLost(e));
+                            }
+                            continue;
+                        }
+                    };
+
+                    let api_key = match loaded_config.config.speech_to_text.gemini_api_key.as_ref()
+                    {
+                        Some(k) if !k.trim().is_empty() => k.clone(),
+                        _ => {
+                            let error_msg = ClientMessage::SpeechTranscribed {
+                                workspace_id: workspace_id.clone(),
+                                pane_id,
+                                result: Err("Gemini API key is not configured in local config (~/.config/herdr/config.toml).".to_string()),
+                            };
+                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                                return Err(ClientError::ConnectionLost(e));
+                            }
+                            continue;
+                        }
+                    };
+
+                    let model = loaded_config
+                        .config
+                        .speech_to_text
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
+
+                    let system_instruction = if is_agent {
+                        loaded_config
+                            .config
+                            .speech_to_text
+                            .agent_system_instruction
+                            .clone()
+                            .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
+                    } else {
+                        loaded_config
+                            .config
+                            .speech_to_text
+                            .terminal_system_instruction
+                            .clone()
+                            .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
+                    }
+                    .unwrap_or_else(|| "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string());
+
+                    let recording_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+                    let recording_aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let buffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+                    state.recording_active = Some(recording_active.clone());
+                    state.recording_aborted = Some(recording_aborted.clone());
+                    state.recording_buffer = Some(buffer.clone());
+
+                    let event_tx_clone = event_tx.clone();
+                    let api_key_clone = api_key.clone();
+                    let workspace_id_clone = workspace_id.clone();
+                    let buffer_clone = buffer.clone();
+                    let recording_active_clone = recording_active.clone();
+                    let recording_aborted_clone = recording_aborted.clone();
+
+                    let tokio_handle = tokio::runtime::Handle::current();
+
+                    std::thread::spawn(move || {
+                        let host = cpal::default_host();
+                        let device = match host.default_input_device() {
+                            Some(dev) => dev,
+                            None => {
+                                let _ = event_tx_clone.blocking_send(
+                                    ClientLoopEvent::ClientMessageToSend(
+                                        ClientMessage::SpeechTranscribed {
+                                            workspace_id: workspace_id_clone,
+                                            pane_id,
+                                            result: Err("No default input device found on client."
+                                                .to_string()),
+                                        },
+                                    ),
+                                );
+                                return;
+                            }
+                        };
+
+                        let config = match device.default_input_config() {
+                            Ok(cfg) => cfg,
+                            Err(e) => {
+                                let _ = event_tx_clone.blocking_send(
+                                    ClientLoopEvent::ClientMessageToSend(
+                                        ClientMessage::SpeechTranscribed {
+                                            workspace_id: workspace_id_clone,
+                                            pane_id,
+                                            result: Err(format!(
+                                                "Failed to get client input config: {}",
+                                                e
+                                            )),
+                                        },
+                                    ),
+                                );
+                                return;
+                            }
+                        };
+
+                        let sample_rate = config.sample_rate().0;
+                        let channels = config.channels();
+                        let sample_format = config.sample_format();
+
+                        let buffer_writer = buffer_clone.clone();
+                        let err_fn = move |err| {
+                            tracing::error!("Audio recording stream error: {}", err);
+                        };
+
+                        fn write_input_data_client<T>(
+                            data: &[T],
+                            buffer: &Arc<std::sync::Mutex<Vec<f32>>>,
+                        ) where
+                            T: cpal::Sample<Float = f32>,
+                        {
+                            if let Ok(mut buf) = buffer.lock() {
+                                for &sample in data {
+                                    buf.push(sample.to_float_sample());
+                                }
+                            }
+                        }
+
+                        let stream = match sample_format {
+                            cpal::SampleFormat::I16 => device.build_input_stream(
+                                &config.into(),
+                                move |data: &[i16], _: &_| {
+                                    write_input_data_client(data, &buffer_writer);
+                                },
+                                err_fn,
+                                None,
+                            ),
+                            cpal::SampleFormat::U16 => device.build_input_stream(
+                                &config.into(),
+                                move |data: &[u16], _: &_| {
+                                    write_input_data_client(data, &buffer_writer);
+                                },
+                                err_fn,
+                                None,
+                            ),
+                            cpal::SampleFormat::F32 => device.build_input_stream(
+                                &config.into(),
+                                move |data: &[f32], _: &_| {
+                                    write_input_data_client(data, &buffer_writer);
+                                },
+                                err_fn,
+                                None,
+                            ),
+                            _ => {
+                                let _ = event_tx_clone.blocking_send(
+                                    ClientLoopEvent::ClientMessageToSend(
+                                        ClientMessage::SpeechTranscribed {
+                                            workspace_id: workspace_id_clone,
+                                            pane_id,
+                                            result: Err(
+                                                "Unsupported sample format on client.".to_string()
+                                            ),
+                                        },
+                                    ),
+                                );
+                                return;
+                            }
+                        };
+
+                        let stream = match stream {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let _ = event_tx_clone.blocking_send(
+                                    ClientLoopEvent::ClientMessageToSend(
+                                        ClientMessage::SpeechTranscribed {
+                                            workspace_id: workspace_id_clone,
+                                            pane_id,
+                                            result: Err(format!(
+                                                "Failed to build input stream on client: {}",
+                                                e
+                                            )),
+                                        },
+                                    ),
+                                );
+                                return;
+                            }
+                        };
+
+                        if let Err(e) = stream.play() {
+                            let _ =
+                                event_tx_clone.blocking_send(ClientLoopEvent::ClientMessageToSend(
+                                    ClientMessage::SpeechTranscribed {
+                                        workspace_id: workspace_id_clone,
+                                        pane_id,
+                                        result: Err(format!(
+                                            "Failed to play input stream on client: {}",
+                                            e
+                                        )),
+                                    },
+                                ));
+                            return;
+                        }
+
+                        if event_tx_clone
+                            .blocking_send(ClientLoopEvent::RecordingStarted(SendStream(stream)))
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        tokio_handle.spawn(run_client_websocket_transcription(
+                            workspace_id_clone,
+                            pane_id,
+                            api_key_clone,
+                            model,
+                            system_instruction,
+                            buffer_clone,
+                            channels,
+                            sample_rate,
+                            recording_active_clone,
+                            recording_aborted_clone,
+                            event_tx_clone,
+                        ));
+                    });
+                }
+                ServerMessage::StopRecording { abort } => {
+                    if let Some(active) = state.recording_active.take() {
+                        active.store(false, Ordering::Release);
+                    }
+                    if abort {
+                        if let Some(aborted) = state.recording_aborted.take() {
+                            aborted.store(true, Ordering::Release);
+                        }
+                    }
+                    state.recording_stream = None;
+                    state.recording_buffer = None;
+                }
             },
             ClientLoopEvent::ServerDisconnected => {
                 return Err(ClientError::ConnectionLost(io::Error::new(
@@ -887,6 +1166,14 @@ async fn run_client_loop(
             }
             ClientLoopEvent::Timer => {
                 // Check if we should quit.
+            }
+            ClientLoopEvent::RecordingStarted(stream) => {
+                state.recording_stream = Some(stream);
+            }
+            ClientLoopEvent::ClientMessageToSend(msg) => {
+                if let Err(e) = write_to_server(&mut write_stream, &msg) {
+                    return Err(ClientError::ConnectionLost(e));
+                }
             }
         }
     }
@@ -1245,6 +1532,277 @@ fn write_host_terminal_theme_query(mut writer: impl io::Write) -> io::Result<()>
 
 fn init_logging() {
     crate::logging::init_file_logging("herdr-client.log");
+}
+
+async fn run_client_websocket_transcription(
+    workspace_id: String,
+    pane_id: Option<crate::layout::PaneId>,
+    api_key: String,
+    model: String,
+    system_instruction: String,
+    buffer: Arc<std::sync::Mutex<Vec<f32>>>,
+    channels: u16,
+    sample_rate: u32,
+    recording_active: Arc<std::sync::atomic::AtomicBool>,
+    recording_aborted: Arc<std::sync::atomic::AtomicBool>,
+    event_tx: tokio::sync::mpsc::Sender<ClientLoopEvent>,
+) {
+    use base64::Engine;
+    use futures_util::{SinkExt, StreamExt};
+
+    let model_name = if model.starts_with("models/") {
+        model
+    } else {
+        format!("models/{}", model)
+    };
+
+    let url = format!(
+        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={}",
+        api_key
+    );
+
+    tracing::info!("Speech to Text client: connecting to Gemini Live WebSocket...");
+    let ws_stream = match tokio_tungstenite::connect_async(&url).await {
+        Ok((stream, _)) => stream,
+        Err(e) => {
+            tracing::error!(
+                "Speech to Text client: failed to connect to Gemini Live WebSocket: {}",
+                e
+            );
+            let _ = event_tx
+                .send(ClientLoopEvent::ClientMessageToSend(
+                    ClientMessage::SpeechTranscribed {
+                        workspace_id,
+                        pane_id,
+                        result: Err(format!("WebSocket connection failed: {}", e)),
+                    },
+                ))
+                .await;
+            return;
+        }
+    };
+
+    let (mut write, mut read) = ws_stream.split();
+
+    let setup_msg = serde_json::json!({
+        "setup": {
+            "model": model_name,
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "maxOutputTokens": 1
+            },
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": system_instruction
+                    }
+                ]
+            },
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {}
+        }
+    });
+
+    tracing::info!("Speech to Text client: sending setup message...");
+    if let Err(e) = write
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            setup_msg.to_string(),
+        ))
+        .await
+    {
+        tracing::error!("Speech to Text client: failed to send setup message: {}", e);
+        let _ = event_tx
+            .send(ClientLoopEvent::ClientMessageToSend(
+                ClientMessage::SpeechTranscribed {
+                    workspace_id,
+                    pane_id,
+                    result: Err(format!("Failed to send setup message: {}", e)),
+                },
+            ))
+            .await;
+        return;
+    }
+
+    let mut finalized_text = String::new();
+    let mut current_turn_text = String::new();
+    let mut recording_stopped = false;
+    let mut stop_time: Option<std::time::Instant> = None;
+
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+
+    loop {
+        if recording_aborted.load(std::sync::atomic::Ordering::Acquire) {
+            tracing::info!("Speech to Text client: transcription aborted");
+            return;
+        }
+
+        tokio::select! {
+            _ = interval.tick() => {
+                if !recording_stopped {
+                    if !recording_active.load(std::sync::atomic::Ordering::Acquire) {
+                        tracing::info!("Speech to Text client: stop recording detected, sending turnComplete...");
+                        recording_stopped = true;
+                        stop_time = Some(std::time::Instant::now());
+
+                        let turn_msg = serde_json::json!({
+                            "realtimeInput": {
+                                "audioStreamEnd": true
+                            }
+                        });
+
+                        if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(turn_msg.to_string())).await {
+                            tracing::error!("Speech to Text client: failed to send audioStreamEnd message: {}", e);
+                        }
+                        continue;
+                    }
+
+                    let new_samples = {
+                        match buffer.lock() {
+                            Ok(mut buf) => std::mem::take(&mut *buf),
+                            Err(_) => Vec::new(),
+                        }
+                    };
+
+                    if !new_samples.is_empty() {
+                        let mono = crate::app::speech::downmix_to_mono(&new_samples, channels);
+                        let resampled = crate::app::speech::resample(&mono, sample_rate, 16000);
+
+                        let mut raw_bytes = Vec::with_capacity(resampled.len() * 2);
+                        for &sample in &resampled {
+                            let clamped = sample.clamp(-1.0, 1.0);
+                            let scaled = (clamped * 32767.0) as i16;
+                            raw_bytes.extend_from_slice(&scaled.to_le_bytes());
+                        }
+
+                        let base64_audio = base64::prelude::BASE64_STANDARD.encode(&raw_bytes);
+
+                        let media_msg = serde_json::json!({
+                            "realtimeInput": {
+                                "audio": {
+                                    "mimeType": "audio/pcm;rate=16000",
+                                    "data": base64_audio
+                                }
+                            }
+                        });
+
+                        if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(media_msg.to_string())).await {
+                            tracing::error!("Speech to Text client: failed to send audio chunk: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            msg_res = read.next() => {
+                let msg = match msg_res {
+                    Some(Ok(m)) => m,
+                    Some(Err(e)) => {
+                        tracing::error!("Speech to Text client: WebSocket read error: {}", e);
+                        break;
+                    }
+                    None => {
+                        tracing::info!("Speech to Text client: WebSocket stream ended by server");
+                        break;
+                    }
+                };
+
+                let text_opt = match &msg {
+                    tokio_tungstenite::tungstenite::Message::Text(text) => Some(text.clone()),
+                    tokio_tungstenite::tungstenite::Message::Binary(bin) => String::from_utf8(bin.clone()).ok(),
+                    _ => None,
+                };
+
+                if let Some(text) = text_opt {
+                    if let Some((partial, turn_complete)) = crate::app::speech::parse_live_transcription_frame(&text) {
+                        if !partial.is_empty() {
+                            current_turn_text.push_str(&partial);
+
+                            let mut full_text = finalized_text.clone();
+                            if !full_text.is_empty() && !current_turn_text.is_empty() {
+                                full_text.push(' ');
+                            }
+                            full_text.push_str(&current_turn_text);
+
+                            let _ = event_tx.send(ClientLoopEvent::ClientMessageToSend(
+                                ClientMessage::SpeechPartialTranscription {
+                                    workspace_id: workspace_id.clone(),
+                                    text: full_text,
+                                }
+                            )).await;
+                        }
+                        if turn_complete {
+                            tracing::info!("Speech to Text client: turnComplete received from server");
+                            if !current_turn_text.is_empty() {
+                                if !finalized_text.is_empty() {
+                                    finalized_text.push(' ');
+                                }
+                                finalized_text.push_str(&current_turn_text);
+                                current_turn_text = String::new();
+                            }
+                            if recording_stopped {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let tokio_tungstenite::tungstenite::Message::Close(frame) = msg {
+                    tracing::info!("Speech to Text client: Close frame received: {:?}", frame);
+                    break;
+                }
+            }
+        }
+
+        if recording_stopped {
+            if let Some(t) = stop_time {
+                if t.elapsed() > tokio::time::Duration::from_secs(5) {
+                    tracing::warn!("Speech to Text client: grace period of 5 seconds expired waiting for final transcription");
+                    break;
+                }
+            }
+        }
+    }
+
+    if recording_aborted.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+
+    let mut final_text = finalized_text.clone();
+    if !current_turn_text.is_empty() {
+        if !final_text.is_empty() {
+            final_text.push(' ');
+        }
+        final_text.push_str(&current_turn_text);
+    }
+
+    let raw_result = if !final_text.trim().is_empty() {
+        Ok(final_text.trim().to_string())
+    } else {
+        Err("No speech detected / transcription empty.".to_string())
+    };
+
+    let post_result = match raw_result {
+        Ok(text) => {
+            let api_key_clone = api_key.clone();
+            let system_instruction = "You are a transcription formatting assistant. Fix punctuation, capitalization, grammatical spacing, and spelling errors in the provided raw transcription. Preserve the exact content, words, and semantic meaning. Output only the corrected text.".to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::app::speech::run_gemini_postprocess(api_key_clone, text, system_instruction)
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("Post-process task join error: {}", e)))
+        }
+        Err(e) => Err(e),
+    };
+
+    let _ = event_tx
+        .send(ClientLoopEvent::ClientMessageToSend(
+            ClientMessage::SpeechTranscribed {
+                workspace_id,
+                pane_id,
+                result: post_result,
+            },
+        ))
+        .await;
 }
 
 // ---------------------------------------------------------------------------

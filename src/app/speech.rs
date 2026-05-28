@@ -10,6 +10,45 @@ impl App {
         };
         let workspace_id = ws.id.clone();
 
+        if !self.no_session {
+            let pane_id = ws.focused_pane_id();
+            let is_agent = if let Some(pid) = pane_id {
+                if let Some(pane) = ws.pane_state(pid) {
+                    let term_id = pane.attached_terminal_id.clone();
+                    if let Some(term) = self.state.terminals.get(&term_id) {
+                        term.is_agent_terminal()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            self.state.recording_workspace = Some(workspace_id.clone());
+            self.recording_key = Some(key);
+            self.recording_start_time = Some(std::time::Instant::now());
+            self.state.live_transcription = Some(String::new());
+
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::Finished,
+                title: "Speech to Text".into(),
+                context: "Listening...".into(),
+                target: None,
+            });
+
+            let _ = self
+                .event_tx
+                .blocking_send(crate::events::AppEvent::SpeechStartRecording {
+                    workspace_id,
+                    pane_id,
+                    is_agent,
+                });
+            return true;
+        }
+
         let api_key = match &self.state.speech_to_text.gemini_api_key {
             Some(k) if !k.trim().is_empty() => k.clone(),
             _ => return false,
@@ -179,7 +218,7 @@ impl App {
         true
     }
 
-    pub(crate) fn stop_recording(&mut self) -> Option<(Vec<f32>, u32, u16)> {
+    pub(crate) fn stop_recording(&mut self, abort: bool) -> Option<(Vec<f32>, u32, u16)> {
         self.recording_stream = None;
         self.recording_buffer = None;
         self.recording_key = None;
@@ -188,14 +227,31 @@ impl App {
         if let Some(active) = self.recording_active.take() {
             active.store(false, std::sync::atomic::Ordering::Release);
 
-            let previous_toast = self.state.toast.clone();
-            self.state.toast = Some(crate::app::state::ToastNotification {
-                kind: crate::app::state::ToastKind::Finished,
-                title: "Speech to Text".into(),
-                context: "Transcribing...".into(),
-                target: None,
-            });
-            self.sync_toast_deadline(previous_toast);
+            if !abort {
+                let previous_toast = self.state.toast.clone();
+                self.state.toast = Some(crate::app::state::ToastNotification {
+                    kind: crate::app::state::ToastKind::Finished,
+                    title: "Speech to Text".into(),
+                    context: "Transcribing...".into(),
+                    target: None,
+                });
+                self.sync_toast_deadline(previous_toast);
+            }
+        }
+
+        if !self.no_session {
+            let _ = self
+                .event_tx
+                .blocking_send(crate::events::AppEvent::SpeechStopRecording { abort });
+            if abort {
+                self.state.recording_workspace = None;
+                self.state.live_transcription = None;
+            }
+        } else {
+            if abort {
+                self.state.recording_workspace = None;
+                self.state.live_transcription = None;
+            }
         }
 
         None
@@ -220,7 +276,7 @@ where
     }
 }
 
-fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+pub(crate) fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels == 1 {
         return samples.to_vec();
     }
@@ -239,7 +295,7 @@ fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
     mono
 }
 
-fn resample(samples: &[f32], src_rate: u32, target_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(samples: &[f32], src_rate: u32, target_rate: u32) -> Vec<f32> {
     if src_rate == target_rate {
         return samples.to_vec();
     }
@@ -505,7 +561,7 @@ async fn run_websocket_transcription(
         .await;
 }
 
-fn parse_live_transcription_frame(json_str: &str) -> Option<(String, bool)> {
+pub(crate) fn parse_live_transcription_frame(json_str: &str) -> Option<(String, bool)> {
     let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
 
     if let Some(err) = json

@@ -362,6 +362,9 @@ pub struct ExperimentalConfig {
 pub struct SpeechToTextConfig {
     pub gemini_api_key: Option<String>,
     pub model: Option<String>,
+    pub system_instruction: Option<String>,
+    pub agent_system_instruction: Option<String>,
+    pub terminal_system_instruction: Option<String>,
 }
 
 impl Default for KeysConfig {

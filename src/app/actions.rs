@@ -2052,6 +2052,7 @@ impl AppState {
             // Intercepted in App::handle_internal_event before reaching this
             // dispatch; never touches AppState.
             AppEvent::SpeechTranscribed { .. } => Vec::new(),
+            AppEvent::SpeechPartialTranscription { .. } => Vec::new(),
         }
     }
 

@@ -1114,6 +1114,7 @@ pub struct AppState {
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
     pub recording_workspace: Option<String>,
+    pub live_transcription: Option<String>,
     pub speech_to_text: crate::config::SpeechToTextConfig,
     // Config
     pub prefix_code: KeyCode,
@@ -1852,6 +1853,7 @@ impl AppState {
             copy_feedback: None,
             outer_terminal_focus: None,
             recording_workspace: None,
+            live_transcription: None,
             speech_to_text: crate::config::SpeechToTextConfig::default(),
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,

@@ -56,6 +56,10 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
+        if key.kind == crossterm::event::KeyEventKind::Release {
+            self.release_events_supported = true;
+        }
+
         if self.handle_speech_to_text_key(key) {
             return;
         }
@@ -110,12 +114,17 @@ impl App {
     }
 
     pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
-        let api_key = match &self.state.speech_to_text.gemini_api_key {
-            Some(k) if !k.trim().is_empty() => k.clone(),
-            _ => return false,
-        };
+        if self
+            .state
+            .speech_to_text
+            .gemini_api_key
+            .as_ref()
+            .is_none_or(|k| k.trim().is_empty())
+        {
+            return false;
+        }
 
-        if let Some(recording_ws) = self.state.recording_workspace.clone() {
+        if self.state.recording_workspace.is_some() {
             let is_stt_key = self.state.keybinds.speech_to_text.matches_direct_key(key)
                 || self.state.keybinds.speech_to_text.matches_prefix_key(key)
                 || (self.recording_key.is_some() && key.code == self.recording_key.unwrap().code);
@@ -138,18 +147,24 @@ impl App {
                     return true;
                 }
 
-                if key.kind == crossterm::event::KeyEventKind::Release
-                    || key.kind == crossterm::event::KeyEventKind::Press
-                {
-                    if let Some((samples, sample_rate, channels)) = self.stop_recording() {
-                        self.trigger_transcription(
-                            recording_ws,
-                            samples,
-                            sample_rate,
-                            channels,
-                            api_key,
-                        );
+                let should_stop = if key.kind == crossterm::event::KeyEventKind::Release {
+                    true
+                } else if key.kind == crossterm::event::KeyEventKind::Press {
+                    if !self.release_events_supported {
+                        if let Some(start_time) = self.recording_start_time {
+                            start_time.elapsed() >= std::time::Duration::from_millis(400)
+                        } else {
+                            true
+                        }
+                    } else {
+                        false
                     }
+                } else {
+                    false
+                };
+
+                if should_stop {
+                    self.stop_recording();
                     return true;
                 }
             }

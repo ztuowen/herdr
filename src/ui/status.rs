@@ -198,3 +198,62 @@ pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
         (AgentState::Unknown, _) => p.overlay0,
     }
 }
+
+fn count_wrapped_lines(text: &str, width: u16) -> u16 {
+    if text.is_empty() {
+        return 1;
+    }
+    let mut lines = 0;
+    for line in text.lines() {
+        let chars: Vec<char> = line.chars().collect();
+        if chars.is_empty() {
+            lines += 1;
+            continue;
+        }
+        let mut i = 0;
+        while i < chars.len() {
+            lines += 1;
+            i += width as usize;
+        }
+    }
+    lines as u16
+}
+
+pub(crate) fn render_live_transcription(frame: &mut Frame, area: Rect, text: &str, p: &Palette) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let max_width = 60u16;
+    let width = max_width.min(area.width.saturating_sub(4)).max(10);
+    let inner_width = width.saturating_sub(2);
+    let wrapped_lines = count_wrapped_lines(text, inner_width);
+    let height = (wrapped_lines + 2).min(area.height / 2).max(3);
+
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height).saturating_sub(1);
+    let popup_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(p.teal))
+        .style(Style::default().bg(p.panel_bg));
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    if text.is_empty() {
+        let span = Span::styled(
+            "🎤 Listening...",
+            Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(Paragraph::new(span), inner);
+    } else {
+        let paragraph = Paragraph::new(text)
+            .style(Style::default().fg(p.text))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(paragraph, inner);
+    }
+}

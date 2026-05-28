@@ -99,4 +99,6 @@ pub enum AppEvent {
         workspace_id: String,
         result: Result<String, String>,
     },
+    /// Intermediate/partial speech-to-text transcription update.
+    SpeechPartialTranscription { workspace_id: String, text: String },
 }

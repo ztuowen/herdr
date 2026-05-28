@@ -123,8 +123,10 @@ pub struct App {
     pub(crate) recording_sample_rate: u32,
     pub(crate) recording_channels: u16,
     pub(crate) recording_key: Option<TerminalKey>,
+    pub(crate) recording_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) recording_start_time: Option<std::time::Instant>,
+    pub(crate) release_events_supported: bool,
 }
-
 pub(crate) const APP_EVENT_CHANNEL_CAPACITY: usize = 256;
 pub(crate) const APP_EVENT_DRAIN_LIMIT: usize = 64;
 
@@ -485,6 +487,7 @@ impl App {
             copy_feedback: None,
             outer_terminal_focus: None,
             recording_workspace: None,
+            live_transcription: None,
             speech_to_text: config.speech_to_text.clone(),
             prefix_code,
             prefix_mods,
@@ -609,6 +612,9 @@ impl App {
             recording_sample_rate: 0,
             recording_channels: 0,
             recording_key: None,
+            recording_active: None,
+            recording_start_time: None,
+            release_events_supported: false,
         }
     }
 

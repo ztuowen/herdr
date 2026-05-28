@@ -44,18 +44,31 @@ impl App {
             return;
         }
 
+        if let AppEvent::SpeechPartialTranscription { workspace_id, text } = ev {
+            if self.state.recording_workspace.as_ref() == Some(&workspace_id) {
+                let sanitized = sanitize_transcription_text(&text);
+                self.state.live_transcription = Some(sanitized);
+                self.render_dirty.store(true, Ordering::Release);
+                self.render_notify.notify_one();
+            }
+            return;
+        }
+
         if let AppEvent::SpeechTranscribed {
             workspace_id,
             result,
         } = ev
         {
+            self.state.live_transcription = None;
+            self.state.recording_workspace = None;
             let previous_toast = self.state.toast.clone();
             match result {
                 Ok(transcription) => {
+                    let sanitized = sanitize_transcription_text(&transcription);
                     self.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::Finished,
                         title: "Speech to Text".into(),
-                        context: transcription.clone(),
+                        context: sanitized.clone(),
                         target: None,
                     });
                     if let Some(ws_idx) = self
@@ -72,16 +85,16 @@ impl App {
                                         .map(|s| s.bracketed_paste)
                                         .unwrap_or(false);
                                     let payload = if bracketed {
-                                        format!("\x1b[200~{transcription}\x1b[201~")
+                                        format!("\x1b[200~{sanitized}\x1b[201~")
                                     } else {
-                                        transcription.clone()
+                                        sanitized.clone()
                                     };
                                     tracing::info!(
                                         "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, text={:?}",
                                         workspace_id,
                                         pane_id,
                                         bracketed,
-                                        transcription
+                                        sanitized
                                     );
                                     if let Err(e) =
                                         runtime.try_send_bytes(bytes::Bytes::from(payload))
@@ -338,7 +351,7 @@ impl App {
     ) {
         if self.state.toast != previous_toast {
             self.toast_deadline = self.state.toast.as_ref().and_then(|toast| {
-                if toast.context == "Transcribing..." {
+                if toast.context == "Transcribing..." || self.state.recording_workspace.is_some() {
                     None
                 } else {
                     let duration = match toast.kind {
@@ -537,5 +550,46 @@ impl App {
         };
 
         serde_json::to_string(&response).unwrap()
+    }
+}
+
+fn sanitize_transcription_text(text: &str) -> String {
+    let mut result = String::new();
+    let mut last_was_space = false;
+
+    for c in text.chars() {
+        if c.is_control() {
+            continue;
+        }
+
+        if c.is_whitespace() {
+            if !last_was_space {
+                result.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            result.push(c);
+            last_was_space = false;
+        }
+    }
+
+    result.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_transcription_text() {
+        // Test normal text
+        assert_eq!(sanitize_transcription_text("hello world"), "hello world");
+
+        // Test ASCII control characters (should be removed)
+        assert_eq!(sanitize_transcription_text("hello\x15world\x03\r\n"), "helloworld");
+
+        // Test multiple whitespace characters (should be collapsed to a single space)
+        assert_eq!(sanitize_transcription_text("hello   \t  world"), "hello world");
+        assert_eq!(sanitize_transcription_text("  hello world  "), "hello world");
     }
 }

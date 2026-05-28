@@ -164,9 +164,7 @@ impl App {
 
             if is_direct_match || is_prefix_match {
                 if let Some(ws_idx) = self.state.active {
-                    if self.start_recording(ws_idx, key)
-                        && self.state.mode == Mode::Prefix
-                    {
+                    if self.start_recording(ws_idx, key) && self.state.mode == Mode::Prefix {
                         self::navigate::leave_command_mode(&mut self.state);
                     }
                 }

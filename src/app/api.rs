@@ -83,7 +83,9 @@ impl App {
                                         bracketed,
                                         transcription
                                     );
-                                    if let Err(e) = runtime.try_send_bytes(bytes::Bytes::from(payload)) {
+                                    if let Err(e) =
+                                        runtime.try_send_bytes(bytes::Bytes::from(payload))
+                                    {
                                         tracing::error!("Speech to text: failed to write transcription to PTY: {:?}", e);
                                     }
                                 } else {
@@ -94,7 +96,10 @@ impl App {
                                     );
                                 }
                             } else {
-                                tracing::warn!("Speech to text: no focused pane in workspace={}", workspace_id);
+                                tracing::warn!(
+                                    "Speech to text: no focused pane in workspace={}",
+                                    workspace_id
+                                );
                             }
                         }
                     }

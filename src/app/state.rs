@@ -1741,12 +1741,26 @@ impl AppState {
         .split(inner);
         let desc_area = rows[6];
 
-        let (display_desc, _) = crate::ui::get_description_text(&item.description);
-        let mut total_lines =
-            crate::ui::count_wrapped_lines(&display_desc, desc_area.width as usize) + 1;
+        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
+        let mut desc_lines = vec![];
         if !item.description.is_empty() {
-            total_lines +=
-                crate::ui::count_wrapped_lines(&item.description, desc_area.width as usize) + 1;
+            desc_lines.push(item.description.clone());
+            desc_lines.push(String::new());
+        }
+        if is_err {
+            desc_lines.push(display_desc);
+        } else {
+            let markdown_lines = crate::ui::parse_markdown(&display_desc, &self.palette);
+            for line in markdown_lines {
+                let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                desc_lines.push(line_text);
+            }
+        }
+
+        let mut total_lines =
+            crate::ui::count_wrapped_lines("Description:", desc_area.width as usize);
+        for line_text in desc_lines {
+            total_lines += crate::ui::count_wrapped_lines(&line_text, desc_area.width as usize);
         }
         total_lines.saturating_sub(desc_area.height as usize) as u16
     }

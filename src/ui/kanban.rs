@@ -403,9 +403,7 @@ fn render_kanban_detail_modal(
             Style::default().fg(p.red).add_modifier(Modifier::BOLD),
         )));
     } else {
-        for line in display_desc.split('\n') {
-            desc_lines.push(Line::from(Span::styled(line, Style::default().fg(p.text))));
-        }
+        desc_lines.extend(super::parse_markdown(&display_desc, p));
     }
 
     let desc_text = Paragraph::new(desc_lines)

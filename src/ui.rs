@@ -8,6 +8,7 @@ use ratatui::{
 mod dialogs;
 mod kanban;
 mod keybind_help;
+mod markdown;
 mod menus;
 mod mobile;
 mod navigator;
@@ -28,6 +29,7 @@ use self::dialogs::{
 use self::kanban::render_kanban;
 pub(crate) use self::kanban::{count_wrapped_lines, get_description_text};
 use self::keybind_help::render_keybind_help_overlay;
+pub(crate) use self::markdown::parse_markdown;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,
     render_prefix_overlay, render_resize_overlay,

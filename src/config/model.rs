@@ -231,7 +231,7 @@ pub struct KeysConfig {
     pub toggle_sidebar: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
-    /// Toggle speech-to-text recording. Default: "ctrl+space"
+    /// Toggle speech-to-text recording. Default: "ctrl+q"
     pub speech_to_text: BindingConfig,
     /// Prefix-mode custom command bindings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -415,7 +415,7 @@ impl Default for KeysConfig {
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
-            speech_to_text: BindingConfig::one("ctrl+space"),
+            speech_to_text: BindingConfig::one("ctrl+q"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
         }

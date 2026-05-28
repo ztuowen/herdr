@@ -56,7 +56,7 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
-        if self.handle_speech_to_text_key(key).await {
+        if self.handle_speech_to_text_key(key) {
             return;
         }
 
@@ -109,7 +109,7 @@ impl App {
         }
     }
 
-    async fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
+    pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
         let api_key = match &self.state.speech_to_text.gemini_api_key {
             Some(k) if !k.trim().is_empty() => k.clone(),
             _ => return false,
@@ -126,6 +126,7 @@ impl App {
                 }
 
                 if key.code == KeyCode::Esc {
+                    let previous_toast = self.state.toast.clone();
                     let _ = self.stop_recording();
                     self.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::NeedsAttention,
@@ -133,6 +134,7 @@ impl App {
                         context: "Recording aborted.".into(),
                         target: None,
                     });
+                    self.sync_toast_deadline(previous_toast);
                     return true;
                 }
 
@@ -162,10 +164,10 @@ impl App {
 
             if is_direct_match || is_prefix_match {
                 if let Some(ws_idx) = self.state.active {
-                    if self.start_recording(ws_idx, key) {
-                        if self.state.mode == Mode::Prefix {
-                            self::navigate::leave_command_mode(&mut self.state);
-                        }
+                    if self.start_recording(ws_idx, key)
+                        && self.state.mode == Mode::Prefix
+                    {
+                        self::navigate::leave_command_mode(&mut self.state);
                     }
                 }
                 return true;

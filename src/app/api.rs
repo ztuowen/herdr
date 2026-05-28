@@ -49,6 +49,7 @@ impl App {
             result,
         } = ev
         {
+            let previous_toast = self.state.toast.clone();
             match result {
                 Ok(transcription) => {
                     self.state.toast = Some(crate::app::state::ToastNotification {
@@ -66,9 +67,34 @@ impl App {
                         if let Some(ws) = self.state.workspaces.get(ws_idx) {
                             if let Some(pane_id) = ws.focused_pane_id() {
                                 if let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) {
-                                    let _ =
-                                        runtime.try_send_bytes(bytes::Bytes::from(transcription));
+                                    let bracketed = runtime
+                                        .input_state()
+                                        .map(|s| s.bracketed_paste)
+                                        .unwrap_or(false);
+                                    let payload = if bracketed {
+                                        format!("\x1b[200~{transcription}\x1b[201~")
+                                    } else {
+                                        transcription.clone()
+                                    };
+                                    tracing::info!(
+                                        "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, text={:?}",
+                                        workspace_id,
+                                        pane_id,
+                                        bracketed,
+                                        transcription
+                                    );
+                                    if let Err(e) = runtime.try_send_bytes(bytes::Bytes::from(payload)) {
+                                        tracing::error!("Speech to text: failed to write transcription to PTY: {:?}", e);
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "Speech to text: could not find active runtime for workspace={}, pane={:?}",
+                                        workspace_id,
+                                        pane_id
+                                    );
                                 }
+                            } else {
+                                tracing::warn!("Speech to text: no focused pane in workspace={}", workspace_id);
                             }
                         }
                     }
@@ -82,6 +108,7 @@ impl App {
                     });
                 }
             }
+            self.sync_toast_deadline(previous_toast);
             self.render_dirty.store(true, Ordering::Release);
             self.render_notify.notify_one();
             return;
@@ -305,13 +332,17 @@ impl App {
         previous_toast: Option<crate::app::state::ToastNotification>,
     ) {
         if self.state.toast != previous_toast {
-            self.toast_deadline = self.state.toast.as_ref().map(|toast| {
-                let duration = match toast.kind {
-                    ToastKind::NeedsAttention => Duration::from_secs(8),
-                    ToastKind::Finished => Duration::from_secs(5),
-                    ToastKind::UpdateInstalled => Duration::from_secs(3),
-                };
-                Instant::now() + duration
+            self.toast_deadline = self.state.toast.as_ref().and_then(|toast| {
+                if toast.context == "Transcribing..." {
+                    None
+                } else {
+                    let duration = match toast.kind {
+                        ToastKind::NeedsAttention => Duration::from_secs(8),
+                        ToastKind::Finished => Duration::from_secs(5),
+                        ToastKind::UpdateInstalled => Duration::from_secs(3),
+                    };
+                    Some(Instant::now() + duration)
+                }
             });
         }
     }

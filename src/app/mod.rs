@@ -1245,6 +1245,9 @@ impl App {
         for event in events {
             match event {
                 crate::raw_input::RawInputEvent::Key(key) => {
+                    if self.handle_speech_to_text_key(key) {
+                        continue;
+                    }
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
@@ -1549,6 +1552,7 @@ impl App {
         api_key: String,
     ) {
         let duration_secs = samples.len() as f32 / (sample_rate as f32 * channels as f32);
+        let previous_toast = self.state.toast.clone();
         if duration_secs < 0.3 {
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::NeedsAttention,
@@ -1556,6 +1560,7 @@ impl App {
                 context: "Recording too short.".into(),
                 target: None,
             });
+            self.sync_toast_deadline(previous_toast);
             return;
         }
 
@@ -1577,6 +1582,7 @@ impl App {
                 target: None,
             });
         }
+        self.sync_toast_deadline(previous_toast);
 
         let event_tx = self.event_tx.clone();
         let model = self
@@ -1586,18 +1592,35 @@ impl App {
             .clone()
             .unwrap_or_else(|| "gemini-2.5-flash".to_string());
 
+        tracing::info!(
+            "Speech to text: starting transcription. workspace_id={}, samples={}, sample_rate={}, channels={}, model={}",
+            workspace_id,
+            samples.len(),
+            sample_rate,
+            channels,
+            model
+        );
+
         std::thread::spawn(move || {
             let mono = downmix_to_mono(&samples, channels);
             let resampled = resample(&mono, sample_rate, 16000);
             let wav_bytes = create_wav_data(&resampled, 16000);
 
+            tracing::info!(
+                "Speech to text: sending request to Gemini API (WAV size: {} bytes)",
+                wav_bytes.len()
+            );
             let result = request_gemini_transcription(&wav_bytes, &model, &api_key);
+            tracing::info!(
+                "Speech to text: API response result: {:?}",
+                result.as_ref().map(|s| s.len())
+            );
 
             let event = crate::events::AppEvent::SpeechTranscribed {
                 workspace_id,
                 result,
             };
-            let _ = event_tx.send(event);
+            let _ = event_tx.blocking_send(event);
         });
     }
 }
@@ -1710,8 +1733,13 @@ fn request_gemini_transcription(
 
     let payload_str = payload.to_string();
 
+    tracing::info!("Speech to text: spawning curl to post audio to Gemini API...");
     let mut child = std::process::Command::new("curl")
-        .arg("-s")
+        .arg("-sS")
+        .arg("--connect-timeout")
+        .arg("10")
+        .arg("--max-time")
+        .arg("30")
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -1728,21 +1756,33 @@ fn request_gemini_transcription(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn curl: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("Speech to text: failed to spawn curl: {}", e);
+            format!("Failed to spawn curl: {}", e)
+        })?;
 
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        stdin
-            .write_all(payload_str.as_bytes())
-            .map_err(|e| format!("Failed to write to curl stdin: {}", e))?;
+        tracing::debug!("Speech to text: writing base64 payload to curl stdin...");
+        stdin.write_all(payload_str.as_bytes()).map_err(|e| {
+            tracing::error!("Speech to text: failed to write payload to curl: {}", e);
+            format!("Failed to write to curl stdin: {}", e)
+        })?;
     }
 
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Failed to wait on curl: {}", e))?;
+    tracing::debug!("Speech to text: waiting for curl process output...");
+    let output = child.wait_with_output().map_err(|e| {
+        tracing::error!("Speech to text: failed to wait on curl: {}", e);
+        format!("Failed to wait on curl: {}", e)
+    })?;
 
     if !output.status.success() {
         let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        tracing::error!(
+            "Speech to text: curl process failed. exit_code={:?}, stderr={}",
+            output.status.code(),
+            err_msg
+        );
         return Err(format!("curl failed: {}", err_msg));
     }
 
@@ -3313,6 +3353,7 @@ mod tests {
     fn next_loop_deadline_includes_selection_autoscroll_deadline() {
         let mut app = test_app();
         let now = Instant::now();
+        app.next_resize_poll = now + Duration::from_secs(10);
         app.selection_autoscroll_deadline = Some(now + Duration::from_millis(5));
         app.next_animation_tick = Some(now + Duration::from_millis(100));
         app.session_save_deadline = Some(now + Duration::from_millis(200));
@@ -3993,6 +4034,7 @@ last_pane = "prefix+tab"
         let toast = app.state.toast.as_ref().unwrap();
         assert_eq!(toast.title, "Speech to Text");
         assert_eq!(toast.context, "hello world");
+        assert!(app.toast_deadline.is_some());
 
         let event_err = crate::events::AppEvent::SpeechTranscribed {
             workspace_id,
@@ -4003,5 +4045,43 @@ last_pane = "prefix+tab"
         let toast = app.state.toast.as_ref().unwrap();
         assert_eq!(toast.title, "Speech to Text Error");
         assert_eq!(toast.context, "mic failure");
+        assert!(app.toast_deadline.is_some());
+    }
+
+    #[test]
+    fn test_sync_toast_deadline_exemption() {
+        let mut app = test_app();
+
+        // Transcribing... should not set a deadline
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "Speech to Text".into(),
+            context: "Transcribing...".into(),
+            target: None,
+        });
+        app.sync_toast_deadline(None);
+        assert!(app.toast_deadline.is_none());
+
+        // Other content under Finished should set a deadline (5 seconds)
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "Speech to Text".into(),
+            context: "hello world".into(),
+            target: None,
+        });
+        let previous = app.state.toast.clone();
+        app.sync_toast_deadline(None);
+        assert!(app.toast_deadline.is_some());
+
+        // Reset deadline and test abort
+        app.toast_deadline = None;
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: "Speech to Text".into(),
+            context: "Recording aborted.".into(),
+            target: None,
+        });
+        app.sync_toast_deadline(previous);
+        assert!(app.toast_deadline.is_some());
     }
 }

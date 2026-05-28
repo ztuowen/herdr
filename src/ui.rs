@@ -55,8 +55,8 @@ pub(crate) use self::scrollbar::{
 use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
-    render_config_diagnostic, render_copy_feedback, render_recording_feedback,
-    render_toast_notification, toast_notification_rect,
+    render_config_diagnostic, render_copy_feedback, render_toast_notification,
+    toast_notification_rect,
 };
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
@@ -464,14 +464,6 @@ fn render_notifications(app: &AppState, frame: &mut Frame, terminal_area: Rect) 
             terminal_area
         };
         render_copy_feedback(frame, area, feedback, copy_feedback_offset, &app.palette);
-    }
-    if app.recording_workspace.is_some() {
-        let area = if app.view.layout == ViewLayout::Mobile {
-            frame.area()
-        } else {
-            terminal_area
-        };
-        render_recording_feedback(frame, area, copy_feedback_offset, &app.palette);
     }
 }
 

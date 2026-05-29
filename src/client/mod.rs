@@ -954,13 +954,14 @@ async fn run_client_loop(
                         .clone()
                         .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
 
-                    let system_instruction = if is_agent {
+                    let postprocess_instruction = if is_agent {
                         loaded_config
                             .config
                             .speech_to_text
                             .agent_system_instruction
                             .clone()
                             .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
+                            .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation.".to_string())
                     } else {
                         loaded_config
                             .config
@@ -968,8 +969,8 @@ async fn run_client_loop(
                             .terminal_system_instruction
                             .clone()
                             .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
-                    }
-                    .unwrap_or_else(|| "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string());
+                            .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation.".to_string())
+                    };
 
                     let recording_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
                     let recording_aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1158,7 +1159,7 @@ async fn run_client_loop(
                             pane_id,
                             api_key_clone,
                             model,
-                            system_instruction,
+                            postprocess_instruction,
                             buffer_clone,
                             channels,
                             sample_rate,
@@ -1562,7 +1563,7 @@ async fn run_client_websocket_transcription(
     pane_id: Option<crate::layout::PaneId>,
     api_key: String,
     model: String,
-    system_instruction: String,
+    postprocess_instruction: String,
     buffer: Arc<std::sync::Mutex<Vec<f32>>>,
     channels: u16,
     sample_rate: u32,
@@ -1616,7 +1617,7 @@ async fn run_client_websocket_transcription(
             "systemInstruction": {
                 "parts": [
                     {
-                        "text": system_instruction
+                        "text": "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary."
                     }
                 ]
             },
@@ -1801,7 +1802,7 @@ async fn run_client_websocket_transcription(
     let post_result = match raw_result {
         Ok(text) => {
             let api_key_clone = api_key.clone();
-            let system_instruction = "You are a transcription formatting assistant. Fix punctuation, capitalization, grammatical spacing, and spelling errors in the provided raw transcription. Preserve the exact content, words, and semantic meaning. Output only the corrected text.".to_string();
+            let system_instruction = postprocess_instruction.clone();
             let res = tokio::task::spawn_blocking(move || {
                 crate::app::speech::run_gemini_postprocess(api_key_clone, text, system_instruction)
             })

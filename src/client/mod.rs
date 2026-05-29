@@ -986,11 +986,6 @@ async fn run_client_loop(
                     let recording_active_clone = recording_active.clone();
                     let recording_aborted_clone = recording_aborted.clone();
 
-                    let callback_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                    let total_samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                    let callback_count_capture = callback_count.clone();
-                    let total_samples_capture = total_samples.clone();
-
                     let tokio_handle = tokio::runtime::Handle::current();
 
                     std::thread::spawn(move || {
@@ -1072,22 +1067,9 @@ async fn run_client_loop(
                         fn write_input_data_client<T>(
                             data: &[T],
                             buffer: &Arc<std::sync::Mutex<Vec<f32>>>,
-                            callback_count: &std::sync::atomic::AtomicUsize,
-                            total_samples: &std::sync::atomic::AtomicUsize,
                         ) where
                             T: cpal::Sample<Float = f32>,
                         {
-                            let count = callback_count
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                                + 1;
-                            let total = total_samples
-                                .fetch_add(data.len(), std::sync::atomic::Ordering::Relaxed)
-                                + data.len();
-                            if count == 1 {
-                                tracing::info!("Speech to Text client: first microphone input callback invoked with {} samples", data.len());
-                            } else if count.is_multiple_of(50) {
-                                tracing::debug!("Speech to Text client: microphone callback invoked {} times, total samples captured = {}", count, total);
-                            }
                             if let Ok(mut buf) = buffer.lock() {
                                 for &sample in data {
                                     buf.push(sample.to_float_sample());
@@ -1101,39 +1083,33 @@ async fn run_client_loop(
                         );
                         let stream = match sample_format {
                             cpal::SampleFormat::I16 => {
-                                let cc = callback_count_capture.clone();
-                                let ts = total_samples_capture.clone();
                                 let bw = buffer_writer.clone();
                                 device.build_input_stream(
                                     &config.into(),
                                     move |data: &[i16], _: &_| {
-                                        write_input_data_client(data, &bw, &cc, &ts);
+                                        write_input_data_client(data, &bw);
                                     },
                                     err_fn,
                                     None,
                                 )
                             }
                             cpal::SampleFormat::U16 => {
-                                let cc = callback_count_capture.clone();
-                                let ts = total_samples_capture.clone();
                                 let bw = buffer_writer.clone();
                                 device.build_input_stream(
                                     &config.into(),
                                     move |data: &[u16], _: &_| {
-                                        write_input_data_client(data, &bw, &cc, &ts);
+                                        write_input_data_client(data, &bw);
                                     },
                                     err_fn,
                                     None,
                                 )
                             }
                             cpal::SampleFormat::F32 => {
-                                let cc = callback_count_capture.clone();
-                                let ts = total_samples_capture.clone();
                                 let bw = buffer_writer.clone();
                                 device.build_input_stream(
                                     &config.into(),
                                     move |data: &[f32], _: &_| {
-                                        write_input_data_client(data, &bw, &cc, &ts);
+                                        write_input_data_client(data, &bw);
                                     },
                                     err_fn,
                                     None,
@@ -1737,7 +1713,6 @@ async fn run_client_websocket_transcription(
     let mut current_turn_text = String::new();
     let mut recording_stopped = false;
     let mut stop_time: Option<std::time::Instant> = None;
-    let mut empty_ticks = 0_usize;
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
 
@@ -1775,7 +1750,6 @@ async fn run_client_websocket_transcription(
                     };
 
                     if !new_samples.is_empty() {
-                        empty_ticks = 0;
                         let mono = crate::app::speech::downmix_to_mono(&new_samples, channels);
                         let resampled = crate::app::speech::resample(&mono, sample_rate, 16000);
 
@@ -1787,26 +1761,6 @@ async fn run_client_websocket_transcription(
                         }
 
                         let base64_audio = base64::prelude::BASE64_STANDARD.encode(&raw_bytes);
-
-                        let mut max_val = 0.0_f32;
-                        let mut min_val = 0.0_f32;
-                        let mut sum_sq = 0.0_f32;
-                        for &sample in &resampled {
-                            max_val = max_val.max(sample);
-                            min_val = min_val.min(sample);
-                            sum_sq += sample * sample;
-                        }
-                        let rms = (sum_sq / resampled.len() as f32).sqrt();
-
-                        tracing::debug!(
-                            "Speech to Text client: sending audio chunk: {} raw samples, resampled to {} samples at 16kHz, base64 length = {}, min={:.4}, max={:.4}, rms={:.4}",
-                            new_samples.len(),
-                            resampled.len(),
-                            base64_audio.len(),
-                            min_val,
-                            max_val,
-                            rms
-                        );
 
                         let media_msg = serde_json::json!({
                             "realtimeInput": {
@@ -1820,11 +1774,6 @@ async fn run_client_websocket_transcription(
                         if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(media_msg.to_string())).await {
                             tracing::error!("Speech to Text client: failed to send audio chunk: {}", e);
                             break;
-                        }
-                    } else {
-                        empty_ticks += 1;
-                        if empty_ticks.is_multiple_of(10) {
-                            tracing::debug!("Speech to Text client: recording loop ticking, buffer is currently empty (accumulated {} empty ticks)", empty_ticks);
                         }
                     }
                 }
@@ -1843,29 +1792,8 @@ async fn run_client_websocket_transcription(
                     }
                 };
 
-                match &msg {
-                    tokio_tungstenite::tungstenite::Message::Text(text) => {
-                        tracing::debug!("Speech to Text client: received WebSocket Text message (len={}): {}", text.len(), text);
-                    }
-                    tokio_tungstenite::tungstenite::Message::Binary(bin) => {
-                        if let Ok(text) = String::from_utf8(bin.clone()) {
-                            tracing::debug!("Speech to Text client: received WebSocket Binary message (len={}) containing UTF-8 text: {}", bin.len(), text);
-                        } else {
-                            tracing::debug!("Speech to Text client: received WebSocket Binary message (len={}) containing non-UTF-8 data (first up to 32 bytes: {:?})", bin.len(), &bin[..std::cmp::min(32, bin.len())]);
-                        }
-                    }
-                    tokio_tungstenite::tungstenite::Message::Ping(payload) => {
-                        tracing::debug!("Speech to Text client: received WebSocket Ping (len={})", payload.len());
-                    }
-                    tokio_tungstenite::tungstenite::Message::Pong(payload) => {
-                        tracing::debug!("Speech to Text client: received WebSocket Pong (len={})", payload.len());
-                    }
-                    tokio_tungstenite::tungstenite::Message::Close(frame) => {
-                        tracing::info!("Speech to Text client: received WebSocket Close frame: {:?}", frame);
-                    }
-                    tokio_tungstenite::tungstenite::Message::Frame(_) => {
-                        tracing::debug!("Speech to Text client: received raw WebSocket frame");
-                    }
+                if let tokio_tungstenite::tungstenite::Message::Close(frame) = &msg {
+                    tracing::info!("Speech to Text client: received WebSocket Close frame: {:?}", frame);
                 }
 
                 let text_opt = match &msg {
@@ -1876,7 +1804,6 @@ async fn run_client_websocket_transcription(
 
                 if let Some(text) = text_opt {
                     let parse_res = crate::app::speech::parse_live_transcription_frame(&text);
-                    tracing::debug!("Speech to Text client: parsed frame: {:?}", parse_res);
                     if let Some((partial, turn_complete)) = parse_res {
                         if !partial.is_empty() {
                             current_turn_text.push_str(&partial);

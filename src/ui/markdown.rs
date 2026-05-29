@@ -305,16 +305,43 @@ pub fn parse_markdown(text: &str, palette: &Palette) -> Vec<Line<'static>> {
             if suffix.starts_with("- ") || suffix.starts_with("* ") || suffix.starts_with("+ ") {
                 let content = &suffix[2..];
                 let indent_str = " ".repeat(indent_len);
-                let mut spans = vec![
-                    Span::styled(indent_str, Style::default()),
-                    Span::styled("• ", Style::default().fg(palette.accent)),
-                ];
-                spans.extend(parse_inline_style(
-                    content,
-                    palette,
-                    Style::default().fg(palette.text),
-                ));
-                lines.push(Line::from(spans));
+                
+                if content == "[ ]" || content.starts_with("[ ] ") {
+                    let task_text = if content.len() > 4 { &content[4..] } else { "" };
+                    let mut spans = vec![
+                        Span::styled(indent_str, Style::default()),
+                        Span::styled("[ ] ", Style::default().fg(palette.overlay1)),
+                    ];
+                    spans.extend(parse_inline_style(
+                        task_text,
+                        palette,
+                        Style::default().fg(palette.text),
+                    ));
+                    lines.push(Line::from(spans));
+                } else if content == "[x]" || content.starts_with("[x] ") || content == "[X]" || content.starts_with("[X] ") {
+                    let task_text = if content.len() > 4 { &content[4..] } else { "" };
+                    let mut spans = vec![
+                        Span::styled(indent_str, Style::default()),
+                        Span::styled("[✓] ", Style::default().fg(palette.green)),
+                    ];
+                    spans.extend(parse_inline_style(
+                        task_text,
+                        palette,
+                        Style::default().fg(palette.subtext0).add_modifier(Modifier::CROSSED_OUT),
+                    ));
+                    lines.push(Line::from(spans));
+                } else {
+                    let mut spans = vec![
+                        Span::styled(indent_str, Style::default()),
+                        Span::styled("• ", Style::default().fg(palette.accent)),
+                    ];
+                    spans.extend(parse_inline_style(
+                        content,
+                        palette,
+                        Style::default().fg(palette.text),
+                    ));
+                    lines.push(Line::from(spans));
+                }
             } else {
                 // Check for ordered list
                 let digit_chars: String =
@@ -460,5 +487,40 @@ mod tests {
         let lines = parse_markdown("---", &palette);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].spans[0].content, "─".repeat(40));
+    }
+
+    #[test]
+    fn test_parse_markdown_task_lists() {
+        let palette = test_palette();
+
+        // Task lists: unchecked and checked
+        let lines = parse_markdown("- [ ] Todo item\n* [x] Done item\n+ [X] Another done\n  - [ ] Nested todo", &palette);
+        assert_eq!(lines.len(), 4);
+
+        // First item: "- [ ] Todo item"
+        assert_eq!(lines[0].spans[0].content, "");
+        assert_eq!(lines[0].spans[1].content, "[ ] ");
+        assert_eq!(lines[0].spans[1].style.fg, Some(palette.overlay1));
+        assert_eq!(lines[0].spans[2].content, "Todo item");
+
+        // Second item: "* [x] Done item"
+        assert_eq!(lines[1].spans[0].content, "");
+        assert_eq!(lines[1].spans[1].content, "[✓] ");
+        assert_eq!(lines[1].spans[1].style.fg, Some(palette.green));
+        assert_eq!(lines[1].spans[2].content, "Done item");
+        assert!(lines[1].spans[2].style.add_modifier.contains(Modifier::CROSSED_OUT));
+        assert_eq!(lines[1].spans[2].style.fg, Some(palette.subtext0));
+
+        // Third item: "+ [X] Another done"
+        assert_eq!(lines[2].spans[0].content, "");
+        assert_eq!(lines[2].spans[1].content, "[✓] ");
+        assert_eq!(lines[2].spans[1].style.fg, Some(palette.green));
+        assert_eq!(lines[2].spans[2].content, "Another done");
+        assert!(lines[2].spans[2].style.add_modifier.contains(Modifier::CROSSED_OUT));
+
+        // Fourth item: "  - [ ] Nested todo"
+        assert_eq!(lines[3].spans[0].content, "  ");
+        assert_eq!(lines[3].spans[1].content, "[ ] ");
+        assert_eq!(lines[3].spans[2].content, "Nested todo");
     }
 }

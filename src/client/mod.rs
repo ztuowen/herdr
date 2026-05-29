@@ -989,25 +989,9 @@ async fn run_client_loop(
                     let tokio_handle = tokio::runtime::Handle::current();
 
                     std::thread::spawn(move || {
-                        tracing::info!(
-                            "Speech to Text client: starting audio recording setup thread..."
-                        );
                         let host = cpal::default_host();
-                        tracing::info!("Speech to Text client: querying default input device...");
                         let device = match host.default_input_device() {
-                            Some(dev) => {
-                                if let Ok(name) = dev.name() {
-                                    tracing::info!(
-                                        "Speech to Text client: selected input device: {}",
-                                        name
-                                    );
-                                } else {
-                                    tracing::info!(
-                                        "Speech to Text client: selected unnamed input device"
-                                    );
-                                }
-                                dev
-                            }
+                            Some(dev) => dev,
                             None => {
                                 tracing::warn!(
                                     "Speech to Text client: default input device is None"
@@ -1026,17 +1010,8 @@ async fn run_client_loop(
                             }
                         };
 
-                        tracing::info!("Speech to Text client: querying default input config...");
                         let config = match device.default_input_config() {
-                            Ok(cfg) => {
-                                tracing::info!(
-                                    "Speech to Text client: got input config: sample_rate={:?}, channels={}, sample_format={:?}",
-                                    cfg.sample_rate(),
-                                    cfg.channels(),
-                                    cfg.sample_format()
-                                );
-                                cfg
-                            }
+                            Ok(cfg) => cfg,
                             Err(e) => {
                                 tracing::error!("Speech to Text client: failed to get default input config: {:?}", e);
                                 let _ = event_tx_clone.blocking_send(
@@ -1077,10 +1052,6 @@ async fn run_client_loop(
                             }
                         }
 
-                        tracing::info!(
-                            "Speech to Text client: building input stream for sample format: {:?}",
-                            sample_format
-                        );
                         let stream = match sample_format {
                             cpal::SampleFormat::I16 => {
                                 let bw = buffer_writer.clone();
@@ -1136,12 +1107,7 @@ async fn run_client_loop(
                         };
 
                         let stream = match stream {
-                            Ok(s) => {
-                                tracing::info!(
-                                    "Speech to Text client: input stream built successfully"
-                                );
-                                s
-                            }
+                            Ok(s) => s,
                             Err(e) => {
                                 tracing::error!(
                                     "Speech to Text client: failed to build input stream: {:?}",
@@ -1163,7 +1129,6 @@ async fn run_client_loop(
                             }
                         };
 
-                        tracing::info!("Speech to Text client: starting stream play...");
                         if let Err(e) = stream.play() {
                             tracing::error!("Speech to Text client: stream.play() failed: {:?}", e);
                             let _ =
@@ -1179,7 +1144,6 @@ async fn run_client_loop(
                                 ));
                             return;
                         }
-                        tracing::info!("Speech to Text client: stream.play() succeeded");
 
                         if event_tx_clone
                             .blocking_send(ClientLoopEvent::RecordingStarted(SendStream(stream)))
@@ -1188,7 +1152,6 @@ async fn run_client_loop(
                             tracing::error!("Speech to Text client: failed to send RecordingStarted event to client loop");
                             return;
                         }
-                        tracing::info!("Speech to Text client: sent RecordingStarted event successfully, spawning WebSocket transcription task...");
 
                         tokio_handle.spawn(run_client_websocket_transcription(
                             workspace_id_clone,
@@ -1616,36 +1579,13 @@ async fn run_client_websocket_transcription(
         format!("models/{}", model)
     };
 
-    tracing::info!(
-        "Speech to Text client: starting WebSocket transcription: model={}, model_name={}, channels={}, sample_rate={}",
-        model,
-        model_name,
-        channels,
-        sample_rate
-    );
-
-    let masked_key = if api_key.len() > 8 {
-        format!("***{}", &api_key[api_key.len() - 4..])
-    } else {
-        "***".to_string()
-    };
-
     let url = format!(
         "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={}",
         api_key
     );
 
-    tracing::info!(
-        "Speech to Text client: connecting to Gemini Live WebSocket URL with key={}",
-        masked_key
-    );
     let ws_stream = match tokio_tungstenite::connect_async(&url).await {
-        Ok((stream, _)) => {
-            tracing::info!(
-                "Speech to Text client: Gemini Live WebSocket connection established successfully!"
-            );
-            stream
-        }
+        Ok((stream, _)) => stream,
         Err(e) => {
             tracing::error!(
                 "Speech to Text client: failed to connect to Gemini Live WebSocket: {}",
@@ -1685,10 +1625,6 @@ async fn run_client_websocket_transcription(
         }
     });
 
-    tracing::info!(
-        "Speech to Text client: sending setup message: {}",
-        setup_msg.to_string()
-    );
     if let Err(e) = write
         .send(tokio_tungstenite::tungstenite::Message::Text(
             setup_msg.to_string(),
@@ -1707,7 +1643,6 @@ async fn run_client_websocket_transcription(
             .await;
         return;
     }
-    tracing::info!("Speech to Text client: setup message sent successfully.");
 
     let mut finalized_text = String::new();
     let mut current_turn_text = String::new();
@@ -1718,7 +1653,6 @@ async fn run_client_websocket_transcription(
 
     loop {
         if recording_aborted.load(std::sync::atomic::Ordering::Acquire) {
-            tracing::info!("Speech to Text client: transcription aborted");
             return;
         }
 
@@ -1726,7 +1660,6 @@ async fn run_client_websocket_transcription(
             _ = interval.tick() => {
                 if !recording_stopped {
                     if !recording_active.load(std::sync::atomic::Ordering::Acquire) {
-                        tracing::info!("Speech to Text client: stop recording detected, sending turnComplete...");
                         recording_stopped = true;
                         stop_time = Some(std::time::Instant::now());
 
@@ -1787,14 +1720,9 @@ async fn run_client_websocket_transcription(
                         break;
                     }
                     None => {
-                        tracing::info!("Speech to Text client: WebSocket stream ended by server");
                         break;
                     }
                 };
-
-                if let tokio_tungstenite::tungstenite::Message::Close(frame) = &msg {
-                    tracing::info!("Speech to Text client: received WebSocket Close frame: {:?}", frame);
-                }
 
                 let text_opt = match &msg {
                     tokio_tungstenite::tungstenite::Message::Text(text) => Some(text.clone()),
@@ -1822,7 +1750,6 @@ async fn run_client_websocket_transcription(
                             )).await;
                         }
                         if turn_complete {
-                            tracing::info!("Speech to Text client: turnComplete received from server");
                             if !current_turn_text.is_empty() {
                                 if !finalized_text.is_empty() {
                                     finalized_text.push(' ');
@@ -1871,25 +1798,15 @@ async fn run_client_websocket_transcription(
         Err("No speech detected / transcription empty.".to_string())
     };
 
-    tracing::info!(
-        "Speech to Text client: raw transcription result: {:?}",
-        raw_result
-    );
-
     let post_result = match raw_result {
         Ok(text) => {
             let api_key_clone = api_key.clone();
             let system_instruction = "You are a transcription formatting assistant. Fix punctuation, capitalization, grammatical spacing, and spelling errors in the provided raw transcription. Preserve the exact content, words, and semantic meaning. Output only the corrected text.".to_string();
-            tracing::info!("Speech to Text client: starting Gemini post-processing refinement...");
             let res = tokio::task::spawn_blocking(move || {
                 crate::app::speech::run_gemini_postprocess(api_key_clone, text, system_instruction)
             })
             .await
             .unwrap_or_else(|e| Err(format!("Post-process task join error: {}", e)));
-            tracing::info!(
-                "Speech to Text client: Gemini post-processing refinement finished: {:?}",
-                res
-            );
             res
         }
         Err(e) => Err(e),

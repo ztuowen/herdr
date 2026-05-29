@@ -348,7 +348,6 @@ async fn run_websocket_transcription(
         api_key
     );
 
-    tracing::info!("Speech to Text: connecting to Gemini Live WebSocket...");
     let ws_stream = match tokio_tungstenite::connect_async(&url).await {
         Ok((stream, _)) => stream,
         Err(e) => {
@@ -387,7 +386,6 @@ async fn run_websocket_transcription(
         }
     });
 
-    tracing::info!("Speech to Text: sending setup message...");
     if let Err(e) = write
         .send(tokio_tungstenite::tungstenite::Message::Text(
             setup_msg.to_string(),
@@ -415,7 +413,6 @@ async fn run_websocket_transcription(
             _ = interval.tick() => {
                 if !recording_stopped {
                     if !recording_active.load(std::sync::atomic::Ordering::Acquire) {
-                        tracing::info!("Speech to Text: stop recording detected, sending turnComplete (audioStreamEnd)...");
                         recording_stopped = true;
                         stop_time = Some(std::time::Instant::now());
 
@@ -433,13 +430,7 @@ async fn run_websocket_transcription(
 
                     let new_samples = {
                         match buffer.lock() {
-                            Ok(mut buf) => {
-                                let samples = std::mem::take(&mut *buf);
-                                if !samples.is_empty() {
-                                    tracing::debug!("Speech to Text: read {} raw samples from buffer", samples.len());
-                                }
-                                samples
-                            }
+                            Ok(mut buf) => std::mem::take(&mut *buf),
                             Err(_) => Vec::new(),
                         }
                     };
@@ -447,8 +438,6 @@ async fn run_websocket_transcription(
                     if !new_samples.is_empty() {
                         let mono = downmix_to_mono(&new_samples, channels);
                         let resampled = resample(&mono, sample_rate, 16000);
-
-                        tracing::debug!("Speech to Text: downmixed to {} samples, resampled to {} samples", mono.len(), resampled.len());
 
                         let mut raw_bytes = Vec::with_capacity(resampled.len() * 2);
                         for &sample in &resampled {
@@ -484,12 +473,10 @@ async fn run_websocket_transcription(
                         break;
                     }
                     None => {
-                        tracing::info!("Speech to Text: WebSocket stream ended by server");
                         break;
                     }
                 };
 
-                tracing::debug!("Speech to Text: WebSocket message received: {:?}", msg);
                 let text_opt = match &msg {
                     tokio_tungstenite::tungstenite::Message::Text(text) => Some(text.clone()),
                     tokio_tungstenite::tungstenite::Message::Binary(bin) => String::from_utf8(bin.clone()).ok(),
@@ -513,7 +500,6 @@ async fn run_websocket_transcription(
                             }).await;
                         }
                         if turn_complete {
-                            tracing::info!("Speech to Text: turnComplete received from server");
                             if !current_turn_text.is_empty() {
                                 if !finalized_text.is_empty() {
                                     finalized_text.push(' ');
@@ -528,8 +514,7 @@ async fn run_websocket_transcription(
                     }
                 }
 
-                if let tokio_tungstenite::tungstenite::Message::Close(frame) = msg {
-                    tracing::info!("Speech to Text: Close frame received: {:?}", frame);
+                if let tokio_tungstenite::tungstenite::Message::Close(_frame) = msg {
                     break;
                 }
             }

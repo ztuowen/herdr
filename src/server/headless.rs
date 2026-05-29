@@ -1927,13 +1927,16 @@ impl HeadlessServer {
                 text,
             } => {
                 if Some(client_id) == self.foreground_client_id {
-                    let _ = self
-                        .app
-                        .event_tx
-                        .blocking_send(AppEvent::SpeechPartialTranscription {
-                            workspace_id: workspace_id.clone(),
-                            text: text.clone(),
-                        });
+                    if let Err(e) =
+                        self.app
+                            .event_tx
+                            .try_send(AppEvent::SpeechPartialTranscription {
+                                workspace_id: workspace_id.clone(),
+                                text: text.clone(),
+                            })
+                    {
+                        tracing::error!("failed to send SpeechPartialTranscription: {:?}", e);
+                    }
                 }
                 false
             }
@@ -1944,14 +1947,13 @@ impl HeadlessServer {
                 result,
             } => {
                 if Some(client_id) == self.foreground_client_id {
-                    let _ = self
-                        .app
-                        .event_tx
-                        .blocking_send(AppEvent::SpeechTranscribed {
-                            workspace_id: workspace_id.clone(),
-                            pane_id,
-                            result: result.clone(),
-                        });
+                    if let Err(e) = self.app.event_tx.try_send(AppEvent::SpeechTranscribed {
+                        workspace_id: workspace_id.clone(),
+                        pane_id,
+                        result: result.clone(),
+                    }) {
+                        tracing::error!("failed to send SpeechTranscribed: {:?}", e);
+                    }
                 }
                 false
             }

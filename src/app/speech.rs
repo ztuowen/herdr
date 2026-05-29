@@ -39,13 +39,16 @@ impl App {
                 target: None,
             });
 
-            let _ = self
+            if let Err(e) = self
                 .event_tx
-                .blocking_send(crate::events::AppEvent::SpeechStartRecording {
+                .try_send(crate::events::AppEvent::SpeechStartRecording {
                     workspace_id,
                     pane_id,
                     is_agent,
-                });
+                })
+            {
+                tracing::error!("failed to send SpeechStartRecording: {:?}", e);
+            }
             return true;
         }
 
@@ -240,9 +243,12 @@ impl App {
         }
 
         if !self.no_session {
-            let _ = self
+            if let Err(e) = self
                 .event_tx
-                .blocking_send(crate::events::AppEvent::SpeechStopRecording { abort });
+                .try_send(crate::events::AppEvent::SpeechStopRecording { abort })
+            {
+                tracing::error!("failed to send SpeechStopRecording: {:?}", e);
+            }
             if abort {
                 self.state.recording_workspace = None;
                 self.state.live_transcription = None;

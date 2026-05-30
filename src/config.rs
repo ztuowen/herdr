@@ -19,8 +19,8 @@ pub use self::{
     },
     model::{
         validated_sidebar_bounds, AgentPanelScopeConfig, Config, ConfigReloadReport,
-        ConfigReloadStatus, KeysConfig, NewTerminalCwdConfig, SpeechToTextConfig, ToastConfig,
-        ToastDelivery,
+        ConfigReloadStatus, KeysConfig, NewTerminalCwdConfig, ShellModeConfig, SpeechToTextConfig,
+        ToastConfig, ToastDelivery,
     },
     sound::SoundConfig,
     theme::{parse_color, CustomThemeColors, ThemeConfig},

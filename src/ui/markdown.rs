@@ -256,12 +256,20 @@ fn parse_inline_chars_with_links(
                 DelimiterKind::BoldAsterisk | DelimiterKind::BoldUnderscore => {
                     let content_chars = &chars[match_start + 2..match_end - 2];
                     let bold_style = current_style.add_modifier(Modifier::BOLD);
-                    spans.extend(parse_inline_chars_with_links(content_chars, palette, bold_style));
+                    spans.extend(parse_inline_chars_with_links(
+                        content_chars,
+                        palette,
+                        bold_style,
+                    ));
                 }
                 DelimiterKind::ItalicAsterisk | DelimiterKind::ItalicUnderscore => {
                     let content_chars = &chars[match_start + 1..match_end - 1];
                     let italic_style = current_style.add_modifier(Modifier::ITALIC);
-                    spans.extend(parse_inline_chars_with_links(content_chars, palette, italic_style));
+                    spans.extend(parse_inline_chars_with_links(
+                        content_chars,
+                        palette,
+                        italic_style,
+                    ));
                 }
                 DelimiterKind::Link {
                     label_end,
@@ -270,7 +278,7 @@ fn parse_inline_chars_with_links(
                 } => {
                     let abs_label_end = start + label_end;
                     let label_chars = &chars[match_start + 1..abs_label_end];
-                    
+
                     let abs_url_start = start + url_start;
                     let abs_url_end = start + url_end;
                     let url_str: String = chars[abs_url_start..abs_url_end].iter().collect();
@@ -279,7 +287,7 @@ fn parse_inline_chars_with_links(
                         .fg(palette.blue)
                         .add_modifier(Modifier::UNDERLINED);
                     let label_spans = parse_inline_chars(label_chars, palette, link_style);
-                    
+
                     spans.push(MarkdownSpan::Link {
                         label_spans,
                         url: url_str,
@@ -389,7 +397,10 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
         } else if line == ">" || line.starts_with("> ") {
             // Blockquote
             let content = line.strip_prefix("> ").unwrap_or("");
-            let mut spans = vec![MarkdownSpan::Text(Span::styled("│ ", Style::default().fg(palette.accent)))];
+            let mut spans = vec![MarkdownSpan::Text(Span::styled(
+                "│ ",
+                Style::default().fg(palette.accent),
+            ))];
             spans.extend(parse_inline_style_with_links(
                 content,
                 palette,
@@ -406,12 +417,15 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             if suffix.starts_with("- ") || suffix.starts_with("* ") || suffix.starts_with("+ ") {
                 let content = &suffix[2..];
                 let indent_str = " ".repeat(indent_len);
-                
+
                 if content == "[ ]" || content.starts_with("[ ] ") {
                     let task_text = if content.len() > 4 { &content[4..] } else { "" };
                     let mut spans = vec![
                         MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
-                        MarkdownSpan::Text(Span::styled("[ ] ", Style::default().fg(palette.overlay1))),
+                        MarkdownSpan::Text(Span::styled(
+                            "[ ] ",
+                            Style::default().fg(palette.overlay1),
+                        )),
                     ];
                     spans.extend(parse_inline_style_with_links(
                         task_text,
@@ -419,16 +433,25 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         Style::default().fg(palette.text),
                     ));
                     lines.push(MarkdownLine { spans });
-                } else if content == "[x]" || content.starts_with("[x] ") || content == "[X]" || content.starts_with("[X] ") {
+                } else if content == "[x]"
+                    || content.starts_with("[x] ")
+                    || content == "[X]"
+                    || content.starts_with("[X] ")
+                {
                     let task_text = if content.len() > 4 { &content[4..] } else { "" };
                     let mut spans = vec![
                         MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
-                        MarkdownSpan::Text(Span::styled("[✓] ", Style::default().fg(palette.green))),
+                        MarkdownSpan::Text(Span::styled(
+                            "[✓] ",
+                            Style::default().fg(palette.green),
+                        )),
                     ];
                     spans.extend(parse_inline_style_with_links(
                         task_text,
                         palette,
-                        Style::default().fg(palette.subtext0).add_modifier(Modifier::CROSSED_OUT),
+                        Style::default()
+                            .fg(palette.subtext0)
+                            .add_modifier(Modifier::CROSSED_OUT),
                     ));
                     lines.push(MarkdownLine { spans });
                 } else {
@@ -465,10 +488,15 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     ));
                     lines.push(MarkdownLine { spans });
                 } else if line.is_empty() {
-                    lines.push(MarkdownLine { spans: vec![MarkdownSpan::Text(Span::raw(""))] });
+                    lines.push(MarkdownLine {
+                        spans: vec![MarkdownSpan::Text(Span::raw(""))],
+                    });
                 } else {
-                    let spans =
-                        parse_inline_style_with_links(line, palette, Style::default().fg(palette.text));
+                    let spans = parse_inline_style_with_links(
+                        line,
+                        palette,
+                        Style::default().fg(palette.text),
+                    );
                     lines.push(MarkdownLine { spans });
                 }
             }
@@ -511,7 +539,7 @@ struct Token {
 
 pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
     use unicode_width::UnicodeWidthStr;
-    
+
     if width == 0 {
         return WrappedMarkdown {
             lines: Vec::new(),
@@ -641,7 +669,7 @@ fn commit_line(
 
     for (token, offset) in tokens_with_offsets {
         spans.push(Span::styled(token.text.clone(), token.style));
-        
+
         let token_width = unicode_width::UnicodeWidthStr::width(token.text.as_str());
         let token_end = offset + token_width;
 
@@ -787,7 +815,10 @@ mod tests {
         let palette = test_palette();
 
         // Task lists: unchecked and checked
-        let lines = parse_markdown("- [ ] Todo item\n* [x] Done item\n+ [X] Another done\n  - [ ] Nested todo", &palette);
+        let lines = parse_markdown(
+            "- [ ] Todo item\n* [x] Done item\n+ [X] Another done\n  - [ ] Nested todo",
+            &palette,
+        );
         assert_eq!(lines.len(), 4);
 
         // First item: "- [ ] Todo item"
@@ -801,7 +832,10 @@ mod tests {
         assert_eq!(lines[1].spans[1].content, "[✓] ");
         assert_eq!(lines[1].spans[1].style.fg, Some(palette.green));
         assert_eq!(lines[1].spans[2].content, "Done item");
-        assert!(lines[1].spans[2].style.add_modifier.contains(Modifier::CROSSED_OUT));
+        assert!(lines[1].spans[2]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT));
         assert_eq!(lines[1].spans[2].style.fg, Some(palette.subtext0));
 
         // Third item: "+ [X] Another done"
@@ -809,7 +843,10 @@ mod tests {
         assert_eq!(lines[2].spans[1].content, "[✓] ");
         assert_eq!(lines[2].spans[1].style.fg, Some(palette.green));
         assert_eq!(lines[2].spans[2].content, "Another done");
-        assert!(lines[2].spans[2].style.add_modifier.contains(Modifier::CROSSED_OUT));
+        assert!(lines[2].spans[2]
+            .style
+            .add_modifier
+            .contains(Modifier::CROSSED_OUT));
 
         // Fourth item: "  - [ ] Nested todo"
         assert_eq!(lines[3].spans[0].content, "  ");
@@ -820,43 +857,53 @@ mod tests {
     #[test]
     fn test_parse_markdown_with_links() {
         let palette = test_palette();
-        let md_lines = parse_markdown_with_links("hello [link label](http://example.com) world", &palette);
+        let md_lines =
+            parse_markdown_with_links("hello [link label](http://example.com) world", &palette);
         assert_eq!(md_lines.len(), 1);
-        
+
         let spans = &md_lines[0].spans;
         assert_eq!(spans.len(), 3);
-        
-        assert_eq!(spans[0], MarkdownSpan::Text(Span::styled("hello ", Style::default().fg(palette.text))));
-        
+
+        assert_eq!(
+            spans[0],
+            MarkdownSpan::Text(Span::styled("hello ", Style::default().fg(palette.text)))
+        );
+
         match &spans[1] {
             MarkdownSpan::Link { label_spans, url } => {
                 assert_eq!(url, "http://example.com");
                 assert_eq!(label_spans.len(), 1);
                 assert_eq!(label_spans[0].content, "link label");
                 assert_eq!(label_spans[0].style.fg, Some(palette.blue));
-                assert!(label_spans[0].style.add_modifier.contains(Modifier::UNDERLINED));
+                assert!(label_spans[0]
+                    .style
+                    .add_modifier
+                    .contains(Modifier::UNDERLINED));
             }
             _ => panic!("Expected MarkdownSpan::Link"),
         }
-        
-        assert_eq!(spans[2], MarkdownSpan::Text(Span::styled(" world", Style::default().fg(palette.text))));
+
+        assert_eq!(
+            spans[2],
+            MarkdownSpan::Text(Span::styled(" world", Style::default().fg(palette.text)))
+        );
     }
 
     #[test]
     fn test_wrap_markdown_with_links() {
         let palette = test_palette();
         let md_lines = parse_markdown_with_links("hello [link](http://foo) world", &palette);
-        
+
         let wrapped = wrap_markdown(&md_lines, 12);
-        
+
         assert_eq!(wrapped.lines.len(), 2);
         assert_eq!(wrapped.lines[0].spans[0].content, "hello");
         assert_eq!(wrapped.lines[0].spans[1].content, " ");
         assert_eq!(wrapped.lines[0].spans[2].content, "link");
-        
+
         assert_eq!(wrapped.link_ranges.len(), 1);
         assert_eq!(wrapped.link_ranges[0], (0, 6..10, "http://foo".to_string()));
-        
+
         assert_eq!(wrapped.lines[1].spans[0].content, "world");
     }
 }

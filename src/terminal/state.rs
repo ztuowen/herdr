@@ -72,6 +72,7 @@ pub struct TerminalState {
     pub state: AgentState,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
+    pub respawn_shell_on_exit: bool,
 }
 
 impl TerminalState {
@@ -96,11 +97,17 @@ impl TerminalState {
             state: AgentState::Unknown,
             revision: 0,
             launch_argv: None,
+            respawn_shell_on_exit: false,
         }
     }
 
     pub fn with_launch_argv(mut self, argv: Vec<String>) -> Self {
         self.launch_argv = Some(argv);
+        self
+    }
+
+    pub fn with_respawn_shell_on_exit(mut self) -> Self {
+        self.respawn_shell_on_exit = true;
         self
     }
 
@@ -632,6 +639,22 @@ impl TerminalState {
 
     pub fn clear_agent_name(&mut self) {
         self.agent_name = None;
+    }
+
+    pub fn clear_agent_runtime_identity_after_respawn(&mut self) {
+        self.detected_agent = None;
+        self.fallback_state = AgentState::Unknown;
+        self.fallback_visible_blocker = false;
+        self.fallback_visible_idle = false;
+        self.fallback_visible_working = false;
+        self.fallback_observed_at = None;
+        self.stale_hook_idle_since = None;
+        self.hook_authority = None;
+        self.persisted_agent_session = None;
+        self.agent_metadata.clear();
+        self.launch_argv = None;
+        self.respawn_shell_on_exit = false;
+        self.clear_agent_name();
     }
 
     pub fn is_agent_terminal(&self) -> bool {

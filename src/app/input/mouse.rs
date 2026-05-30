@@ -2224,7 +2224,7 @@ mod tests {
             80,
             app.state.pane_scrollback_limit_bytes,
             app.state.host_terminal_theme,
-            &app.state.default_shell,
+            crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
             app.event_tx.clone(),
             app.render_notify.clone(),
             app.render_dirty.clone(),
@@ -2551,6 +2551,7 @@ mod tests {
             mouse_protocol_mode: crate::input::MouseProtocolMode::ButtonMotion,
             mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Sgr,
             mouse_alternate_scroll: true,
+            modify_other_keys: false,
         };
 
         assert_eq!(wheel_routing(input_state), WheelRouting::MouseReport);
@@ -2875,6 +2876,7 @@ mod tests {
             mouse_protocol_mode: crate::input::MouseProtocolMode::None,
             mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Default,
             mouse_alternate_scroll: true,
+            modify_other_keys: false,
         };
 
         assert_eq!(wheel_routing(input_state), WheelRouting::AlternateScroll);
@@ -2890,6 +2892,7 @@ mod tests {
             mouse_protocol_mode: crate::input::MouseProtocolMode::None,
             mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Default,
             mouse_alternate_scroll: true,
+            modify_other_keys: false,
         };
 
         assert_eq!(wheel_routing(input_state), WheelRouting::HostScroll);
@@ -3157,7 +3160,8 @@ mod tests {
 
         // Test clicking hyperlinks inside detailed modal
         let link_file = temp_dir.join(format!("herdr-test-link-{}.md", uuid::Uuid::new_v4()));
-        let link_desc = "Check [my file](file:///path/to/my/file.txt) and [my website](https://example.com).";
+        let link_desc =
+            "Check [my file](file:///path/to/my/file.txt) and [my website](https://example.com).";
         std::fs::write(&link_file, &link_desc).unwrap();
         let link_path = link_file.to_string_lossy().to_string();
 
@@ -3171,8 +3175,14 @@ mod tests {
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
         let links = app.state.active_kanban_detail_hyperlinks();
-        let file_link_coord = links.iter().find(|(_, _, url)| url == "file:///path/to/my/file.txt").map(|(coord, _, _)| *coord);
-        let web_link_coord = links.iter().find(|(_, _, url)| url == "https://example.com").map(|(coord, _, _)| *coord);
+        let file_link_coord = links
+            .iter()
+            .find(|(_, _, url)| url == "file:///path/to/my/file.txt")
+            .map(|(coord, _, _)| *coord);
+        let web_link_coord = links
+            .iter()
+            .find(|(_, _, url)| url == "https://example.com")
+            .map(|(coord, _, _)| *coord);
 
         assert!(file_link_coord.is_some());
         assert!(web_link_coord.is_some());

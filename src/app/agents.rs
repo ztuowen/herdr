@@ -332,6 +332,8 @@ impl App {
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces.push(ws);
         let ws_idx = self.state.workspaces.len() - 1;
+        self.state
+            .remove_alias_shadowed_by_new_pane(self.state.workspaces[ws_idx].tabs[0].root_pane);
         if focus || self.state.active.is_none() {
             self.state.switch_workspace(ws_idx);
             self.state.mode = Mode::Terminal;
@@ -380,6 +382,8 @@ impl App {
         self.terminal_runtimes
             .insert(result.1.terminal.id.clone(), result.1.runtime);
         self.state
+            .remove_alias_shadowed_by_new_pane(result.1.pane_id);
+        self.state
             .terminals
             .insert(result.1.terminal.id.clone(), result.1.terminal);
         if focus {
@@ -413,11 +417,13 @@ impl App {
             agent_status: pane.agent_status,
             custom_status: pane.custom_status,
             state_labels: pane.state_labels,
+            agent_session: pane.agent_session,
             workspace_id: pane.workspace_id,
             tab_id: pane.tab_id,
             pane_id: pane.pane_id,
             focused: pane.focused,
             cwd: pane.cwd,
+            foreground_cwd: pane.foreground_cwd,
             revision: pane.revision,
         })
     }

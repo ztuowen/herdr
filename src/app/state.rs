@@ -638,6 +638,7 @@ pub enum Mode {
     ProductAnnouncement,
     Navigate,
     Prefix,
+    Copy,
     Terminal,
     RenameWorkspace,
     RenameTab,
@@ -702,6 +703,14 @@ pub(crate) struct NavigatorState {
     pub search_focused: bool,
     pub state_filter: Option<NavigatorStateFilter>,
     pub expanded_workspaces: std::collections::HashSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyModeState {
+    pub pane_id: PaneId,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub selecting: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1047,6 +1056,7 @@ pub struct AppState {
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
     /// Terminal ids whose size is currently owned by a direct attach client.
     pub direct_attach_resize_locks: std::collections::HashSet<crate::terminal::TerminalId>,
+    pub(crate) pane_id_aliases: std::collections::HashMap<u32, PaneId>,
     pub workspaces: Vec<Workspace>,
     pub active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
@@ -1089,6 +1099,7 @@ pub struct AppState {
     pub product_announcement: Option<ProductAnnouncementState>,
     pub keybind_help: KeybindHelpState,
     pub navigator: NavigatorState,
+    pub copy_mode: Option<CopyModeState>,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
     pub tab_scroll: usize,
@@ -1150,6 +1161,7 @@ pub struct AppState {
     pub cjk_ime_cursor_shape: u8,
     pub kitty_graphics_enabled: bool,
     pub default_shell: String,
+    pub shell_mode: crate::config::ShellModeConfig,
     pub new_terminal_cwd: NewTerminalCwdConfig,
     pub pane_scrollback_limit_bytes: usize,
     #[allow(dead_code)] // kept for backward compat; palette.accent is the source of truth
@@ -1190,6 +1202,10 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
+    }
+
+    pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
+        self.pane_id_aliases.remove(&pane_id.raw());
     }
 
     pub fn sound_enabled(&self) -> bool {
@@ -1742,13 +1758,15 @@ impl AppState {
         let desc_area = rows[6];
 
         let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
-        
+
         let p = &self.palette;
         let mut all_md_lines = Vec::new();
         all_md_lines.push(crate::ui::MarkdownLine {
             spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
                 "Description:",
-                ratatui::style::Style::default().fg(p.overlay1).add_modifier(ratatui::style::Modifier::BOLD),
+                ratatui::style::Style::default()
+                    .fg(p.overlay1)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ))],
         });
         if !item.description.is_empty() {
@@ -1766,7 +1784,9 @@ impl AppState {
             all_md_lines.push(crate::ui::MarkdownLine {
                 spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
                     display_desc,
-                    ratatui::style::Style::default().fg(p.red).add_modifier(ratatui::style::Modifier::BOLD),
+                    ratatui::style::Style::default()
+                        .fg(p.red)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
                 ))],
             });
         } else {
@@ -1774,7 +1794,10 @@ impl AppState {
         }
 
         let wrapped = crate::ui::wrap_markdown(&all_md_lines, desc_area.width as usize);
-        wrapped.lines.len().saturating_sub(desc_area.height as usize) as u16
+        wrapped
+            .lines
+            .len()
+            .saturating_sub(desc_area.height as usize) as u16
     }
 
     pub fn active_kanban_detail_hyperlinks(&self) -> Vec<((u16, u16), String, String)> {
@@ -1836,7 +1859,9 @@ impl AppState {
         all_md_lines.push(crate::ui::MarkdownLine {
             spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
                 "Description:",
-                ratatui::style::Style::default().fg(p.overlay1).add_modifier(ratatui::style::Modifier::BOLD),
+                ratatui::style::Style::default()
+                    .fg(p.overlay1)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ))],
         });
         if !item.description.is_empty() {
@@ -1864,8 +1889,13 @@ impl AppState {
                 for col in col_range {
                     let screen_x = text_area.x + col as u16;
                     if let Some(line) = wrapped.lines.get(line_idx) {
-                        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-                        let char_symbol = line_text.chars().nth(col).map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
+                        let line_text: String =
+                            line.spans.iter().map(|s| s.content.as_ref()).collect();
+                        let char_symbol = line_text
+                            .chars()
+                            .nth(col)
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
                         links.push(((screen_x, screen_y), char_symbol, url.clone()));
                     }
                 }
@@ -1905,6 +1935,7 @@ impl AppState {
         Self {
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
+            pane_id_aliases: std::collections::HashMap::new(),
             workspaces: Vec::new(),
             active: None,
             previous_pane_focus: None,
@@ -1940,6 +1971,7 @@ impl AppState {
             product_announcement: None,
             keybind_help: KeybindHelpState { scroll: 0 },
             navigator: NavigatorState::default(),
+            copy_mode: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
             tab_scroll: 0,
@@ -2003,6 +2035,7 @@ impl AppState {
             cjk_ime_cursor_shape: 2, // steady_block
             kitty_graphics_enabled: false,
             default_shell: String::new(),
+            shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,
             pane_scrollback_limit_bytes: crate::config::DEFAULT_SCROLLBACK_LIMIT_BYTES,
             accent: Color::Cyan,

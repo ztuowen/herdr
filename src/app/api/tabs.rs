@@ -86,13 +86,16 @@ impl App {
                     cwd,
                     scrollback_limit_bytes,
                     host_terminal_theme,
-                    &default_shell,
+                    crate::pane::PaneShellConfig::new(&default_shell, self.state.shell_mode),
                 )
             });
         match result {
             Ok((tab_idx, terminal, runtime)) => {
                 self.terminal_runtimes.insert(terminal.id.clone(), runtime);
                 self.state.terminals.insert(terminal.id.clone(), terminal);
+                self.state.remove_alias_shadowed_by_new_pane(
+                    self.state.workspaces[ws_idx].tabs[tab_idx].root_pane,
+                );
                 if let Some(label) = label {
                     let workspace_id = self.state.workspaces[ws_idx].id.clone();
                     let tab_id = self

@@ -23,6 +23,7 @@ enum WheelRouting {
 const WORKSPACE_DRAG_THRESHOLD: u16 = 1;
 const TAB_DRAG_THRESHOLD: u16 = 1;
 
+mod copy_mode;
 mod modal;
 mod mouse;
 mod navigate;
@@ -68,13 +69,14 @@ impl App {
             Mode::Terminal => self.handle_terminal_key(key).await,
             Mode::Prefix => self.handle_prefix_key(key),
             Mode::Navigate => self.handle_navigate_key(key),
+            Mode::Copy => self.handle_copy_mode_key(key),
             _ => {
                 let key_event = key.as_key_event();
                 match self.state.mode {
                     Mode::Onboarding => self.handle_onboarding_key(key_event),
                     Mode::ReleaseNotes => self.handle_release_notes_key(key_event),
                     Mode::ProductAnnouncement => self.handle_product_announcement_key(key_event),
-                    Mode::Prefix | Mode::Navigate => unreachable!(),
+                    Mode::Prefix | Mode::Navigate | Mode::Copy => unreachable!(),
                     Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                         handle_rename_key(&mut self.state, key_event)
                     }
@@ -515,10 +517,11 @@ impl AppState {
                 cwd,
                 self.pane_scrollback_limit_bytes,
                 self.host_terminal_theme,
-                &self.default_shell,
+                crate::pane::PaneShellConfig::new(&self.default_shell, self.shell_mode),
             ) {
                 let new_id = new_pane.pane_id;
                 terminal_runtimes.insert(new_pane.terminal.id.clone(), new_pane.runtime);
+                self.remove_alias_shadowed_by_new_pane(new_id);
                 self.terminals
                     .insert(new_pane.terminal.id.clone(), new_pane.terminal);
                 self.record_pane_focus_change(previous_focus, ws_idx, new_id);

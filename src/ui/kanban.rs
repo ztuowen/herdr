@@ -417,8 +417,7 @@ fn render_kanban_detail_modal(
 
     let wrapped = super::wrap_markdown(&all_md_lines, desc_area.width as usize);
 
-    let desc_text = Paragraph::new(wrapped.lines)
-        .scroll((app.kanban_detail_scroll, 0));
+    let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban_detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
 
     if let Some(track) = track {
@@ -448,7 +447,6 @@ fn render_kanban_detail_modal(
         rows[7],
     );
 }
-
 
 pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
     if path_str.is_empty() {

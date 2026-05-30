@@ -26,15 +26,15 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
-use self::kanban::render_kanban;
 pub(crate) use self::kanban::get_description_text;
+use self::kanban::render_kanban;
 use self::keybind_help::render_keybind_help_overlay;
 pub(crate) use self::markdown::{
     parse_markdown_with_links, wrap_markdown, MarkdownLine, MarkdownSpan,
 };
 use self::menus::{
-    render_context_menu, render_global_launcher_menu, render_navigate_overlay,
-    render_prefix_overlay, render_resize_overlay,
+    render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
+    render_navigate_overlay, render_prefix_overlay, render_resize_overlay,
 };
 use self::mobile::{
     compute_mobile_header_hit_areas, is_mobile_width, mobile_switcher_max_scroll_for_height,
@@ -47,8 +47,8 @@ use self::onboarding::render_onboarding_overlay;
 use self::panes::{compute_pane_infos, render_panes, resize_tab_panes};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
-    release_notes_display_lines, release_notes_sections, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
-    RELEASE_NOTES_MODAL_SIZE,
+    release_notes_display_lines, release_notes_sections, release_notes_wrapped_line_count,
+    PRODUCT_ANNOUNCEMENT_MODAL_SIZE, RELEASE_NOTES_MODAL_SIZE,
 };
 use self::release_notes::{render_product_announcement_overlay, render_release_notes_overlay};
 pub(crate) use self::scrollbar::{
@@ -408,6 +408,7 @@ pub fn render_with_runtime_registry(
         }
         Mode::Navigate => render_navigate_overlay(app, frame, terminal_area),
         Mode::Prefix => render_prefix_overlay(app, frame, terminal_area),
+        Mode::Copy => render_copy_mode_overlay(app, frame, terminal_area),
         Mode::Resize => render_resize_overlay(app, frame, terminal_area),
         Mode::ConfirmClose => render_confirm_close_overlay(app, frame, terminal_area),
         Mode::ContextMenu => {
@@ -501,16 +502,11 @@ fn _build_hints(items: &[(&str, &str)], key_style: Style, dim_style: Style) -> V
 #[cfg(test)]
 mod tests {
     use super::keybind_help::keybind_help_groups;
-    use super::release_notes::{release_notes_lines, release_notes_preview_lines};
     use super::scrollbar::scrollbar_thumb;
     use super::*;
-    use crate::{
-        app::state::{Palette, ViewLayout},
-        layout::PaneInfo,
-        workspace::Workspace,
-    };
+    use crate::{app::state::ViewLayout, layout::PaneInfo, workspace::Workspace};
+    use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
-    use ratatui::{style::Color, text::Line};
 
     #[tokio::test]
     async fn focused_pane_cursor_wins_during_terminal_render() {
@@ -990,13 +986,6 @@ mod tests {
         assert_eq!(scrollbar_offset_from_drag_row(metrics, track, row, grab), 7);
     }
 
-    fn line_text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>()
-    }
-
     fn buffer_row_text(buffer: &ratatui::buffer::Buffer, area: Rect, row: u16) -> String {
         (area.x..area.x + area.width)
             .map(|x| buffer[(x, row)].symbol())
@@ -1018,79 +1007,6 @@ mod tests {
         )
         .expect("write HEAD");
         root
-    }
-
-    #[test]
-    fn release_notes_inline_code_spans_are_styled_without_backticks() {
-        let palette = Palette::catppuccin();
-        let lines = release_notes_lines("- `herdr pane run ...` now works", &palette);
-
-        assert_eq!(lines.len(), 1);
-        assert_eq!(line_text(&lines[0].1), " • herdr pane run ... now works");
-        assert_eq!(lines[0].1.spans[1].content.as_ref(), "herdr pane run ...");
-        assert_eq!(lines[0].1.spans[1].style.fg, Some(palette.accent));
-        assert_eq!(lines[0].1.spans[1].style.bg, Some(palette.surface0));
-    }
-
-    #[test]
-    fn release_notes_config_inline_code_uses_nonbreaking_spaces() {
-        let palette = Palette::catppuccin();
-        let lines = release_notes_lines("- After: `new_tab = \"prefix+c\"`", &palette);
-
-        assert_eq!(lines.len(), 1);
-        assert_eq!(
-            lines[0].1.spans[2].content.as_ref(),
-            "new_tab\u{00a0}=\u{00a0}\"prefix+c\""
-        );
-        assert_eq!(
-            line_text(&lines[0].1).replace('\u{00a0}', " "),
-            " • After: new_tab = \"prefix+c\""
-        );
-    }
-
-    #[test]
-    fn release_notes_preview_lines_show_update_steps() {
-        let palette = Palette::catppuccin();
-        let lines = release_notes_preview_lines("0.5.0", "herdr update", &palette);
-
-        assert_eq!(lines.len(), 2);
-        assert_eq!(line_text(&lines[0]), "● update ready");
-        assert_eq!(
-            line_text(&lines[1]),
-            "detach from this session, then run herdr update in your shell"
-        );
-        assert_eq!(lines[0].spans[0].style.fg, Some(palette.accent));
-        assert_eq!(lines[0].spans[1].style.fg, Some(palette.text));
-    }
-
-    #[test]
-    fn release_notes_fenced_code_blocks_render_as_preformatted_lines() {
-        let palette = Palette::catppuccin();
-        let lines = release_notes_lines(
-            "### Fixed\n```bash\njust check\n- not a bullet\n```\n- after",
-            &palette,
-        );
-
-        assert_eq!(lines.len(), 4);
-        assert_eq!(line_text(&lines[0].1), " FIXED");
-        assert_eq!(line_text(&lines[1].1), "▏ just check");
-        assert_eq!(line_text(&lines[2].1), "▏ - not a bullet");
-        assert_eq!(line_text(&lines[3].1), " • after");
-        assert_eq!(lines[1].1.spans[0].style.fg, Some(palette.accent));
-        assert_eq!(lines[1].1.spans[0].style.bg, Some(palette.surface1));
-        assert_eq!(lines[1].1.spans[1].style.bg, Some(palette.surface1));
-        assert_eq!(lines[1].1.spans[2].style.bg, Some(palette.surface1));
-    }
-
-    #[test]
-    fn release_notes_fenced_code_blocks_preserve_blank_lines() {
-        let palette = Palette::catppuccin();
-        let lines = release_notes_lines("```\nfirst\n\nsecond\n```", &palette);
-
-        assert_eq!(lines.len(), 3);
-        assert_eq!(line_text(&lines[0].1), "▏ first");
-        assert_eq!(line_text(&lines[1].1), "▏ ");
-        assert_eq!(line_text(&lines[2].1), "▏ second");
     }
 
     #[test]

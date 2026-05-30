@@ -1,5 +1,6 @@
 use std::cell::Cell;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering},
     Arc, Mutex,
@@ -16,6 +17,7 @@ use crate::events::AppEvent;
 use crate::layout::PaneId;
 
 mod input;
+mod kitty_keyboard;
 mod osc;
 mod state;
 mod terminal;
@@ -121,6 +123,29 @@ fn should_clear_agent_for_foreground_shell(
     foreground_is_pane_shell: bool,
 ) -> bool {
     previous_agent.is_some() && new_agent.is_none() && foreground_is_pane_shell
+}
+
+fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
+    crate::platform::process_cwd(pid).filter(|cwd| cwd.is_absolute() && cwd.is_dir())
+}
+
+fn foreground_member_cwd_different_from_shell(
+    shell_pid: u32,
+    shell_cwd: Option<&std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let job = crate::detect::foreground_job(shell_pid)?;
+    for process in job.processes {
+        if process.pid == shell_pid {
+            continue;
+        }
+        let Some(cwd) = usable_process_cwd(process.pid) else {
+            continue;
+        };
+        if shell_cwd != Some(&cwd) {
+            return Some(cwd);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -493,19 +518,6 @@ pub struct PaneRuntime {
     detect_handle: tokio::task::AbortHandle,
 }
 
-#[cfg(unix)]
-#[derive(Debug)]
-pub struct PaneRuntimeImport {
-    pub pane_id: PaneId,
-    pub master_fd: std::os::fd::RawFd,
-    pub child_pid: u32,
-    pub rows: u16,
-    pub cols: u16,
-    pub cell_width_px: u32,
-    pub cell_height_px: u32,
-    pub initial_history_ansi: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WheelRouting {
     HostScroll,
@@ -624,6 +636,96 @@ fn pane_shell_from(configured_shell: &str, env_shell: Option<String>) -> String 
         .map(|shell| shell.trim().to_string())
         .filter(|shell| !shell.is_empty())
         .unwrap_or_else(|| "/bin/sh".into())
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PaneShellConfig<'a> {
+    pub(crate) default_shell: &'a str,
+    pub(crate) mode: crate::config::ShellModeConfig,
+}
+
+impl<'a> PaneShellConfig<'a> {
+    pub(crate) fn new(default_shell: &'a str, mode: crate::config::ShellModeConfig) -> Self {
+        Self {
+            default_shell,
+            mode,
+        }
+    }
+}
+
+fn shell_mode_uses_login_shell(
+    mode: crate::config::ShellModeConfig,
+    target_is_macos: bool,
+) -> bool {
+    match mode {
+        crate::config::ShellModeConfig::Auto => target_is_macos,
+        crate::config::ShellModeConfig::Login => true,
+        crate::config::ShellModeConfig::NonLogin => false,
+    }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_shell_for_login_mode(shell: &str) -> io::Result<String> {
+    if shell.contains(std::path::MAIN_SEPARATOR) {
+        let path = Path::new(shell);
+        return is_executable_file(path)
+            .then(|| shell.to_string())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("login shell {shell:?} is not executable"),
+                )
+            });
+    }
+
+    std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(shell))
+                .find(|candidate| is_executable_file(candidate))
+        })
+        .and_then(|path| path.into_os_string().into_string().ok())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("login shell {shell:?} was not found on PATH"),
+            )
+        })
+}
+
+fn pane_shell_command_builder_for_target(
+    shell_config: PaneShellConfig<'_>,
+    target_is_macos: bool,
+) -> io::Result<CommandBuilder> {
+    let shell = pane_shell(shell_config.default_shell);
+    if shell_mode_uses_login_shell(shell_config.mode, target_is_macos) {
+        let mut cmd = CommandBuilder::new_default_prog();
+        cmd.env("SHELL", resolve_shell_for_login_mode(&shell)?);
+        Ok(cmd)
+    } else {
+        Ok(CommandBuilder::new(&shell))
+    }
+}
+
+fn pane_shell_command_builder(shell_config: PaneShellConfig<'_>) -> io::Result<CommandBuilder> {
+    pane_shell_command_builder_for_target(shell_config, cfg!(target_os = "macos"))
 }
 
 #[cfg(unix)]
@@ -747,6 +849,21 @@ fn write_all_nonblocking(
 }
 
 #[cfg(unix)]
+fn write_pty_bytes_locked(
+    writer: &mut std::fs::File,
+    fd: std::os::fd::RawFd,
+    bytes: &[u8],
+    io_stop: &AtomicBool,
+    pty_write_lock: &Mutex<()>,
+) -> std::io::Result<()> {
+    let _guard = pty_write_lock
+        .lock()
+        .map_err(|_| std::io::Error::other("pty write lock poisoned"))?;
+    write_all_nonblocking(writer, fd, bytes, io_stop)?;
+    writer.flush()
+}
+
+#[cfg(unix)]
 fn resize_pty_fd(
     fd: std::os::fd::RawFd,
     rows: u16,
@@ -835,16 +952,25 @@ impl PaneRuntime {
     }
 
     #[cfg(unix)]
-    pub fn handoff_pane(&self, pane_id: u32) -> crate::server::handoff::HandoffPane {
+    pub fn handoff_runtime_state(
+        &self,
+        pane_id: u32,
+    ) -> crate::handoff_runtime::HandoffRuntimeState {
         let child_pid = self.child_pid.load(Ordering::Acquire);
         let (rows, cols, cell_width_px, cell_height_px) = self.current_size.get();
-        crate::server::handoff::HandoffPane {
+        crate::handoff_runtime::HandoffRuntimeState {
             pane_id,
             child_pid,
             rows,
             cols,
             cell_width_px,
             cell_height_px,
+            keyboard_protocol_flags: match self.keyboard_protocol() {
+                crate::input::KeyboardProtocol::Legacy => 0,
+                crate::input::KeyboardProtocol::Kitty { flags } => flags,
+            },
+            keyboard_protocol_ansi: self.terminal.kitty_keyboard_state_ansi(),
+            input_state: self.input_state(),
             initial_history_ansi: None,
         }
     }
@@ -874,7 +1000,7 @@ impl PaneRuntime {
         cwd: std::path::PathBuf,
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
-        default_shell: &str,
+        shell_config: PaneShellConfig<'_>,
         events: mpsc::Sender<AppEvent>,
         render_notify: Arc<Notify>,
         render_dirty: Arc<AtomicBool>,
@@ -886,7 +1012,7 @@ impl PaneRuntime {
             cwd,
             scrollback_limit_bytes,
             host_terminal_theme,
-            default_shell,
+            shell_config,
             None,
             events,
             render_notify,
@@ -901,14 +1027,13 @@ impl PaneRuntime {
         cwd: std::path::PathBuf,
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
-        default_shell: &str,
+        shell_config: PaneShellConfig<'_>,
         initial_history_ansi: Option<&str>,
         events: mpsc::Sender<AppEvent>,
         render_notify: Arc<Notify>,
         render_dirty: Arc<AtomicBool>,
     ) -> std::io::Result<Self> {
-        let shell = pane_shell(default_shell);
-        let mut cmd = CommandBuilder::new(&shell);
+        let mut cmd = pane_shell_command_builder(shell_config)?;
         cmd.cwd(cwd);
         cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
         apply_pane_terminal_env(&mut cmd);
@@ -1057,23 +1182,27 @@ impl PaneRuntime {
 
     #[cfg(unix)]
     pub fn from_handoff_fd(
-        import: PaneRuntimeImport,
+        import: crate::handoff_runtime::ImportedHandoffRuntime,
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         events: mpsc::Sender<AppEvent>,
         render_notify: Arc<Notify>,
         render_dirty: Arc<AtomicBool>,
     ) -> std::io::Result<Self> {
-        let PaneRuntimeImport {
+        let crate::handoff_runtime::ImportedHandoffRuntime { master_fd, state } = import;
+        let crate::handoff_runtime::HandoffRuntimeState {
             pane_id,
-            master_fd,
             child_pid,
             rows,
             cols,
             cell_width_px,
             cell_height_px,
+            keyboard_protocol_flags,
+            keyboard_protocol_ansi,
+            input_state,
             initial_history_ansi,
-        } = import;
+        } = state;
+        let pane_id = PaneId::from_raw(pane_id);
         use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 
         let master_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(master_fd) };
@@ -1081,11 +1210,13 @@ impl PaneRuntime {
         set_nonblocking(master_fd.as_raw_fd())?;
         let reader = file_from_duplicated_fd(master_fd.as_raw_fd())?;
         let writer = file_from_duplicated_fd(master_fd.as_raw_fd())?;
+        let terminal_response_writer = file_from_duplicated_fd(master_fd.as_raw_fd())?;
         let force_resize_fd = duplicate_cloexec_fd(master_fd.as_raw_fd())?;
         let resize_fd = unsafe {
             std::os::fd::OwnedFd::from_raw_fd(duplicate_cloexec_fd(master_fd.as_raw_fd())?)
         };
         let io_stop = Arc::new(AtomicBool::new(false));
+        let pty_write_lock = Arc::new(Mutex::new(()));
         let reader_paused = Arc::new(AtomicBool::new(true));
         let reader_pause_ack = Arc::new(AtomicBool::new(false));
 
@@ -1099,12 +1230,20 @@ impl PaneRuntime {
         }
         let pane_terminal = GhosttyPaneTerminal::new(terminal, input_tx.clone())?;
         pane_terminal.apply_host_terminal_theme(host_terminal_theme);
+        if let Some(input_state) = input_state {
+            pane_terminal.seed_handoff_input_state(input_state);
+        }
+        if let Some(ansi) = keyboard_protocol_ansi.as_deref() {
+            pane_terminal.seed_keyboard_protocol_ansi(ansi);
+        } else {
+            pane_terminal.seed_keyboard_protocol_flags(keyboard_protocol_flags);
+        }
         if let Some(ansi) = initial_history_ansi.as_deref() {
             pane_terminal.seed_history_ansi(ansi);
         }
         let terminal = Arc::new(PaneTerminal::new(pane_terminal));
         let child_pid = Arc::new(AtomicU32::new(child_pid));
-        let kitty_keyboard_flags = Arc::new(AtomicU16::new(0));
+        let kitty_keyboard_flags = Arc::new(AtomicU16::new(keyboard_protocol_flags));
         let (reader_stopped_tx, reader_stopped_rx) = std::sync::mpsc::channel();
 
         {
@@ -1112,6 +1251,8 @@ impl PaneRuntime {
 
             let mut reader = reader;
             let reader_fd = reader.as_raw_fd();
+            let mut terminal_response_writer = terminal_response_writer;
+            let terminal_response_fd = terminal_response_writer.as_raw_fd();
             let terminal = terminal.clone();
             let response_writer = input_tx.clone();
             let render_notify = render_notify.clone();
@@ -1119,6 +1260,7 @@ impl PaneRuntime {
             let child_pid = child_pid.clone();
             let events = events.clone();
             let io_stop = io_stop.clone();
+            let pty_write_lock = pty_write_lock.clone();
             let reader_paused = reader_paused.clone();
             let reader_pause_ack = reader_pause_ack.clone();
             let rt = tokio::runtime::Handle::current();
@@ -1157,6 +1299,18 @@ impl PaneRuntime {
                                 &buf[..n],
                                 &response_writer,
                             );
+                            for response in result.terminal_responses {
+                                if let Err(err) = write_pty_bytes_locked(
+                                    &mut terminal_response_writer,
+                                    terminal_response_fd,
+                                    &response,
+                                    &io_stop,
+                                    &pty_write_lock,
+                                ) {
+                                    warn!(pane = pane_id.raw(), err = %err, "handoff terminal response write failed");
+                                    break;
+                                }
+                            }
                             if result.request_render && !render_dirty.swap(true, Ordering::AcqRel) {
                                 render_notify.notify_one();
                             }
@@ -1189,19 +1343,21 @@ impl PaneRuntime {
             let mut writer = writer;
             let writer_fd = writer.as_raw_fd();
             let io_stop = io_stop.clone();
+            let pty_write_lock = pty_write_lock.clone();
             tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Handle::current();
                 while let Some(bytes) = rt.block_on(input_rx.recv()) {
                     if io_stop.load(Ordering::Acquire) {
                         break;
                     }
-                    if let Err(e) = write_all_nonblocking(&mut writer, writer_fd, &bytes, &io_stop)
-                    {
+                    if let Err(e) = write_pty_bytes_locked(
+                        &mut writer,
+                        writer_fd,
+                        &bytes,
+                        &io_stop,
+                        &pty_write_lock,
+                    ) {
                         warn!(pane = pane_id.raw(), err = %e, "handoff pty write failed");
-                        break;
-                    }
-                    if let Err(e) = writer.flush() {
-                        warn!(pane = pane_id.raw(), err = %e, "handoff pty flush failed");
                         break;
                     }
                 }
@@ -1312,9 +1468,11 @@ impl PaneRuntime {
         set_nonblocking(master_fd)?;
         let reader = file_from_duplicated_fd(master_fd)?;
         let writer = file_from_duplicated_fd(master_fd)?;
+        let terminal_response_writer = file_from_duplicated_fd(master_fd)?;
         let force_resize_fd = duplicate_cloexec_fd(master_fd)?;
         let resize_fd = duplicate_cloexec_fd(master_fd)?;
         let io_stop = Arc::new(AtomicBool::new(false));
+        let pty_write_lock = Arc::new(Mutex::new(()));
         let reader_paused = Arc::new(AtomicBool::new(false));
         let reader_pause_ack = Arc::new(AtomicBool::new(false));
         let (reader_stopped_tx, reader_stopped_rx) = std::sync::mpsc::channel();
@@ -1358,6 +1516,8 @@ impl PaneRuntime {
 
             let mut reader = reader;
             let reader_fd = reader.as_raw_fd();
+            let mut terminal_response_writer = terminal_response_writer;
+            let terminal_response_fd = terminal_response_writer.as_raw_fd();
             let terminal = terminal.clone();
             let response_writer = input_tx.clone();
             let render_notify = render_notify.clone();
@@ -1365,6 +1525,7 @@ impl PaneRuntime {
             let child_pid = child_pid.clone();
             let events = events.clone();
             let io_stop = io_stop.clone();
+            let pty_write_lock = pty_write_lock.clone();
             let reader_paused = reader_paused.clone();
             let reader_pause_ack = reader_pause_ack.clone();
             let rt = tokio::runtime::Handle::current();
@@ -1403,6 +1564,18 @@ impl PaneRuntime {
                                 &buf[..n],
                                 &response_writer,
                             );
+                            for response in result.terminal_responses {
+                                if let Err(err) = write_pty_bytes_locked(
+                                    &mut terminal_response_writer,
+                                    terminal_response_fd,
+                                    &response,
+                                    &io_stop,
+                                    &pty_write_lock,
+                                ) {
+                                    warn!(pane = pane_id.raw(), err = %err, "terminal response write failed");
+                                    break;
+                                }
+                            }
                             if result.request_render && !render_dirty.swap(true, Ordering::AcqRel) {
                                 render_notify.notify_one();
                             }
@@ -1711,19 +1884,21 @@ impl PaneRuntime {
             let mut writer = writer;
             let writer_fd = writer.as_raw_fd();
             let io_stop = io_stop.clone();
+            let pty_write_lock = pty_write_lock.clone();
             tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Handle::current();
                 while let Some(bytes) = rt.block_on(input_rx.recv()) {
                     if io_stop.load(Ordering::Acquire) {
                         break;
                     }
-                    if let Err(e) = write_all_nonblocking(&mut writer, writer_fd, &bytes, &io_stop)
-                    {
+                    if let Err(e) = write_pty_bytes_locked(
+                        &mut writer,
+                        writer_fd,
+                        &bytes,
+                        &io_stop,
+                        &pty_write_lock,
+                    ) {
                         warn!(pane = pane_id.raw(), err = %e, "pty write failed");
-                        break;
-                    }
-                    if let Err(e) = writer.flush() {
-                        warn!(pane = pane_id.raw(), err = %e, "pty flush failed");
                         break;
                     }
                 }
@@ -1790,7 +1965,6 @@ impl PaneRuntime {
         self.detect_reset_notify.notify_one();
     }
 
-    #[cfg(test)]
     pub(crate) fn current_size(&self) -> (u16, u16) {
         let (rows, cols, _, _) = self.current_size.get();
         (rows, cols)
@@ -2050,6 +2224,32 @@ impl PaneRuntime {
         let pid = self.child_pid.load(Ordering::Relaxed);
         crate::platform::process_cwd(pid)
     }
+
+    /// Get the current working directory of the process group controlling the pane PTY.
+    pub fn foreground_cwd(&self) -> Option<std::path::PathBuf> {
+        #[cfg(unix)]
+        {
+            let pid = self.child_pid.load(Ordering::Acquire);
+            let shell_cwd = usable_process_cwd(pid);
+            let foreground_pgid = self
+                .master_fd()
+                .and_then(crate::platform::foreground_process_group_id_for_tty_fd)
+                .or_else(|| crate::platform::foreground_process_group_id(pid));
+            let leader_cwd = foreground_pgid.and_then(usable_process_cwd);
+
+            if leader_cwd.as_ref() == shell_cwd.as_ref() {
+                foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()).or(leader_cwd)
+            } else {
+                leader_cwd
+                    .or_else(|| foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()))
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2184,6 +2384,135 @@ mod tests {
     }
 
     #[test]
+    fn shell_mode_auto_uses_login_shell_only_on_macos() {
+        assert!(shell_mode_uses_login_shell(
+            crate::config::ShellModeConfig::Auto,
+            true
+        ));
+        assert!(!shell_mode_uses_login_shell(
+            crate::config::ShellModeConfig::Auto,
+            false
+        ));
+        assert!(shell_mode_uses_login_shell(
+            crate::config::ShellModeConfig::Login,
+            false
+        ));
+        assert!(!shell_mode_uses_login_shell(
+            crate::config::ShellModeConfig::NonLogin,
+            true
+        ));
+    }
+
+    #[test]
+    fn login_shell_builder_uses_default_prog_with_resolved_shell_env() {
+        let cmd = pane_shell_command_builder_for_target(
+            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Login),
+            false,
+        )
+        .unwrap();
+        assert!(cmd.is_default_prog());
+        assert_eq!(
+            cmd.get_env("SHELL").and_then(std::ffi::OsStr::to_str),
+            Some("/bin/sh")
+        );
+    }
+
+    #[test]
+    fn auto_shell_builder_uses_login_shell_on_macos_target() {
+        let cmd = pane_shell_command_builder_for_target(
+            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Auto),
+            true,
+        )
+        .unwrap();
+        assert!(cmd.is_default_prog());
+        assert_eq!(
+            cmd.get_env("SHELL").and_then(std::ffi::OsStr::to_str),
+            Some("/bin/sh")
+        );
+    }
+
+    #[test]
+    fn auto_shell_builder_keeps_direct_shell_on_non_macos_target() {
+        let cmd = pane_shell_command_builder_for_target(
+            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Auto),
+            false,
+        )
+        .unwrap();
+        assert!(!cmd.is_default_prog());
+        assert_eq!(cmd.get_argv(), &[std::ffi::OsString::from("/bin/sh")]);
+    }
+
+    #[test]
+    fn login_shell_builder_rejects_missing_shell_instead_of_falling_back() {
+        let err = pane_shell_command_builder_for_target(
+            PaneShellConfig::new(
+                "/__herdr_missing_shell__",
+                crate::config::ShellModeConfig::Login,
+            ),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn login_shell_builder_resolves_bare_shell_names_from_path() {
+        let _lock = crate::integration::integration_env_lock();
+        let base = std::env::temp_dir().join(format!(
+            "herdr-login-shell-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let shell = bin.join("fake-shell");
+        std::fs::write(&shell, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", &bin);
+
+        let cmd = pane_shell_command_builder_for_target(
+            PaneShellConfig::new("fake-shell", crate::config::ShellModeConfig::Login),
+            false,
+        )
+        .unwrap();
+
+        assert!(cmd.is_default_prog());
+        assert_eq!(
+            cmd.get_env("SHELL").and_then(std::ffi::OsStr::to_str),
+            shell.to_str()
+        );
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn login_shell_resolution_preserves_shell_paths() {
+        assert_eq!(resolve_shell_for_login_mode("/bin/sh").unwrap(), "/bin/sh");
+    }
+
+    #[test]
+    fn non_login_shell_builder_execs_resolved_shell_directly() {
+        let cmd = pane_shell_command_builder(PaneShellConfig::new(
+            "/bin/sh",
+            crate::config::ShellModeConfig::NonLogin,
+        ))
+        .unwrap();
+        assert!(!cmd.is_default_prog());
+        assert_eq!(cmd.get_argv(), &[std::ffi::OsString::from("/bin/sh")]);
+    }
+
+    #[test]
     fn pane_terminal_identity_overrides_outer_terminal_env() {
         let output = capture_shell_output("printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"", &[]);
         assert_eq!(output, "xterm-256color\ntruecolor\n");
@@ -2218,6 +2547,32 @@ mod tests {
         );
 
         assert!(runtime.handoff_history_ansi().is_none());
+    }
+
+    #[tokio::test]
+    async fn handoff_runtime_state_captures_terminal_input_state() {
+        let runtime = PaneRuntime::test_with_screen_bytes(
+            80,
+            24,
+            b"\x1b[>5u\x1b[>4;2m\x1b[?1h\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h",
+        );
+
+        let pane = runtime.handoff_runtime_state(12);
+
+        assert_eq!(pane.keyboard_protocol_flags, 5);
+        assert_eq!(
+            pane.input_state,
+            Some(InputState {
+                alternate_screen: false,
+                application_cursor: true,
+                bracketed_paste: true,
+                focus_reporting: true,
+                mouse_protocol_mode: crate::input::MouseProtocolMode::ButtonMotion,
+                mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Sgr,
+                mouse_alternate_scroll: true,
+                modify_other_keys: true,
+            })
+        );
     }
 
     #[test]

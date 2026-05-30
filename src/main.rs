@@ -27,6 +27,7 @@ mod config;
 mod detect;
 mod events;
 mod ghostty;
+mod handoff_runtime;
 mod input;
 mod integration;
 mod ipc;
@@ -82,6 +83,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Executable used for new interactive panes.
 # Empty means $SHELL, then /bin/sh.
 # default_shell = ""
+
+# Startup mode for new interactive pane shells: "auto", "login", or "non_login".
+# "auto" uses login shells on macOS and keeps the current behavior elsewhere.
+# shell_mode = "auto"
 
 # CWD policy for new panes, tabs, and workspaces when no explicit --cwd is provided.
 # Use "follow" to inherit the source pane/workspace, "home" for $HOME,

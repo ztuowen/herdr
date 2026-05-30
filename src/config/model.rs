@@ -63,11 +63,22 @@ impl<'de> Deserialize<'de> for NewTerminalCwdConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellModeConfig {
+    #[default]
+    Auto,
+    Login,
+    NonLogin,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct TerminalConfig {
     /// Executable used for new interactive panes. Empty means SHELL, then /bin/sh.
     pub default_shell: String,
+    /// Startup mode for new interactive pane shells.
+    pub shell_mode: ShellModeConfig,
     /// CWD policy for new interactive panes, tabs, and workspaces.
     pub new_cwd: NewTerminalCwdConfig,
 }
@@ -202,6 +213,8 @@ pub struct KeysConfig {
     pub rename_pane: BindingConfig,
     /// Open the focused pane scrollback in $EDITOR. Default: "prefix+e".
     pub edit_scrollback: BindingConfig,
+    /// Enter keyboard copy mode for the focused pane. Default: "prefix+[".
+    pub copy_mode: BindingConfig,
     /// Focus the pane to the left. Default: "prefix+h".
     pub focus_pane_left: BindingConfig,
     /// Focus the pane below. Default: "prefix+j".
@@ -405,6 +418,7 @@ impl Default for KeysConfig {
             close_tab: BindingConfig::one("prefix+shift+x"),
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
+            copy_mode: BindingConfig::one("prefix+["),
             focus_pane_left: BindingConfig::one("prefix+h"),
             focus_pane_down: BindingConfig::one("prefix+j"),
             focus_pane_up: BindingConfig::one("prefix+k"),
@@ -508,13 +522,16 @@ mod tests {
     fn terminal_default_shell_defaults_empty_and_parses() {
         let default_config = Config::default();
         assert!(default_config.terminal.default_shell.is_empty());
+        assert_eq!(default_config.terminal.shell_mode, ShellModeConfig::Auto);
 
         let toml = r#"
 [terminal]
 default_shell = "nu"
+shell_mode = "non_login"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.terminal.default_shell, "nu");
+        assert_eq!(config.terminal.shell_mode, ShellModeConfig::NonLogin);
     }
 
     #[test]

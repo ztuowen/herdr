@@ -50,7 +50,7 @@ impl App {
             split_cwd,
             scrollback_limit_bytes,
             host_terminal_theme,
-            &default_shell,
+            crate::pane::PaneShellConfig::new(&default_shell, self.state.shell_mode),
             params.focus,
         ) {
             Some(Ok(result)) => result,
@@ -65,6 +65,8 @@ impl App {
         }
         self.terminal_runtimes
             .insert(new_pane.terminal.id.clone(), new_pane.runtime);
+        self.state
+            .remove_alias_shadowed_by_new_pane(new_pane.pane_id);
         self.state
             .terminals
             .insert(new_pane.terminal.id.clone(), new_pane.terminal);

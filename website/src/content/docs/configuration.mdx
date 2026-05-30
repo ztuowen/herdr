@@ -138,6 +138,8 @@ close_pane = "prefix+x"
 zoom = "prefix+z"
 resize_mode = "prefix+r"
 toggle_sidebar = "prefix+b"
+toggle_kanban = "ctrl+k"
+speech_to_text = "ctrl+q"
 ```
 
 Optional actions are unset by default. Bind them with `prefix+` for prefix-mode behavior, or with an explicit modified chord when you intentionally want a direct shortcut:
@@ -153,6 +155,10 @@ next_tab = ["prefix+n", "ctrl+alt+]"]
 ```
 
 `last_pane` switches back to the last focused pane across workspaces and tabs. It is unset by default because the tmux-style pane binding `prefix+l` is already used for pane-right focus.
+
+`toggle_kanban` toggles the Kanban board view. It defaults to `ctrl+k`.
+
+`speech_to_text` toggles the speech-to-text voice recording flow. It defaults to `ctrl+q`.
 
 Key strings accept plain keys, modifier combinations such as `ctrl+a`, `shift+n`, `alt+1`, `cmd+k`, and special keys such as `enter`, `tab`, `esc`, `left`, `right`, `up`, and `down`. Named punctuation such as `minus`, `comma`, `ampersand`, `plus`, and `backtick` is also accepted. Plain direct printable keys such as `n` are unsafe because they intercept typing; use `prefix+n` unless you intentionally want a direct binding. The `navigate_workspace_*` and `navigate_pane_*` fields are navigate-mode-only and may use plain keys such as `j` or `k`; they must not use `prefix+`, `esc`, `enter`, `tab`, `shift+tab`, `left`, `right`, or unmodified `1` through `9`. Left and right arrows are permanent aliases for pane-left and pane-right navigation. These navigate-mode shortcuts are independent from general action bindings such as `focus_pane_down = "prefix+j"`; when both use the same key, the navigate-mode shortcut wins while navigate mode is open. Alt, Cmd/Super, and punctuation with modifiers depend on your terminal and tmux settings.
 
@@ -316,6 +322,27 @@ scrollback_limit_bytes = 10485760
 ```
 
 Existing panes keep their current buffer until they are recreated.
+
+## Speech to text
+
+Configure real-time client-side speech-to-text transcription powered by Gemini Live API:
+
+```toml
+[speech_to_text]
+gemini_api_key = "YOUR_GEMINI_API_KEY"
+model = "gemini-3.1-flash-live-preview"
+system_instruction = "..."
+agent_system_instruction = "..."
+terminal_system_instruction = "..."
+```
+
+- `gemini_api_key`: Your Google Gemini API key. Required for client-side speech-to-text.
+- `model`: The Gemini model used for transcription. Defaults to `"gemini-3.1-flash-live-preview"`.
+- `system_instruction`: An optional global post-processing prompt (unset by default). When defined, it is used for both AI-agent and standard terminal panes if their specific prompts are unset.
+- `agent_system_instruction`: An optional post-processing prompt for AI-agent panes. If unset, falls back to `system_instruction`. If both are unset, the final runtime fallback is:
+  `"You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation."`
+- `terminal_system_instruction`: An optional post-processing prompt for standard terminal/shell panes. If unset, falls back to `system_instruction`. If both are unset, the final runtime fallback is:
+  `"You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation."`
 
 ## Pane screen history
 

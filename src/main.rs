@@ -147,6 +147,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # zoom = "prefix+z"       # legacy alias: fullscreen
 # resize_mode = "prefix+r"
 # toggle_sidebar = "prefix+b"
+# toggle_kanban = "ctrl+k"
+# speech_to_text = "ctrl+q"
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
 # They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.
@@ -272,6 +274,25 @@ pane_history = false
 # Maximum scrollback buffer size in bytes retained per pane terminal.
 # Matches Ghostty's default scrollback-limit behavior.
 # scrollback_limit_bytes = 10000000
+
+# [speech_to_text]
+# API key for Gemini Live API, used for real-time speech-to-text transcription.
+# gemini_api_key = "AIzaSy..."
+#
+# Gemini model to use for transcription.
+# model = "gemini-3.1-flash-live-preview"
+#
+# Optional global post-processing prompt. When set, this is used for both agent
+# and terminal panes if their specific prompts are unset.
+# system_instruction = "..."
+#
+# Optional post-processing prompt for AI-agent panes (falls back to system_instruction if unset).
+# Runtime fallback: "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation."
+# agent_system_instruction = "..."
+#
+# Optional post-processing prompt for standard terminal/shell panes (falls back to system_instruction if unset).
+# Runtime fallback: "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation."
+# terminal_system_instruction = "..."
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {

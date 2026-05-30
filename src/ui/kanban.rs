@@ -398,10 +398,15 @@ fn render_kanban_detail_modal(
     });
     if !item.description.is_empty() {
         all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::styled(
-                item.description.clone(),
-                Style::default().fg(p.overlay0),
-            ))],
+            spans: vec![super::MarkdownSpan::Link {
+                label_spans: vec![Span::styled(
+                    item.description.clone(),
+                    Style::default()
+                        .fg(p.blue)
+                        .add_modifier(Modifier::UNDERLINED),
+                )],
+                url: item.description.clone(),
+            }],
             is_code_block: false,
             is_blockquote: false,
             is_table_row: false,

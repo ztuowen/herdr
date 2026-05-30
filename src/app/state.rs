@@ -1774,10 +1774,15 @@ impl AppState {
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                    item.description.clone(),
-                    ratatui::style::Style::default().fg(p.overlay0),
-                ))],
+                spans: vec![crate::ui::MarkdownSpan::Link {
+                    label_spans: vec![ratatui::text::Span::styled(
+                        item.description.clone(),
+                        ratatui::style::Style::default()
+                            .fg(p.blue)
+                            .add_modifier(ratatui::style::Modifier::UNDERLINED),
+                    )],
+                    url: item.description.clone(),
+                }],
                 is_code_block: false,
                 is_blockquote: false,
                 is_table_row: false,
@@ -1881,10 +1886,15 @@ impl AppState {
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                    item.description.clone(),
-                    ratatui::style::Style::default().fg(p.overlay0),
-                ))],
+                spans: vec![crate::ui::MarkdownSpan::Link {
+                    label_spans: vec![ratatui::text::Span::styled(
+                        item.description.clone(),
+                        ratatui::style::Style::default()
+                            .fg(p.blue)
+                            .add_modifier(ratatui::style::Modifier::UNDERLINED),
+                    )],
+                    url: item.description.clone(),
+                }],
                 is_code_block: false,
                 is_blockquote: false,
                 is_table_row: false,

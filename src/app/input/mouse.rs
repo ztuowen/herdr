@@ -3189,12 +3189,18 @@ mod tests {
             .iter()
             .find(|(_, _, url)| url == "https://example.com")
             .map(|(coord, _, _)| *coord);
+        let desc_path_link_coord = links
+            .iter()
+            .find(|(_, _, url)| url == &link_path)
+            .map(|(coord, _, _)| *coord);
 
         assert!(file_link_coord.is_some());
         assert!(web_link_coord.is_some());
+        assert!(desc_path_link_coord.is_some());
 
         let (fx, fy) = file_link_coord.unwrap();
         let (wx, wy) = web_link_coord.unwrap();
+        let (dx, dy) = desc_path_link_coord.unwrap();
 
         // Clicking the file link should trigger a clipboard write event
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), fx, fy));
@@ -3202,6 +3208,14 @@ mod tests {
         assert!(matches!(
             event,
             crate::events::AppEvent::ClipboardWrite { content } if content == b"file:///path/to/my/file.txt".to_vec()
+        ));
+
+        // Clicking the description path link should trigger a clipboard write event with the path
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), dx, dy));
+        let event = app.event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            crate::events::AppEvent::ClipboardWrite { content } if content == link_path.as_bytes().to_vec()
         ));
 
         // Clicking the web link should NOT trigger a clipboard write event

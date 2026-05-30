@@ -1,9 +1,93 @@
+use once_cell::sync::Lazy;
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 
 use crate::app::state::Palette;
+
+static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
+
+fn is_light_palette(palette: &Palette) -> bool {
+    if let ratatui::style::Color::Rgb(r, g, b) = palette.panel_bg {
+        let luminance = 0.299 * (r as f32) + 0.587 * (g as f32) + 0.114 * (b as f32);
+        luminance > 128.0
+    } else {
+        false
+    }
+}
+
+fn map_syntect_style(syntect_style: syntect::highlighting::Style, palette: &Palette) -> Style {
+    let mut style = Style::default().bg(palette.surface1);
+
+    let fg = syntect_style.foreground;
+    style = style.fg(ratatui::style::Color::Rgb(fg.r, fg.g, fg.b));
+
+    let font = syntect_style.font_style;
+    if font.contains(syntect::highlighting::FontStyle::BOLD) {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if font.contains(syntect::highlighting::FontStyle::ITALIC) {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if font.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+
+    style
+}
+
+fn highlight_code_block(lines: &[String], lang: &str, palette: &Palette) -> Vec<MarkdownLine> {
+    let syntax = SYNTAX_SET
+        .find_syntax_by_token(lang)
+        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+    let theme_name = if is_light_palette(palette) {
+        "base16-ocean.light"
+    } else {
+        "base16-ocean.dark"
+    };
+
+    let theme = &THEME_SET.themes[theme_name];
+    let mut h = HighlightLines::new(syntax, theme);
+
+    let mut out = Vec::new();
+
+    for line in lines {
+        let mut spans = vec![MarkdownSpan::Text(Span::styled(
+            "▏",
+            Style::default().fg(palette.accent).bg(palette.surface1),
+        ))];
+
+        let line_with_nl = format!("{}\n", line);
+        let styled_ops = h
+            .highlight_line(&line_with_nl, &SYNTAX_SET)
+            .unwrap_or_default();
+        for (syntect_style, text) in styled_ops {
+            let text_trimmed = text.strip_suffix('\n').unwrap_or(text);
+            if !text_trimmed.is_empty() {
+                let style = map_syntect_style(syntect_style, palette);
+                spans.push(MarkdownSpan::Text(Span::styled(
+                    text_trimmed.to_string(),
+                    style,
+                )));
+            }
+        }
+
+        out.push(MarkdownLine {
+            spans,
+            is_code_block: true,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DelimiterKind {
@@ -626,6 +710,8 @@ fn parse_and_format_table(
 pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownLine> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
+    let mut code_block_lang = String::new();
+    let mut code_block_lines = Vec::new();
     let input_lines: Vec<&str> = text.lines().collect();
     let mut line_idx = 0;
 
@@ -670,27 +756,25 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
 
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
+            if in_code_block {
+                code_block_lang = trimmed
+                    .strip_prefix("```")
+                    .unwrap_or("")
+                    .trim()
+                    .to_lowercase();
+            } else {
+                let highlighted =
+                    highlight_code_block(&code_block_lines, &code_block_lang, palette);
+                lines.extend(highlighted);
+                code_block_lines.clear();
+                code_block_lang.clear();
+            }
             line_idx += 1;
             continue;
         }
 
         if in_code_block {
-            let spans = vec![
-                MarkdownSpan::Text(Span::styled(
-                    "▏",
-                    Style::default().fg(palette.accent).bg(palette.surface1),
-                )),
-                MarkdownSpan::Text(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(palette.text).bg(palette.surface1),
-                )),
-            ];
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: true,
-                is_blockquote: false,
-                is_table_row: false,
-            });
+            code_block_lines.push(line.to_string());
             line_idx += 1;
             continue;
         }
@@ -915,6 +999,11 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
         }
 
         line_idx += 1;
+    }
+
+    if in_code_block && !code_block_lines.is_empty() {
+        let highlighted = highlight_code_block(&code_block_lines, &code_block_lang, palette);
+        lines.extend(highlighted);
     }
 
     lines
@@ -1320,12 +1409,58 @@ mod tests {
         let lines = parse_markdown("```rust\nfn main() {}\n```", &palette);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].spans[0].content, "▏");
-        assert_eq!(lines[0].spans[1].content, "fn main() {}");
+        let code_text: String = lines[0].spans[1..]
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(code_text, "fn main() {}");
 
         // Horizontal rules
         let lines = parse_markdown("---", &palette);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].spans[0].content, "─".repeat(40));
+    }
+
+    #[test]
+    fn test_syntax_highlighted_code_block() {
+        let palette = test_palette();
+
+        // Verify Rust code block syntax highlighting has multiple spans with different styling
+        let md_lines =
+            parse_markdown_with_links("```rust\nfn main() {\n    // comment\n}\n```", &palette);
+        assert_eq!(md_lines.len(), 3);
+        assert!(md_lines[0].is_code_block);
+
+        // First line: "fn main() {"
+        let line0 = &md_lines[0];
+        assert_eq!(
+            line0.spans[0],
+            MarkdownSpan::Text(Span::styled(
+                "▏",
+                Style::default().fg(palette.accent).bg(palette.surface1)
+            ))
+        );
+
+        // Assert there are multiple spans because of syntax tokenization
+        assert!(line0.spans.len() > 2);
+
+        // Find the "fn" keyword span
+        let fn_span = line0.spans.iter().find(|s| match s {
+            MarkdownSpan::Text(span) => span.content == "fn",
+            _ => false,
+        });
+        assert!(fn_span.is_some(), "Should find 'fn' keyword span");
+
+        // Second line: "    // comment"
+        let line1 = &md_lines[1];
+        let code_text1: String = line1.spans[1..]
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert!(code_text1.contains("// comment"));
     }
 
     #[test]

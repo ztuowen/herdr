@@ -103,6 +103,10 @@ enum DelimiterKind {
         url_start: usize,
         url_end: usize,
     },
+    Emoji {
+        name_start: usize,
+        name_end: usize,
+    },
 }
 
 struct DelimiterMatch {
@@ -124,6 +128,35 @@ fn find_first_match(chars: &[char]) -> Option<DelimiterMatch> {
                         start_idx: i,
                         end_idx: j + 1,
                     });
+                }
+                j += 1;
+            }
+        } else if chars[i] == ':' {
+            // Look for closing ':'
+            let mut j = i + 1;
+            while j < chars.len() {
+                if chars[j] == ':' {
+                    let valid_name = j > i + 1
+                        && chars[i + 1..j].iter().all(|&c| {
+                            c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+'
+                        });
+                    if valid_name {
+                        let name_str: String = chars[i + 1..j].iter().collect();
+                        if gh_emoji::get(&name_str).is_some() {
+                            return Some(DelimiterMatch {
+                                kind: DelimiterKind::Emoji {
+                                    name_start: i + 1,
+                                    name_end: j,
+                                },
+                                start_idx: i,
+                                end_idx: j + 1,
+                            });
+                        }
+                    }
+                    break;
+                }
+                if chars[j].is_whitespace() {
+                    break;
                 }
                 j += 1;
             }
@@ -323,6 +356,20 @@ fn parse_inline_chars(
                         .add_modifier(Modifier::UNDERLINED);
                     spans.extend(parse_inline_chars(label_chars, palette, link_style));
                 }
+                DelimiterKind::Emoji {
+                    name_start,
+                    name_end,
+                } => {
+                    let abs_name_start = start + name_start;
+                    let abs_name_end = start + name_end;
+                    let name: String = chars[abs_name_start..abs_name_end].iter().collect();
+                    if let Some(emoji_char) = gh_emoji::get(&name) {
+                        spans.push(Span::styled(emoji_char.to_string(), current_style));
+                    } else {
+                        let raw_text: String = chars[match_start..match_end].iter().collect();
+                        spans.push(Span::styled(raw_text, current_style));
+                    }
+                }
             }
 
             start = match_end;
@@ -450,6 +497,23 @@ fn parse_inline_chars_with_links(
                         label_spans,
                         url: url_str,
                     });
+                }
+                DelimiterKind::Emoji {
+                    name_start,
+                    name_end,
+                } => {
+                    let abs_name_start = start + name_start;
+                    let abs_name_end = start + name_end;
+                    let name: String = chars[abs_name_start..abs_name_end].iter().collect();
+                    if let Some(emoji_char) = gh_emoji::get(&name) {
+                        spans.push(MarkdownSpan::Text(Span::styled(
+                            emoji_char.to_string(),
+                            current_style,
+                        )));
+                    } else {
+                        let raw_text: String = chars[match_start..match_end].iter().collect();
+                        spans.push(MarkdownSpan::Text(Span::styled(raw_text, current_style)));
+                    }
                 }
             }
 
@@ -2237,6 +2301,52 @@ mod tests {
         assert_eq!(spans[0].content, "label");
         assert_eq!(spans[0].style.fg, Some(Color::Blue));
         assert!(spans[0].style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn test_parse_emoji() {
+        let palette = test_palette();
+
+        // 1. Standalone emoji
+        let spans = parse_inline_style("hello :smile: world", &palette, Style::default());
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content, "hello ");
+        assert_eq!(spans[1].content, "😄");
+        assert_eq!(spans[2].content, " world");
+
+        // 2. Back-to-back emojis
+        let spans = parse_inline_style(":smile::rocket:", &palette, Style::default());
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content, "😄");
+        assert_eq!(spans[1].content, "🚀");
+
+        // 3. Nested formatting
+        let spans = parse_inline_style("**bold containing :smile:**", &palette, Style::default());
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content, "bold containing ");
+        assert_eq!(spans[1].content, "😄");
+        assert!(spans[1].style.add_modifier.contains(Modifier::BOLD));
+
+        // 4. Invalid emoji/colons
+        let spans = parse_inline_style("invalid :not-an-emoji: here", &palette, Style::default());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "invalid :not-an-emoji: here");
+
+        // 5. Normal URL with colons should not parse as emoji
+        let spans = parse_inline_style("visit http://example.com/foo", &palette, Style::default());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "visit http://example.com/foo");
+
+        // 6. Colons with spaces/numbers should not parse as emoji
+        let spans = parse_inline_style("time is 12:30", &palette, Style::default());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "time is 12:30");
+
+        // 7. Emojis inside inline code should remain literal
+        let spans = parse_inline_style("code: `:smile:`", &palette, Style::default());
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content, "code: ");
+        assert_eq!(spans[1].content, ":smile:");
     }
 
     #[test]

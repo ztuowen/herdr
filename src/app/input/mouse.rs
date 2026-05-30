@@ -107,6 +107,18 @@ impl AppState {
                                 ])
                                 .split(inner);
 
+                                // Check if user clicked on any markdown hyperlink
+                                if let Some((_, _, url)) = self
+                                    .active_kanban_detail_hyperlinks()
+                                    .into_iter()
+                                    .find(|((x, y), _, _)| *x == mouse.column && *y == mouse.row)
+                                {
+                                    if !url.starts_with("http://") && !url.starts_with("https://") {
+                                        self.request_clipboard_write = Some(url.into_bytes());
+                                        return None;
+                                    }
+                                }
+
                                 // Check if user clicked on the terminal row (rows[5])
                                 let terminal_row = rows[5];
                                 if mouse.row == terminal_row.y {
@@ -3143,6 +3155,45 @@ mod tests {
         assert_eq!(app.state.kanban_detail_uuid, None);
         assert!(app.state.kanban_items.is_empty());
 
+        // Test clicking hyperlinks inside detailed modal
+        let link_file = temp_dir.join(format!("herdr-test-link-{}.md", uuid::Uuid::new_v4()));
+        let link_desc = "Check [my file](file:///path/to/my/file.txt) and [my website](https://example.com).";
+        std::fs::write(&link_file, &link_desc).unwrap();
+        let link_path = link_file.to_string_lossy().to_string();
+
+        let item = app.state.add_kanban_item(
+            "Link Test Task".to_string(),
+            Some(link_path.clone()),
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+        app.state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+        app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
+
+        let links = app.state.active_kanban_detail_hyperlinks();
+        let file_link_coord = links.iter().find(|(_, _, url)| url == "file:///path/to/my/file.txt").map(|(coord, _, _)| *coord);
+        let web_link_coord = links.iter().find(|(_, _, url)| url == "https://example.com").map(|(coord, _, _)| *coord);
+
+        assert!(file_link_coord.is_some());
+        assert!(web_link_coord.is_some());
+
+        let (fx, fy) = file_link_coord.unwrap();
+        let (wx, wy) = web_link_coord.unwrap();
+
+        // Clicking the file link should trigger a clipboard write event
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), fx, fy));
+        let event = app.event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            crate::events::AppEvent::ClipboardWrite { content } if content == b"file:///path/to/my/file.txt".to_vec()
+        ));
+
+        // Clicking the web link should NOT trigger a clipboard write event
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), wx, wy));
+        assert!(app.event_rx.try_recv().is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_file(link_file);
         let _ = std::fs::remove_file(plan_file);
     }
 }

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -389,25 +389,35 @@ fn render_kanban_detail_modal(
         })
         .unwrap_or(rows[6]);
 
-    let mut desc_lines = vec![Line::from(desc_title)];
+    let mut all_md_lines = Vec::new();
+    all_md_lines.push(super::MarkdownLine {
+        spans: vec![super::MarkdownSpan::Text(desc_title)],
+    });
     if !item.description.is_empty() {
-        desc_lines.push(Line::from(Span::styled(
-            &item.description,
-            Style::default().fg(p.overlay0),
-        )));
-        desc_lines.push(Line::from(""));
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::styled(
+                item.description.clone(),
+                Style::default().fg(p.overlay0),
+            ))],
+        });
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
+        });
     }
     if is_error {
-        desc_lines.push(Line::from(Span::styled(
-            display_desc,
-            Style::default().fg(p.red).add_modifier(Modifier::BOLD),
-        )));
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::styled(
+                display_desc,
+                Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+            ))],
+        });
     } else {
-        desc_lines.extend(super::parse_markdown(&display_desc, p));
+        all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
     }
 
-    let desc_text = Paragraph::new(desc_lines)
-        .wrap(Wrap { trim: true })
+    let wrapped = super::wrap_markdown(&all_md_lines, desc_area.width as usize);
+
+    let desc_text = Paragraph::new(wrapped.lines)
         .scroll((app.kanban_detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
 
@@ -439,42 +449,6 @@ fn render_kanban_detail_modal(
     );
 }
 
-pub(crate) fn count_wrapped_lines(text: &str, width: usize) -> usize {
-    use unicode_width::UnicodeWidthStr;
-    if width == 0 {
-        return 0;
-    }
-    let mut total_lines = 0;
-    for line in text.lines() {
-        if line.is_empty() {
-            total_lines += 1;
-            continue;
-        }
-        let mut current_width = 0;
-        let mut line_count = 1;
-        for word in line.split(' ') {
-            if word.is_empty() {
-                current_width += 1;
-                if current_width > width {
-                    line_count += 1;
-                    current_width = 1;
-                }
-                continue;
-            }
-            let word_width = UnicodeWidthStr::width(word);
-            if current_width == 0 {
-                current_width = word_width;
-            } else if current_width + 1 + word_width <= width {
-                current_width += 1 + word_width;
-            } else {
-                line_count += 1;
-                current_width = word_width;
-            }
-        }
-        total_lines += line_count;
-    }
-    total_lines
-}
 
 pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
     if path_str.is_empty() {

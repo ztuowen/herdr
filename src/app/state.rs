@@ -1742,27 +1742,136 @@ impl AppState {
         let desc_area = rows[6];
 
         let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
-        let mut desc_lines = vec![];
+        
+        let p = &self.palette;
+        let mut all_md_lines = Vec::new();
+        all_md_lines.push(crate::ui::MarkdownLine {
+            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                "Description:",
+                ratatui::style::Style::default().fg(p.overlay1).add_modifier(ratatui::style::Modifier::BOLD),
+            ))],
+        });
         if !item.description.is_empty() {
-            desc_lines.push(item.description.clone());
-            desc_lines.push(String::new());
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                    item.description.clone(),
+                    ratatui::style::Style::default().fg(p.overlay0),
+                ))],
+            });
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
+            });
         }
         if is_err {
-            desc_lines.push(display_desc);
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                    display_desc,
+                    ratatui::style::Style::default().fg(p.red).add_modifier(ratatui::style::Modifier::BOLD),
+                ))],
+            });
         } else {
-            let markdown_lines = crate::ui::parse_markdown(&display_desc, &self.palette);
-            for line in markdown_lines {
-                let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-                desc_lines.push(line_text);
-            }
+            all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
         }
 
-        let mut total_lines =
-            crate::ui::count_wrapped_lines("Description:", desc_area.width as usize);
-        for line_text in desc_lines {
-            total_lines += crate::ui::count_wrapped_lines(&line_text, desc_area.width as usize);
+        let wrapped = crate::ui::wrap_markdown(&all_md_lines, desc_area.width as usize);
+        wrapped.lines.len().saturating_sub(desc_area.height as usize) as u16
+    }
+
+    pub fn active_kanban_detail_hyperlinks(&self) -> Vec<((u16, u16), String, String)> {
+        let Some(ref uuid) = self.kanban_detail_uuid else {
+            return Vec::new();
+        };
+        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
+            return Vec::new();
+        };
+        let (width, height) = self.kanban_detail_modal_size();
+        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
+        else {
+            return Vec::new();
+        };
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(popup);
+        if inner.height < 7 || inner.width < 4 {
+            return Vec::new();
         }
-        total_lines.saturating_sub(desc_area.height as usize) as u16
+        let rows = ratatui::layout::Layout::vertical([
+            ratatui::layout::Constraint::Length(1), // Header title
+            ratatui::layout::Constraint::Length(1), // Divider
+            ratatui::layout::Constraint::Length(1), // Card Title
+            ratatui::layout::Constraint::Length(1), // Status Badge
+            ratatui::layout::Constraint::Length(1), // UUID
+            ratatui::layout::Constraint::Length(1), // Associated Terminal
+            ratatui::layout::Constraint::Min(1),    // Description
+            ratatui::layout::Constraint::Length(1), // Footer hint
+        ])
+        .split(inner);
+        let desc_area = rows[6];
+
+        let max_scroll = self.kanban_detail_max_scroll();
+        let metrics = crate::pane::ScrollMetrics {
+            offset_from_bottom: max_scroll.saturating_sub(self.kanban_detail_scroll) as usize,
+            max_offset_from_bottom: max_scroll as usize,
+            viewport_rows: desc_area.height.max(1) as usize,
+        };
+        let has_scrollbar = crate::ui::release_notes_scrollbar_rect(desc_area, metrics).is_some();
+        let text_area = if has_scrollbar {
+            ratatui::layout::Rect::new(
+                desc_area.x,
+                desc_area.y,
+                desc_area.width.saturating_sub(1),
+                desc_area.height,
+            )
+        } else {
+            desc_area
+        };
+
+        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
+        if is_err {
+            return Vec::new();
+        }
+
+        let p = &self.palette;
+        let mut all_md_lines = Vec::new();
+        all_md_lines.push(crate::ui::MarkdownLine {
+            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                "Description:",
+                ratatui::style::Style::default().fg(p.overlay1).add_modifier(ratatui::style::Modifier::BOLD),
+            ))],
+        });
+        if !item.description.is_empty() {
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                    item.description.clone(),
+                    ratatui::style::Style::default().fg(p.overlay0),
+                ))],
+            });
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
+            });
+        }
+        all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
+
+        let wrapped = crate::ui::wrap_markdown(&all_md_lines, text_area.width as usize);
+
+        let scroll_y = self.kanban_detail_scroll as usize;
+        let viewport_height = text_area.height as usize;
+
+        let mut links = Vec::new();
+        for (line_idx, col_range, url) in wrapped.link_ranges {
+            if line_idx >= scroll_y && line_idx - scroll_y < viewport_height {
+                let screen_y = text_area.y + (line_idx - scroll_y) as u16;
+                for col in col_range {
+                    let screen_x = text_area.x + col as u16;
+                    if let Some(line) = wrapped.lines.get(line_idx) {
+                        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                        let char_symbol = line_text.chars().nth(col).map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
+                        links.push(((screen_x, screen_y), char_symbol, url.clone()));
+                    }
+                }
+            }
+        }
+        links
     }
 
     pub fn scroll_kanban_detail(&mut self, delta: i16) {

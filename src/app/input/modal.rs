@@ -833,6 +833,12 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
             KeyCode::Down | KeyCode::Char('j') => {
                 state.scroll_kanban_detail(1);
             }
+            KeyCode::Left | KeyCode::Char('h') => {
+                state.scroll_horizontal_kanban_detail(-2);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                state.scroll_horizontal_kanban_detail(2);
+            }
             KeyCode::PageUp => {
                 state.scroll_kanban_detail(-10);
             }
@@ -1551,6 +1557,66 @@ mod tests {
             TerminalKey::from(KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty())),
         );
         assert_eq!(state.kanban_detail_scroll, 0);
+
+        let _ = std::fs::remove_file(plan_file);
+    }
+
+    #[test]
+    fn test_kanban_detail_horizontal_scrolling() {
+        let temp_dir = std::env::temp_dir();
+        let plan_file = temp_dir.join(format!(
+            "herdr-test-horiz-scroll-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        let desc_text = "\
+| Col 1 (Very Long Header Name here) | Col 2 (Very Long Header Name here) |\n\
+| --- | --- |\n\
+| val1 | val2 |";
+        std::fs::write(&plan_file, desc_text).unwrap();
+        let plan_path = plan_file.to_string_lossy().to_string();
+
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::Kanban;
+        state.kanban_items.clear();
+        let item = state.add_kanban_item(
+            "Wide Table Task".to_string(),
+            Some(plan_path.clone()),
+            Some(crate::api::schema::KanbanStatus::Todo),
+            None,
+        );
+
+        state.view.terminal_area = Rect::new(0, 0, 40, 24); // narrow width to force horizontal scrolling
+        state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+
+        assert_eq!(state.kanban_detail_horizontal_scroll, 0);
+
+        // Scroll right 2 using 'l'
+        handle_kanban_key(
+            &mut state,
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty())),
+        );
+        assert_eq!(state.kanban_detail_horizontal_scroll, 2);
+
+        // Scroll right 2 using Right arrow
+        handle_kanban_key(
+            &mut state,
+            TerminalKey::from(KeyEvent::new(KeyCode::Right, KeyModifiers::empty())),
+        );
+        assert_eq!(state.kanban_detail_horizontal_scroll, 4);
+
+        // Scroll left 2 using 'h'
+        handle_kanban_key(
+            &mut state,
+            TerminalKey::from(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty())),
+        );
+        assert_eq!(state.kanban_detail_horizontal_scroll, 2);
+
+        // Scroll left 2 using Left arrow
+        handle_kanban_key(
+            &mut state,
+            TerminalKey::from(KeyEvent::new(KeyCode::Left, KeyModifiers::empty())),
+        );
+        assert_eq!(state.kanban_detail_horizontal_scroll, 0);
 
         let _ = std::fs::remove_file(plan_file);
     }

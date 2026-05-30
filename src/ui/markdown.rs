@@ -1031,6 +1031,7 @@ pub fn parse_markdown(text: &str, palette: &Palette) -> Vec<Line<'static>> {
 pub struct WrappedMarkdown {
     pub lines: Vec<Line<'static>>,
     pub link_ranges: Vec<(usize, std::ops::Range<usize>, String)>,
+    pub max_original_width: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1040,45 +1041,122 @@ struct Token {
     url: Option<String>,
 }
 
-pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
+fn slice_spans_horizontally(
+    spans: &[MarkdownSpan],
+    scroll_x: usize,
+    width: usize,
+) -> (Vec<Span<'static>>, Vec<(std::ops::Range<usize>, String)>) {
+    use unicode_width::UnicodeWidthChar;
+
+    let mut out_spans = Vec::new();
+    let mut out_links = Vec::new();
+    let mut current_x = 0;
+
+    let viewport_end = scroll_x + width;
+
+    for span in spans {
+        match span {
+            MarkdownSpan::Text(s) => {
+                let mut active_chars = String::new();
+                for c in s.content.chars() {
+                    let c_width = c.width().unwrap_or(0);
+                    let char_start = current_x;
+                    let char_end = current_x + c_width;
+
+                    if char_end > scroll_x && char_start < viewport_end {
+                        active_chars.push(c);
+                    }
+                    current_x = char_end;
+                }
+                if !active_chars.is_empty() {
+                    out_spans.push(Span::styled(active_chars, s.style));
+                }
+            }
+            MarkdownSpan::Link { label_spans, url } => {
+                let mut link_start_new_x = None;
+                let mut link_end_new_x = None;
+
+                for s in label_spans {
+                    let mut active_chars = String::new();
+                    for c in s.content.chars() {
+                        let c_width = c.width().unwrap_or(0);
+                        let char_start = current_x;
+                        let char_end = current_x + c_width;
+
+                        if char_end > scroll_x && char_start < viewport_end {
+                            let new_start = char_start.saturating_sub(scroll_x);
+                            let new_end = char_end.saturating_sub(scroll_x).min(width);
+
+                            if link_start_new_x.is_none() {
+                                link_start_new_x = Some(new_start);
+                            }
+                            link_end_new_x = Some(new_end);
+
+                            active_chars.push(c);
+                        }
+                        current_x = char_end;
+                    }
+                    if !active_chars.is_empty() {
+                        out_spans.push(Span::styled(active_chars, s.style));
+                    }
+                }
+
+                if let (Some(start), Some(end)) = (link_start_new_x, link_end_new_x) {
+                    if start < end {
+                        out_links.push((start..end, url.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    (out_spans, out_links)
+}
+
+pub fn wrap_markdown(
+    lines: &[MarkdownLine],
+    width: usize,
+    table_scroll_x: usize,
+) -> WrappedMarkdown {
     use unicode_width::UnicodeWidthStr;
 
     if width == 0 {
         return WrappedMarkdown {
             lines: Vec::new(),
             link_ranges: Vec::new(),
+            max_original_width: 0,
         };
     }
 
     let mut wrapped_lines = Vec::new();
     let mut link_ranges = Vec::new();
+    let mut max_original_width = width;
 
     for md_line in lines {
         if md_line.is_table_row {
             let line_index = wrapped_lines.len();
-            let mut current_x = 0;
-            let mut line_spans = Vec::new();
+            let mut original_width = 0;
 
             for span in &md_line.spans {
                 match span {
                     MarkdownSpan::Text(s) => {
-                        let w = UnicodeWidthStr::width(s.content.as_ref());
-                        current_x += w;
-                        line_spans.push(s.clone());
+                        original_width += UnicodeWidthStr::width(s.content.as_ref());
                     }
-                    MarkdownSpan::Link { label_spans, url } => {
-                        let start_x = current_x;
+                    MarkdownSpan::Link { label_spans, .. } => {
                         for s in label_spans {
-                            let w = UnicodeWidthStr::width(s.content.as_ref());
-                            current_x += w;
-                            line_spans.push(s.clone());
+                            original_width += UnicodeWidthStr::width(s.content.as_ref());
                         }
-                        let end_x = current_x;
-                        link_ranges.push((line_index, start_x..end_x, url.clone()));
                     }
                 }
             }
-            wrapped_lines.push(Line::from(line_spans));
+            max_original_width = max_original_width.max(original_width);
+
+            let (sliced_spans, sliced_links) =
+                slice_spans_horizontally(&md_line.spans, table_scroll_x, width);
+            for (range, url) in sliced_links {
+                link_ranges.push((line_index, range, url));
+            }
+            wrapped_lines.push(Line::from(sliced_spans));
             continue;
         }
 
@@ -1181,6 +1259,7 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
     WrappedMarkdown {
         lines: wrapped_lines,
         link_ranges,
+        max_original_width,
     }
 }
 
@@ -1547,7 +1626,7 @@ mod tests {
         let palette = test_palette();
         let md_lines = parse_markdown_with_links("hello [link](http://foo) world", &palette);
 
-        let wrapped = wrap_markdown(&md_lines, 12);
+        let wrapped = wrap_markdown(&md_lines, 12, 0);
 
         assert_eq!(wrapped.lines.len(), 2);
         assert_eq!(wrapped.lines[0].spans[0].content, "hello");
@@ -1565,7 +1644,7 @@ mod tests {
         let palette = test_palette();
         let md_lines = parse_markdown_with_links("```rust\nfn main() {}\n```", &palette);
 
-        let wrapped = wrap_markdown(&md_lines, 20);
+        let wrapped = wrap_markdown(&md_lines, 20, 0);
 
         assert_eq!(wrapped.lines.len(), 1);
         let line = &wrapped.lines[0];
@@ -1598,7 +1677,7 @@ mod tests {
         );
 
         // Wrap to width 20. "│ " takes 2 characters, so wrap_width is 18.
-        let wrapped = wrap_markdown(&md_lines, 20);
+        let wrapped = wrap_markdown(&md_lines, 20, 0);
 
         assert_eq!(wrapped.lines.len(), 3);
 
@@ -1645,7 +1724,7 @@ mod tests {
         let md_lines = parse_markdown_with_links("```rust\nlet variable = 123456;\n```", &palette);
 
         // Wrap to width 15. "▏" takes 1 character, so wrap_width is 14.
-        let wrapped = wrap_markdown(&md_lines, 15);
+        let wrapped = wrap_markdown(&md_lines, 15, 0);
 
         assert_eq!(wrapped.lines.len(), 2);
 
@@ -1791,14 +1870,14 @@ mod tests {
         }
 
         // 4. Wrapping behavior: tables should be unwrapped!
-        let wrapped = wrap_markdown(&lines, 10);
+        let wrapped = wrap_markdown(&lines, 10, 0);
         assert_eq!(wrapped.lines.len(), 5);
         let wrapped_line3: String = wrapped.lines[3]
             .spans
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(wrapped_line3, "│ val1 │  val2  │  val3 │ val4    │");
+        assert_eq!(wrapped_line3, "│ val1 │  ");
 
         // 5. Escaped pipes handling
         let md_escaped = "\
@@ -1816,5 +1895,42 @@ mod tests {
             })
             .collect();
         assert_eq!(esc_header, "│ Escaped | Pipe │ Col2 │");
+    }
+
+    #[test]
+    fn test_table_scrolling() {
+        let palette = test_palette();
+        let md = "\
+| Header 1 | Header 2 |
+| :--- | :--- |
+| [Link Label](http://example.com) | val2 |";
+
+        let lines = parse_markdown_with_links(md, &palette);
+        assert_eq!(lines.len(), 5);
+
+        // Render table with scroll_x = 0
+        let wrapped_no_scroll = wrap_markdown(&lines, 30, 0);
+        assert_eq!(wrapped_no_scroll.lines.len(), 5);
+
+        // Find max_original_width, which should match the visual width of the widest row
+        assert!(wrapped_no_scroll.max_original_width > 15);
+
+        // Render table with scroll_x = 5
+        let wrapped_scrolled = wrap_markdown(&lines, 30, 5);
+        assert_eq!(wrapped_scrolled.lines.len(), 5);
+
+        // Verify original link range starts at 2
+        assert_eq!(wrapped_no_scroll.link_ranges[0].1, 2..12);
+
+        // With scroll_x = 5, coordinate should shift left by 5
+        assert_eq!(wrapped_scrolled.link_ranges[0].1, 0..7);
+
+        // Verify that the text of the line is indeed scrolled
+        let line_text: String = wrapped_scrolled.lines[3]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(line_text.contains("k Label"));
     }
 }

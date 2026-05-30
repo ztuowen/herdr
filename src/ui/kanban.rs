@@ -432,7 +432,11 @@ fn render_kanban_detail_modal(
         all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
     }
 
-    let wrapped = super::wrap_markdown(&all_md_lines, desc_area.width as usize);
+    let wrapped = super::wrap_markdown(
+        &all_md_lines,
+        desc_area.width as usize,
+        app.kanban_detail_horizontal_scroll as usize,
+    );
 
     let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban_detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);

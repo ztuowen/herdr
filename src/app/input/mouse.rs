@@ -185,6 +185,12 @@ impl AppState {
                     MouseEventKind::ScrollDown => {
                         self.scroll_kanban_detail(3);
                     }
+                    MouseEventKind::ScrollLeft => {
+                        self.scroll_horizontal_kanban_detail(-2);
+                    }
+                    MouseEventKind::ScrollRight => {
+                        self.scroll_horizontal_kanban_detail(2);
+                    }
                     _ => {}
                 }
                 return None;

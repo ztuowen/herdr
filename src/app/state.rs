@@ -1196,6 +1196,7 @@ pub struct AppState {
     pub kanban_selected_row: usize,
     pub kanban_detail_uuid: Option<String>,
     pub kanban_detail_scroll: u16,
+    pub kanban_detail_horizontal_scroll: u16,
     pub prefix_previous_mode: Option<Mode>,
 }
 
@@ -1724,6 +1725,7 @@ impl AppState {
     pub fn set_kanban_detail_uuid(&mut self, uuid: Option<String>) {
         self.kanban_detail_uuid = uuid;
         self.kanban_detail_scroll = 0;
+        self.kanban_detail_horizontal_scroll = 0;
     }
 
     pub fn kanban_detail_max_scroll(&self) -> u16 {
@@ -1810,7 +1812,11 @@ impl AppState {
             all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
         }
 
-        let wrapped = crate::ui::wrap_markdown(&all_md_lines, desc_area.width as usize);
+        let wrapped = crate::ui::wrap_markdown(
+            &all_md_lines,
+            desc_area.width as usize,
+            self.kanban_detail_horizontal_scroll as usize,
+        );
         wrapped
             .lines
             .len()
@@ -1908,7 +1914,11 @@ impl AppState {
         }
         all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
 
-        let wrapped = crate::ui::wrap_markdown(&all_md_lines, text_area.width as usize);
+        let wrapped = crate::ui::wrap_markdown(
+            &all_md_lines,
+            text_area.width as usize,
+            self.kanban_detail_horizontal_scroll as usize,
+        );
 
         let scroll_y = self.kanban_detail_scroll as usize;
         let viewport_height = text_area.height as usize;
@@ -1939,6 +1949,105 @@ impl AppState {
         let max_scroll = self.kanban_detail_max_scroll();
         let current = self.kanban_detail_scroll as i16;
         self.kanban_detail_scroll =
+            current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
+    }
+
+    pub fn kanban_detail_max_horizontal_scroll(&self) -> u16 {
+        let Some(ref uuid) = self.kanban_detail_uuid else {
+            return 0;
+        };
+        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
+            return 0;
+        };
+        let (width, height) = self.kanban_detail_modal_size();
+        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
+        else {
+            return 0;
+        };
+        let inner = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .inner(popup);
+        if inner.height < 7 || inner.width < 4 {
+            return 0;
+        }
+        let rows = ratatui::layout::Layout::vertical([
+            ratatui::layout::Constraint::Length(1), // Header title
+            ratatui::layout::Constraint::Length(1), // Divider
+            ratatui::layout::Constraint::Length(1), // Card Title
+            ratatui::layout::Constraint::Length(1), // Status Badge
+            ratatui::layout::Constraint::Length(1), // UUID
+            ratatui::layout::Constraint::Length(1), // Associated Terminal
+            ratatui::layout::Constraint::Min(1),    // Description
+            ratatui::layout::Constraint::Length(1), // Footer hint
+        ])
+        .split(inner);
+        let desc_area = rows[6];
+
+        let max_scroll = self.kanban_detail_max_scroll();
+        let metrics = crate::pane::ScrollMetrics {
+            offset_from_bottom: max_scroll.saturating_sub(self.kanban_detail_scroll) as usize,
+            max_offset_from_bottom: max_scroll as usize,
+            viewport_rows: desc_area.height.max(1) as usize,
+        };
+        let has_scrollbar = crate::ui::release_notes_scrollbar_rect(desc_area, metrics).is_some();
+        let text_area = if has_scrollbar {
+            ratatui::layout::Rect::new(
+                desc_area.x,
+                desc_area.y,
+                desc_area.width.saturating_sub(1),
+                desc_area.height,
+            )
+        } else {
+            desc_area
+        };
+
+        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
+        if is_err {
+            return 0;
+        }
+
+        let p = &self.palette;
+        let mut all_md_lines = Vec::new();
+        all_md_lines.push(crate::ui::MarkdownLine {
+            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                "Description:",
+                ratatui::style::Style::default()
+                    .fg(p.overlay1)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+        if !item.description.is_empty() {
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
+                    item.description.clone(),
+                    ratatui::style::Style::default().fg(p.overlay0),
+                ))],
+                is_code_block: false,
+                is_blockquote: false,
+                is_table_row: false,
+            });
+            all_md_lines.push(crate::ui::MarkdownLine {
+                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
+                is_code_block: false,
+                is_blockquote: false,
+                is_table_row: false,
+            });
+        }
+        all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
+
+        let wrapped = crate::ui::wrap_markdown(&all_md_lines, text_area.width as usize, 0);
+        wrapped
+            .max_original_width
+            .saturating_sub(text_area.width as usize) as u16
+    }
+
+    pub fn scroll_horizontal_kanban_detail(&mut self, delta: i16) {
+        let max_scroll = self.kanban_detail_max_horizontal_scroll();
+        let current = self.kanban_detail_horizontal_scroll as i16;
+        self.kanban_detail_horizontal_scroll =
             current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
     }
 }
@@ -2097,6 +2206,7 @@ impl AppState {
             kanban_selected_row: 0,
             kanban_detail_uuid: None,
             kanban_detail_scroll: 0,
+            kanban_detail_horizontal_scroll: 0,
             prefix_previous_mode: None,
         }
     }

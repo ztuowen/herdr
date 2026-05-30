@@ -836,6 +836,7 @@ fn help_commands_exit_successfully() {
         &["session", "-h"],
         &["session", "attach", "-h"],
         &["integration", "-h"],
+        &["kanban", "-h"],
     ];
 
     for args in help_cases {

@@ -401,6 +401,7 @@ fn main() -> io::Result<()> {
         println!("       herdr wait <subcommand> ...");
         println!("       herdr session <subcommand> ...");
         println!("       herdr integration <subcommand> ...");
+        println!("       herdr kanban <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
@@ -450,6 +451,10 @@ fn main() -> io::Result<()> {
             (
                 "herdr integration <subcommand>",
                 "Manage built-in agent integrations",
+            ),
+            (
+                "herdr kanban <subcommand>",
+                "Kanban board helpers over the socket API",
             ),
         ] {
             println!("  {command:<32} {description}");
@@ -519,6 +524,7 @@ fn main() -> io::Result<()> {
                 "wait",
                 "session",
                 "integration",
+                "kanban",
             ]
             .contains(&arg.as_str())
         {

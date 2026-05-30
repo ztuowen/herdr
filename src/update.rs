@@ -943,7 +943,7 @@ fn runtime_matches_release(status: &crate::api::RuntimeStatus, release: &Release
     let protocol_matches = release
         .target_protocol
         .is_none_or(|protocol| status.protocol == Some(protocol));
-    let version_matches = status.version.as_deref() == Some(&release.version.to_string());
+    let version_matches = status.version.as_deref() == Some(release.version.to_string()).as_deref();
     protocol_matches && version_matches
 }
 

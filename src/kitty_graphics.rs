@@ -164,7 +164,7 @@ pub(crate) fn encode_local_pane_graphics(
     cell_size: HostCellSize,
     cache: &mut HostGraphicsCache,
 ) -> Vec<u8> {
-    let mode_ok = app.mode == Mode::Terminal;
+    let mode_ok = app.mode == Mode::Terminal || app.mode == Mode::Kanban;
     let cell_ok = cell_size.is_known();
     tracing::debug!(
         mode_ok,
@@ -414,6 +414,62 @@ fn collect_visible_placements(
             });
         }
     }
+
+    if let Ok(static_placements) = app.static_image_placements.lock() {
+        for sp in &*static_placements {
+            if let Some((png_bytes, w_px, h_px, failed)) =
+                crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)
+            {
+                if !failed {
+                    let mut hasher = DefaultHasher::new();
+                    sp.formula.hash(&mut hasher);
+                    let formula_hash = hasher.finish() as u32;
+
+                    let image_id = 900_000 + (formula_hash % 99_999);
+                    let placement_id = 900_000 + (formula_hash % 99_999);
+
+                    let mut fingerprint_hasher = DefaultHasher::new();
+                    png_bytes.hash(&mut fingerprint_hasher);
+                    let data_fingerprint = fingerprint_hasher.finish();
+
+                    let placement = KittyImagePlacement {
+                        image_id,
+                        placement_id,
+                        z: 10,
+                        x_offset: 0,
+                        y_offset: 0,
+                        image_width: w_px,
+                        image_height: h_px,
+                        format: KittyImageFormat::Png,
+                        data_len: png_bytes.len(),
+                        data_fingerprint,
+                        data: png_bytes,
+                        render: crate::ghostty::KittyPlacementRenderInfo {
+                            pixel_width: 0,
+                            pixel_height: 0,
+                            grid_cols: sp.grid_cols,
+                            grid_rows: sp.grid_rows,
+                            viewport_col: sp.viewport_col,
+                            viewport_row: sp.viewport_row,
+                            source_x: 0,
+                            source_y: 0,
+                            source_width: 0,
+                            source_height: 0,
+                        },
+                    };
+
+                    placements.push(HostPlacement {
+                        pane_id: PaneId::from_raw(999_999),
+                        area: sp.area,
+                        cell_size,
+                        placement,
+                        scrollback_offset: 0,
+                    });
+                }
+            }
+        }
+    }
+
     tracing::debug!(
         placements_len = placements.len(),
         "collect_visible_placements: done"

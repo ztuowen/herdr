@@ -406,6 +406,7 @@ impl App {
         };
 
         let mut state = AppState {
+            static_image_placements: std::sync::Mutex::new(Vec::new()),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
@@ -576,6 +577,8 @@ impl App {
                 .get(idx)
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
+
+        crate::math_compiler::init_redraw_notifier(render_notify.clone(), render_dirty.clone());
 
         Self {
             config_diagnostic_deadline: None,

@@ -432,14 +432,43 @@ fn render_kanban_detail_modal(
         all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
     }
 
+    let cell_size = if app.kitty_graphics_enabled {
+        crate::kitty_graphics::HostCellSize::from_terminal(area)
+    } else {
+        crate::kitty_graphics::HostCellSize::default()
+    };
+
     let wrapped = super::wrap_markdown(
         &all_md_lines,
         desc_area.width as usize,
         app.kanban_detail_horizontal_scroll as usize,
+        cell_size,
+        app.palette.text,
     );
 
     let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban_detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
+
+    if app.kitty_graphics_enabled && cell_size.is_known() {
+        if let Ok(mut placements) = app.static_image_placements.lock() {
+            for placement in wrapped.math_placements {
+                let viewport_row = placement.line_idx as i32 - app.kanban_detail_scroll as i32;
+                if viewport_row < desc_area.height as i32
+                    && viewport_row + placement.height_cells as i32 > 0
+                {
+                    placements.push(crate::app::state::StaticImagePlacement {
+                        formula: placement.formula.clone(),
+                        text_color_hex: placement.text_color_hex.clone(),
+                        area: desc_area,
+                        grid_cols: placement.width_cells as u32,
+                        grid_rows: placement.height_cells as u32,
+                        viewport_col: placement.col_idx as i32,
+                        viewport_row,
+                    });
+                }
+            }
+        }
+    }
 
     if let Some(track) = track {
         super::render_scrollbar(frame, metrics, track, p.overlay0, p.overlay1, "▐");

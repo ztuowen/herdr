@@ -34,6 +34,15 @@ tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 syntect = { version = "5.2", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
 once_cell = "1.19"
+typst = "0.11"
+comemo = "0.4"
+typst-assets = { version = "0.11", features = ["fonts"] }
+typst-svg = "0.11"
+mitex = "0.2.4"
+resvg = "0.38"
+tiny-skia = "0.11"
+
+
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 cpal = "0.15"

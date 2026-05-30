@@ -34,6 +34,8 @@ mod ipc;
 mod kitty_graphics;
 mod layout;
 mod logging;
+mod math_compiler;
+
 mod pane;
 mod persist;
 mod platform;

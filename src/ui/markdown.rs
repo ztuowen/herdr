@@ -96,6 +96,8 @@ enum DelimiterKind {
     BoldUnderscore,
     ItalicAsterisk,
     ItalicUnderscore,
+    MathInline,
+    MathBlock,
     Link {
         label_end: usize,
         url_start: usize,
@@ -212,6 +214,39 @@ fn find_first_match(chars: &[char]) -> Option<DelimiterMatch> {
                 }
                 j += 1;
             }
+        } else if chars[i] == '$' {
+            if chars.get(i + 1) == Some(&'$') {
+                let mut j = i + 2;
+                while j < chars.len() {
+                    if chars[j] == '$' && chars.get(j + 1) == Some(&'$') {
+                        return Some(DelimiterMatch {
+                            kind: DelimiterKind::MathBlock,
+                            start_idx: i,
+                            end_idx: j + 2,
+                        });
+                    }
+                    j += 1;
+                }
+            } else if chars
+                .get(i + 1)
+                .is_some_and(|&c| c != ' ' && c != '\n' && c != '\r')
+            {
+                let mut j = i + 1;
+                while j < chars.len() {
+                    if chars[j] == '$'
+                        && chars
+                            .get(j - 1)
+                            .is_some_and(|&c| c != ' ' && c != '\n' && c != '\r')
+                    {
+                        return Some(DelimiterMatch {
+                            kind: DelimiterKind::MathInline,
+                            start_idx: i,
+                            end_idx: j + 1,
+                        });
+                    }
+                    j += 1;
+                }
+            }
         }
         i += 1;
     }
@@ -246,6 +281,24 @@ fn parse_inline_chars(
                             .fg(palette.accent)
                             .bg(palette.surface0)
                             .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                DelimiterKind::MathInline => {
+                    let formula: String = chars[match_start + 1..match_end - 1].iter().collect();
+                    spans.push(Span::styled(
+                        format!("${}$", formula),
+                        Style::default()
+                            .fg(ratatui::style::Color::Yellow)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                DelimiterKind::MathBlock => {
+                    let formula: String = chars[match_start + 2..match_end - 2].iter().collect();
+                    spans.push(Span::styled(
+                        format!("$$ {} $$", formula),
+                        Style::default()
+                            .fg(ratatui::style::Color::Yellow)
+                            .add_modifier(Modifier::ITALIC),
                     ));
                 }
                 DelimiterKind::BoldAsterisk | DelimiterKind::BoldUnderscore => {
@@ -300,6 +353,10 @@ pub enum MarkdownSpan {
         label_spans: Vec<Span<'static>>,
         url: String,
     },
+    Math {
+        formula: String,
+        is_block: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +396,20 @@ fn parse_inline_chars_with_links(
                             .bg(palette.surface0)
                             .add_modifier(Modifier::BOLD),
                     )));
+                }
+                DelimiterKind::MathInline => {
+                    let formula: String = chars[match_start + 1..match_end - 1].iter().collect();
+                    spans.push(MarkdownSpan::Math {
+                        formula,
+                        is_block: false,
+                    });
+                }
+                DelimiterKind::MathBlock => {
+                    let formula: String = chars[match_start + 2..match_end - 2].iter().collect();
+                    spans.push(MarkdownSpan::Math {
+                        formula,
+                        is_block: true,
+                    });
                 }
                 DelimiterKind::BoldAsterisk | DelimiterKind::BoldUnderscore => {
                     let content_chars = &chars[match_start + 2..match_end - 2];
@@ -492,6 +563,13 @@ fn spans_width(spans: &[MarkdownSpan]) -> usize {
                     w += unicode_width::UnicodeWidthStr::width(s.content.as_ref());
                 }
             }
+            MarkdownSpan::Math { formula, is_block } => {
+                if *is_block {
+                    w += formula.len() + 4;
+                } else {
+                    w += formula.len() + 2;
+                }
+            }
         }
     }
     w
@@ -605,6 +683,17 @@ fn wrap_cell_spans(spans: &[MarkdownSpan], max_width: usize) -> Vec<Vec<Markdown
                 for s in label_spans {
                     tokenize_span_content(&s.content, s.style, Some(url.clone()), &mut tokens);
                 }
+            }
+            MarkdownSpan::Math { formula, is_block } => {
+                let text = if *is_block {
+                    format!("$$ {} $$", formula)
+                } else {
+                    format!("${}$", formula)
+                };
+                let style = Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::ITALIC);
+                tokenize_span_content(&text, style, None, &mut tokens);
             }
         }
     }
@@ -875,6 +964,8 @@ fn parse_and_format_table(
     lines
 }
 
+// Allowed because this is a parser internal enum and CodeBlock is the standard name.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 enum Block {
     Paragraph(Vec<String>),
@@ -899,6 +990,7 @@ enum Block {
     },
     HorizontalRule,
     EmptyLine,
+    Math(String),
 }
 
 pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownLine> {
@@ -940,6 +1032,46 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 lines: cb_lines,
             });
             continue;
+        }
+
+        // Math Block
+        if let Some(stripped) = trimmed.strip_prefix("$$") {
+            if !stripped.is_empty() && stripped.contains("$$") {
+                if let Some(formula) = stripped.strip_suffix("$$") {
+                    blocks.push(Block::Math(formula.trim().to_string()));
+                    line_idx += 1;
+                    continue;
+                }
+            } else {
+                let mut mb_lines = Vec::new();
+                let content = stripped.trim();
+                if !content.is_empty() {
+                    mb_lines.push(content.to_string());
+                }
+                line_idx += 1;
+                while line_idx < input_lines.len() {
+                    let next_line = input_lines[line_idx];
+                    let next_trimmed = next_line.trim();
+                    if next_trimmed.starts_with("$$") {
+                        line_idx += 1;
+                        break;
+                    } else if next_trimmed.ends_with("$$") {
+                        if let Some(inner) = next_trimmed.strip_suffix("$$") {
+                            let inner = inner.trim();
+                            if !inner.is_empty() {
+                                mb_lines.push(inner.to_string());
+                            }
+                        }
+                        line_idx += 1;
+                        break;
+                    } else {
+                        mb_lines.push(next_line.to_string());
+                        line_idx += 1;
+                    }
+                }
+                blocks.push(Block::Math(mb_lines.join("\n")));
+                continue;
+            }
         }
 
         // 3. Table
@@ -1194,6 +1326,17 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 let highlighted = highlight_code_block(&lines, &lang, palette);
                 out_lines.extend(highlighted);
             }
+            Block::Math(formula) => {
+                out_lines.push(MarkdownLine {
+                    spans: vec![MarkdownSpan::Math {
+                        formula,
+                        is_block: true,
+                    }],
+                    is_code_block: false,
+                    is_blockquote: false,
+                    is_table_row: false,
+                });
+            }
             Block::Table {
                 header,
                 delimiter,
@@ -1419,6 +1562,19 @@ pub fn parse_markdown(text: &str, palette: &Palette) -> Vec<Line<'static>> {
                 match span {
                     MarkdownSpan::Text(s) => spans.push(s),
                     MarkdownSpan::Link { label_spans, .. } => spans.extend(label_spans),
+                    MarkdownSpan::Math { formula, is_block } => {
+                        let text = if is_block {
+                            format!("$$ {} $$", formula)
+                        } else {
+                            format!("${}$", formula)
+                        };
+                        spans.push(Span::styled(
+                            text,
+                            Style::default()
+                                .fg(palette.peach)
+                                .add_modifier(Modifier::ITALIC),
+                        ));
+                    }
                 }
             }
             Line::from(spans)
@@ -1431,6 +1587,18 @@ pub struct WrappedMarkdown {
     pub lines: Vec<Line<'static>>,
     pub link_ranges: Vec<(usize, std::ops::Range<usize>, String)>,
     pub max_original_width: usize,
+    pub math_placements: Vec<MathPlacementInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathPlacementInfo {
+    pub formula: String,
+    pub text_color_hex: String,
+    pub is_block: bool,
+    pub line_idx: usize,
+    pub col_idx: usize,
+    pub width_cells: u16,
+    pub height_cells: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -1438,6 +1606,7 @@ struct Token {
     text: String,
     style: Style,
     url: Option<String>,
+    math_formula: Option<(String, String, bool, u16, u16)>, // (formula, color_hex, is_block, width, height)
 }
 
 fn slice_spans_horizontally(
@@ -1506,32 +1675,167 @@ fn slice_spans_horizontally(
                     }
                 }
             }
+            MarkdownSpan::Math { formula, is_block } => {
+                let text = if *is_block {
+                    format!("$$ {} $$", formula)
+                } else {
+                    format!("${}$", formula)
+                };
+                let mut active_chars = String::new();
+                for c in text.chars() {
+                    let c_width = c.width().unwrap_or(0);
+                    let char_start = current_x;
+                    let char_end = current_x + c_width;
+
+                    if char_end > scroll_x && char_start < viewport_end {
+                        active_chars.push(c);
+                    }
+                    current_x = char_end;
+                }
+                if !active_chars.is_empty() {
+                    out_spans.push(Span::styled(
+                        active_chars,
+                        Style::default()
+                            .fg(ratatui::style::Color::Yellow)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
+                }
+            }
         }
     }
 
     (out_spans, out_links)
 }
 
+fn color_to_hex(color: ratatui::style::Color) -> String {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        ratatui::style::Color::Black => "#000000".to_string(),
+        ratatui::style::Color::Red => "#cd3131".to_string(),
+        ratatui::style::Color::Green => "#0dbc79".to_string(),
+        ratatui::style::Color::Yellow => "#e5e510".to_string(),
+        ratatui::style::Color::Blue => "#2472c8".to_string(),
+        ratatui::style::Color::Magenta => "#bc3fbc".to_string(),
+        ratatui::style::Color::Cyan => "#11a8cd".to_string(),
+        ratatui::style::Color::Gray => "#e5e5e5".to_string(),
+        ratatui::style::Color::DarkGray => "#666666".to_string(),
+        ratatui::style::Color::LightRed => "#f14c4c".to_string(),
+        ratatui::style::Color::LightGreen => "#23d18b".to_string(),
+        ratatui::style::Color::LightYellow => "#ffff00".to_string(),
+        ratatui::style::Color::LightBlue => "#3b8eea".to_string(),
+        ratatui::style::Color::LightMagenta => "#d670d6".to_string(),
+        ratatui::style::Color::LightCyan => "#29b8db".to_string(),
+        ratatui::style::Color::White => "#ffffff".to_string(),
+        _ => "#ffffff".to_string(),
+    }
+}
+
 pub fn wrap_markdown(
     lines: &[MarkdownLine],
     width: usize,
     table_scroll_x: usize,
+    cell_size: crate::kitty_graphics::HostCellSize,
+    text_color: ratatui::style::Color,
 ) -> WrappedMarkdown {
     use unicode_width::UnicodeWidthStr;
+
+    let text_color_hex = color_to_hex(text_color);
 
     if width == 0 {
         return WrappedMarkdown {
             lines: Vec::new(),
             link_ranges: Vec::new(),
             max_original_width: 0,
+            math_placements: Vec::new(),
         };
     }
 
     let mut wrapped_lines = Vec::new();
     let mut link_ranges = Vec::new();
+    let mut math_placements = Vec::new();
     let mut max_original_width = width;
 
     for md_line in lines {
+        if md_line.spans.len() == 1 {
+            if let MarkdownSpan::Math {
+                formula,
+                is_block: true,
+            } = &md_line.spans[0]
+            {
+                let mut rendered = false;
+                if cell_size.is_known() {
+                    if let Some((_, w_px, h_px, failed)) =
+                        crate::math_compiler::lookup_math_cache(formula, &text_color_hex)
+                    {
+                        if !failed {
+                            let max_cols = width as u32;
+                            let mut cols = w_px.div_ceil(cell_size.width_px);
+                            let mut rows = h_px.div_ceil(cell_size.height_px);
+                            if cols > max_cols {
+                                let scale = max_cols as f32 / cols as f32;
+                                cols = max_cols;
+                                rows = ((rows as f32 * scale).round() as u32).max(1);
+                            }
+
+                            let left_padding = (width as i32 - cols as i32) / 2;
+                            let left_padding = left_padding.max(0) as usize;
+
+                            let start_line = wrapped_lines.len();
+                            math_placements.push(MathPlacementInfo {
+                                formula: formula.clone(),
+                                text_color_hex: text_color_hex.clone(),
+                                is_block: true,
+                                line_idx: start_line,
+                                col_idx: left_padding,
+                                width_cells: cols as u16,
+                                height_cells: rows as u16,
+                            });
+
+                            for _ in 0..rows {
+                                wrapped_lines.push(Line::from(vec![Span::raw(
+                                    " ".repeat(left_padding + cols as usize),
+                                )]));
+                            }
+                            rendered = true;
+                        }
+                    } else {
+                        crate::math_compiler::enqueue_compile_job(
+                            formula.clone(),
+                            text_color_hex.clone(),
+                        );
+                    }
+                }
+
+                if !rendered {
+                    let inner_w = width.saturating_sub(4).max(10);
+                    let top_border = format!("┌{}┐", "─".repeat(inner_w + 2));
+                    wrapped_lines.push(Line::from(vec![Span::styled(
+                        top_border,
+                        Style::default().fg(ratatui::style::Color::Yellow),
+                    )]));
+
+                    for line in formula.lines() {
+                        let mut words = line.to_string();
+                        if words.len() > inner_w {
+                            words.truncate(inner_w);
+                        }
+                        let padded = format!("│  {:^inner_w$}  │", words);
+                        wrapped_lines.push(Line::from(vec![Span::styled(
+                            padded,
+                            Style::default().fg(ratatui::style::Color::Yellow),
+                        )]));
+                    }
+
+                    let bot_border = format!("└{}┘", "─".repeat(inner_w + 2));
+                    wrapped_lines.push(Line::from(vec![Span::styled(
+                        bot_border,
+                        Style::default().fg(ratatui::style::Color::Yellow),
+                    )]));
+                }
+                continue;
+            }
+        }
+
         if md_line.is_table_row {
             let line_index = wrapped_lines.len();
             let mut original_width = 0;
@@ -1544,6 +1848,13 @@ pub fn wrap_markdown(
                     MarkdownSpan::Link { label_spans, .. } => {
                         for s in label_spans {
                             original_width += UnicodeWidthStr::width(s.content.as_ref());
+                        }
+                    }
+                    MarkdownSpan::Math { formula, is_block } => {
+                        if *is_block {
+                            original_width += formula.len() + 4;
+                        } else {
+                            original_width += formula.len() + 2;
                         }
                     }
                 }
@@ -1590,6 +1901,55 @@ pub fn wrap_markdown(
                         tokenize_span_content(&s.content, s.style, Some(url.clone()), &mut tokens);
                     }
                 }
+                MarkdownSpan::Math { formula, is_block } => {
+                    let mut tokenized = false;
+                    if cell_size.is_known() {
+                        if let Some((_, w_px, h_px, failed)) =
+                            crate::math_compiler::lookup_math_cache(formula, &text_color_hex)
+                        {
+                            if !failed {
+                                let max_cols = width as u32;
+                                let mut cols = w_px.div_ceil(cell_size.width_px);
+                                let mut rows = h_px.div_ceil(cell_size.height_px);
+                                if cols > max_cols {
+                                    let scale = max_cols as f32 / cols as f32;
+                                    cols = max_cols;
+                                    rows = ((rows as f32 * scale).round() as u32).max(1);
+                                }
+                                tokens.push(Token {
+                                    text: " ".repeat(cols as usize),
+                                    style: Style::default(),
+                                    url: None,
+                                    math_formula: Some((
+                                        formula.clone(),
+                                        text_color_hex.clone(),
+                                        *is_block,
+                                        cols as u16,
+                                        rows as u16,
+                                    )),
+                                });
+                                tokenized = true;
+                            }
+                        } else {
+                            crate::math_compiler::enqueue_compile_job(
+                                formula.clone(),
+                                text_color_hex.clone(),
+                            );
+                        }
+                    }
+
+                    if !tokenized {
+                        let text = format!("${}$", formula);
+                        tokens.push(Token {
+                            text,
+                            style: Style::default()
+                                .fg(ratatui::style::Color::Yellow)
+                                .add_modifier(Modifier::ITALIC),
+                            url: None,
+                            math_formula: None,
+                        });
+                    }
+                }
             }
         }
 
@@ -1630,6 +1990,7 @@ pub fn wrap_markdown(
                     wrapped_lines.len(),
                     &mut wrapped_lines,
                     &mut link_ranges,
+                    &mut math_placements,
                     md_line.is_code_block,
                     width,
                     prefix_span.as_ref(),
@@ -1648,6 +2009,7 @@ pub fn wrap_markdown(
                 wrapped_lines.len(),
                 &mut wrapped_lines,
                 &mut link_ranges,
+                &mut math_placements,
                 md_line.is_code_block,
                 width,
                 prefix_span.as_ref(),
@@ -1659,6 +2021,7 @@ pub fn wrap_markdown(
         lines: wrapped_lines,
         link_ranges,
         max_original_width,
+        math_placements,
     }
 }
 
@@ -1683,6 +2046,7 @@ fn tokenize_span_content(
                 text: space_run,
                 style,
                 url: url.clone(),
+                math_formula: None,
             });
         } else {
             let mut word = String::new();
@@ -1696,6 +2060,7 @@ fn tokenize_span_content(
                 text: word,
                 style,
                 url: url.clone(),
+                math_formula: None,
             });
         }
     }
@@ -1706,6 +2071,7 @@ fn commit_line(
     line_index: usize,
     wrapped_lines: &mut Vec<Line<'static>>,
     link_ranges: &mut Vec<(usize, std::ops::Range<usize>, String)>,
+    math_placements: &mut Vec<MathPlacementInfo>,
     is_code_block: bool,
     width: usize,
     prefix_span: Option<&Span<'static>>,
@@ -1727,6 +2093,18 @@ fn commit_line(
 
         let token_width = unicode_width::UnicodeWidthStr::width(token.text.as_str());
         let token_end = offset + token_width;
+
+        if let Some((ref formula, ref text_color_hex, is_block, w, h)) = token.math_formula {
+            math_placements.push(MathPlacementInfo {
+                formula: formula.clone(),
+                text_color_hex: text_color_hex.clone(),
+                is_block,
+                line_idx: line_index,
+                col_idx: offset + prefix_width,
+                width_cells: w,
+                height_cells: h,
+            });
+        }
 
         if let Some(ref url) = token.url {
             if let Some((start_col, ref mut end_col, ref active_url)) = active_link {
@@ -2025,7 +2403,13 @@ mod tests {
         let palette = test_palette();
         let md_lines = parse_markdown_with_links("hello [link](http://foo) world", &palette);
 
-        let wrapped = wrap_markdown(&md_lines, 12, 0);
+        let wrapped = wrap_markdown(
+            &md_lines,
+            12,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
 
         assert_eq!(wrapped.lines.len(), 2);
         assert_eq!(wrapped.lines[0].spans[0].content, "hello");
@@ -2043,7 +2427,13 @@ mod tests {
         let palette = test_palette();
         let md_lines = parse_markdown_with_links("```rust\nfn main() {}\n```", &palette);
 
-        let wrapped = wrap_markdown(&md_lines, 20, 0);
+        let wrapped = wrap_markdown(
+            &md_lines,
+            20,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
 
         assert_eq!(wrapped.lines.len(), 1);
         let line = &wrapped.lines[0];
@@ -2076,7 +2466,13 @@ mod tests {
         );
 
         // Wrap to width 20. "│ " takes 2 characters, so wrap_width is 18.
-        let wrapped = wrap_markdown(&md_lines, 20, 0);
+        let wrapped = wrap_markdown(
+            &md_lines,
+            20,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
 
         assert_eq!(wrapped.lines.len(), 3);
 
@@ -2123,7 +2519,13 @@ mod tests {
         let md_lines = parse_markdown_with_links("```rust\nlet variable = 123456;\n```", &palette);
 
         // Wrap to width 15. "▏" takes 1 character, so wrap_width is 14.
-        let wrapped = wrap_markdown(&md_lines, 15, 0);
+        let wrapped = wrap_markdown(
+            &md_lines,
+            15,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
 
         assert_eq!(wrapped.lines.len(), 2);
 
@@ -2269,7 +2671,13 @@ mod tests {
         }
 
         // 4. Wrapping behavior: tables should be unwrapped!
-        let wrapped = wrap_markdown(&lines, 10, 0);
+        let wrapped = wrap_markdown(
+            &lines,
+            10,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
         assert_eq!(wrapped.lines.len(), 5);
         let wrapped_line3: String = wrapped.lines[3]
             .spans
@@ -2387,14 +2795,26 @@ mod tests {
         assert_eq!(lines.len(), 5);
 
         // Render table with scroll_x = 0
-        let wrapped_no_scroll = wrap_markdown(&lines, 30, 0);
+        let wrapped_no_scroll = wrap_markdown(
+            &lines,
+            30,
+            0,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
         assert_eq!(wrapped_no_scroll.lines.len(), 5);
 
         // Find max_original_width, which should match the visual width of the widest row
         assert!(wrapped_no_scroll.max_original_width > 15);
 
         // Render table with scroll_x = 5
-        let wrapped_scrolled = wrap_markdown(&lines, 30, 5);
+        let wrapped_scrolled = wrap_markdown(
+            &lines,
+            30,
+            5,
+            crate::kitty_graphics::HostCellSize::default(),
+            palette.text,
+        );
         assert_eq!(wrapped_scrolled.lines.len(), 5);
 
         // Verify original link range starts at 2
@@ -2447,6 +2867,13 @@ mod tests {
                             .iter()
                             .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                             .sum(),
+                        MarkdownSpan::Math { formula, is_block } => {
+                            if *is_block {
+                                formula.len() + 4
+                            } else {
+                                formula.len() + 2
+                            }
+                        }
                     })
                     .sum()
             })
@@ -2485,8 +2912,8 @@ This is paragraph line 2.
         // 5. List item line (containing joined line 1 and line 2)
 
         // Check paragraph
-        assert_eq!(lines[0].is_code_block, false);
-        assert_eq!(lines[0].is_blockquote, false);
+        assert!(!lines[0].is_code_block);
+        assert!(!lines[0].is_blockquote);
         let para_text: String = lines[0]
             .spans
             .iter()
@@ -2512,7 +2939,7 @@ This is paragraph line 2.
         assert_eq!(empty_text, "");
 
         // Check blockquote
-        assert_eq!(lines[2].is_blockquote, true);
+        assert!(lines[2].is_blockquote);
         let bq_text: String = lines[2]
             .spans
             .iter()
@@ -2547,5 +2974,64 @@ This is paragraph line 2.
             })
             .collect();
         assert_eq!(list_text, "• List item line 1 list item line 2");
+    }
+
+    #[test]
+    fn test_latex_math_parsing_and_wrapping() {
+        let palette = test_palette();
+
+        // 1. Test parsing inline math
+        let inline_md = "This is inline math: $f(x) = x^2$ inside text.";
+        let parsed_lines = parse_markdown_with_links(inline_md, &palette);
+        assert_eq!(parsed_lines.len(), 1);
+        let line = &parsed_lines[0];
+        assert_eq!(line.spans.len(), 3);
+        if let MarkdownSpan::Math { formula, is_block } = &line.spans[1] {
+            assert_eq!(formula, "f(x) = x^2");
+            assert!(!is_block);
+        } else {
+            panic!("Expected MarkdownSpan::Math");
+        }
+
+        // 2. Test parsing single-line block math
+        let block_md = "$$f(x) = \\sin(x)$$";
+        let parsed_block_lines = parse_markdown_with_links(block_md, &palette);
+        assert_eq!(parsed_block_lines.len(), 1);
+        let block_line = &parsed_block_lines[0];
+        assert_eq!(block_line.spans.len(), 1);
+        if let MarkdownSpan::Math { formula, is_block } = &block_line.spans[0] {
+            assert_eq!(formula, "f(x) = \\sin(x)");
+            assert!(is_block);
+        } else {
+            panic!("Expected MarkdownSpan::Math block");
+        }
+
+        // 3. Test parsing multiline block math
+        let multiline_md = "$$\na + b\n= c\n$$";
+        let parsed_multi_lines = parse_markdown_with_links(multiline_md, &palette);
+        assert_eq!(parsed_multi_lines.len(), 1);
+        if let MarkdownSpan::Math { formula, is_block } = &parsed_multi_lines[0].spans[0] {
+            assert!(formula.contains("a + b"));
+            assert!(is_block);
+        } else {
+            panic!("Expected multiline block math");
+        }
+
+        // 4. Test wrapping with unknown/default cell size (text fallback)
+        let cell_size_unknown = crate::kitty_graphics::HostCellSize::default();
+        let wrapped_fallback =
+            wrap_markdown(&parsed_block_lines, 80, 0, cell_size_unknown, palette.text);
+        assert!(wrapped_fallback.lines.len() >= 3);
+
+        let has_top_border = wrapped_fallback.lines.iter().any(|line| {
+            let line_str: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            line_str.contains("┌") && line_str.contains("─")
+        });
+        let has_formula_line = wrapped_fallback.lines.iter().any(|line| {
+            let line_str: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            line_str.contains("f(x) = \\sin(x)")
+        });
+        assert!(has_top_border);
+        assert!(has_formula_line);
     }
 }

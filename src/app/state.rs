@@ -1049,9 +1049,21 @@ pub(crate) struct PaneFocusTarget {
     pub pane_id: PaneId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaticImagePlacement {
+    pub formula: String,
+    pub text_color_hex: String,
+    pub area: ratatui::layout::Rect,
+    pub grid_cols: u32,
+    pub grid_rows: u32,
+    pub viewport_col: i32,
+    pub viewport_row: i32,
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
+    pub static_image_placements: std::sync::Mutex<Vec<StaticImagePlacement>>,
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
     /// Terminal ids whose size is currently owned by a direct attach client.
@@ -1812,10 +1824,18 @@ impl AppState {
             all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
         }
 
+        let cell_size = if self.kitty_graphics_enabled {
+            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
+        } else {
+            crate::kitty_graphics::HostCellSize::default()
+        };
+
         let wrapped = crate::ui::wrap_markdown(
             &all_md_lines,
             desc_area.width as usize,
             self.kanban_detail_horizontal_scroll as usize,
+            cell_size,
+            self.palette.text,
         );
         wrapped
             .lines
@@ -1914,10 +1934,18 @@ impl AppState {
         }
         all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
 
+        let cell_size = if self.kitty_graphics_enabled {
+            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
+        } else {
+            crate::kitty_graphics::HostCellSize::default()
+        };
+
         let wrapped = crate::ui::wrap_markdown(
             &all_md_lines,
             text_area.width as usize,
             self.kanban_detail_horizontal_scroll as usize,
+            cell_size,
+            self.palette.text,
         );
 
         let scroll_y = self.kanban_detail_scroll as usize;
@@ -2038,7 +2066,19 @@ impl AppState {
         }
         all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
 
-        let wrapped = crate::ui::wrap_markdown(&all_md_lines, text_area.width as usize, 0);
+        let cell_size = if self.kitty_graphics_enabled {
+            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
+        } else {
+            crate::kitty_graphics::HostCellSize::default()
+        };
+
+        let wrapped = crate::ui::wrap_markdown(
+            &all_md_lines,
+            text_area.width as usize,
+            0,
+            cell_size,
+            self.palette.text,
+        );
         wrapped
             .max_original_width
             .saturating_sub(text_area.width as usize) as u16
@@ -2073,6 +2113,7 @@ impl AppState {
     /// Create an AppState for testing — no channels, no PTYs.
     pub fn test_new() -> Self {
         Self {
+            static_image_placements: std::sync::Mutex::new(Vec::new()),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),

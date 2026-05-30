@@ -223,6 +223,7 @@ pub struct MarkdownLine {
     pub spans: Vec<MarkdownSpan>,
     pub is_code_block: bool,
     pub is_blockquote: bool,
+    pub is_table_row: bool,
 }
 
 fn parse_inline_chars_with_links(
@@ -316,14 +317,360 @@ pub(crate) fn parse_inline_style_with_links(
     parse_inline_chars_with_links(&chars, palette, current_style)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableAlign {
+    Left,
+    Center,
+    Right,
+}
+
+fn is_delimiter_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.contains('|') {
+        return false;
+    }
+    let parts: Vec<&str> = trimmed.split('|').collect();
+    let start_idx = if parts[0].trim().is_empty() && parts.len() > 1 {
+        1
+    } else {
+        0
+    };
+    let end_idx = if parts[parts.len() - 1].trim().is_empty() && parts.len() > 1 {
+        parts.len() - 1
+    } else {
+        parts.len()
+    };
+
+    if start_idx >= end_idx {
+        return false;
+    }
+
+    for part in &parts[start_idx..end_idx] {
+        let p = part.trim();
+        if p.is_empty() {
+            return false;
+        }
+        if !p.chars().all(|c| c == '-' || c == ':' || c.is_whitespace()) {
+            return false;
+        }
+        if !p.contains('-') {
+            return false;
+        }
+    }
+    true
+}
+
+fn split_table_row(line: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'|') {
+            current.push('|');
+            chars.next(); // consume '|'
+        } else if c == '|' {
+            cells.push(current);
+            current = String::new();
+        } else {
+            current.push(c);
+        }
+    }
+    cells.push(current);
+
+    let mut start_idx = 0;
+    let mut end_idx = cells.len();
+    if cells.len() > 1 && cells[0].trim().is_empty() && line.trim().starts_with('|') {
+        start_idx = 1;
+    }
+    if cells.len() > start_idx + 1
+        && cells[cells.len() - 1].trim().is_empty()
+        && line.trim().ends_with('|')
+    {
+        end_idx = cells.len() - 1;
+    }
+
+    cells[start_idx..end_idx]
+        .iter()
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+fn spans_width(spans: &[MarkdownSpan]) -> usize {
+    let mut w = 0;
+    for span in spans {
+        match span {
+            MarkdownSpan::Text(s) => {
+                w += unicode_width::UnicodeWidthStr::width(s.content.as_ref());
+            }
+            MarkdownSpan::Link { label_spans, .. } => {
+                for s in label_spans {
+                    w += unicode_width::UnicodeWidthStr::width(s.content.as_ref());
+                }
+            }
+        }
+    }
+    w
+}
+
+fn pad_spans(
+    mut spans: Vec<MarkdownSpan>,
+    target_width: usize,
+    align: TableAlign,
+    pad_style: Style,
+) -> Vec<MarkdownSpan> {
+    let current_w = spans_width(&spans);
+    if current_w >= target_width {
+        return spans;
+    }
+    let total_pad = target_width - current_w;
+    let (left_pad, right_pad) = match align {
+        TableAlign::Left => (0, total_pad),
+        TableAlign::Right => (total_pad, 0),
+        TableAlign::Center => (total_pad / 2, total_pad - (total_pad / 2)),
+    };
+
+    if left_pad > 0 {
+        let left_space = Span::styled(" ".repeat(left_pad), pad_style);
+        spans.insert(0, MarkdownSpan::Text(left_space));
+    }
+    if right_pad > 0 {
+        let right_space = Span::styled(" ".repeat(right_pad), pad_style);
+        spans.push(MarkdownSpan::Text(right_space));
+    }
+    spans
+}
+
+fn parse_alignment(cell: &str) -> TableAlign {
+    let trimmed = cell.trim();
+    let starts = trimmed.starts_with(':');
+    let ends = trimmed.ends_with(':');
+    if starts && ends {
+        TableAlign::Center
+    } else if ends {
+        TableAlign::Right
+    } else {
+        TableAlign::Left
+    }
+}
+
+// Allowed because col_idx is used to index multiple aligned vectors (alignments, col_widths, header_spans, body_spans)
+// and manual index-based loops are clearer and safer than chained iterators here.
+#[allow(clippy::needless_range_loop)]
+fn parse_and_format_table(
+    header_raw: &str,
+    delimiter_raw: &str,
+    body_raws: &[&str],
+    palette: &Palette,
+) -> Vec<MarkdownLine> {
+    let header_cells = split_table_row(header_raw);
+    let delimiter_cells = split_table_row(delimiter_raw);
+    let num_cols = delimiter_cells.len();
+    if num_cols == 0 {
+        return Vec::new();
+    }
+
+    let alignments: Vec<TableAlign> = delimiter_cells.iter().map(|c| parse_alignment(c)).collect();
+
+    let mut body_rows = Vec::new();
+    for body_raw in body_raws {
+        let mut cells = split_table_row(body_raw);
+        if cells.len() > num_cols {
+            cells.truncate(num_cols);
+        } else {
+            while cells.len() < num_cols {
+                cells.push(String::new());
+            }
+        }
+        body_rows.push(cells);
+    }
+
+    let header_style = Style::default()
+        .fg(palette.teal)
+        .add_modifier(Modifier::BOLD);
+    let body_style = Style::default().fg(palette.text);
+
+    let mut header_spans: Vec<Vec<MarkdownSpan>> = header_cells
+        .iter()
+        .take(num_cols)
+        .map(|cell| parse_inline_style_with_links(cell, palette, header_style))
+        .collect();
+    while header_spans.len() < num_cols {
+        header_spans.push(Vec::new());
+    }
+
+    let body_spans: Vec<Vec<Vec<MarkdownSpan>>> = body_rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| parse_inline_style_with_links(cell, palette, body_style))
+                .collect()
+        })
+        .collect();
+
+    let mut col_widths = vec![3; num_cols];
+    for col_idx in 0..num_cols {
+        let mut max_w = spans_width(&header_spans[col_idx]);
+        for row in &body_spans {
+            let cell_w = spans_width(&row[col_idx]);
+            if cell_w > max_w {
+                max_w = cell_w;
+            }
+        }
+        col_widths[col_idx] = col_widths[col_idx].max(max_w);
+    }
+
+    let mut lines = Vec::new();
+    let border_style = Style::default().fg(palette.surface1);
+
+    let mut top_spans = Vec::new();
+    top_spans.push(MarkdownSpan::Text(Span::styled("┌", border_style)));
+    for col_idx in 0..num_cols {
+        let dashes = "─".repeat(col_widths[col_idx] + 2);
+        top_spans.push(MarkdownSpan::Text(Span::styled(dashes, border_style)));
+        if col_idx < num_cols - 1 {
+            top_spans.push(MarkdownSpan::Text(Span::styled("┬", border_style)));
+        }
+    }
+    top_spans.push(MarkdownSpan::Text(Span::styled("┐", border_style)));
+    lines.push(MarkdownLine {
+        spans: top_spans,
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: true,
+    });
+
+    let mut h_spans = Vec::new();
+    h_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+    for col_idx in 0..num_cols {
+        let align = alignments[col_idx];
+        let cell_spans = pad_spans(
+            header_spans[col_idx].clone(),
+            col_widths[col_idx],
+            align,
+            header_style,
+        );
+        h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
+        h_spans.extend(cell_spans);
+        h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
+        h_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+    }
+    lines.push(MarkdownLine {
+        spans: h_spans,
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: true,
+    });
+
+    let mut mid_spans = Vec::new();
+    mid_spans.push(MarkdownSpan::Text(Span::styled("├", border_style)));
+    for col_idx in 0..num_cols {
+        let dashes = "─".repeat(col_widths[col_idx] + 2);
+        mid_spans.push(MarkdownSpan::Text(Span::styled(dashes, border_style)));
+        if col_idx < num_cols - 1 {
+            mid_spans.push(MarkdownSpan::Text(Span::styled("┼", border_style)));
+        }
+    }
+    mid_spans.push(MarkdownSpan::Text(Span::styled("┤", border_style)));
+    lines.push(MarkdownLine {
+        spans: mid_spans,
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: true,
+    });
+
+    for row_spans in body_spans {
+        let mut r_spans = Vec::new();
+        r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+        for col_idx in 0..num_cols {
+            let align = alignments[col_idx];
+            let cell_spans = pad_spans(
+                row_spans[col_idx].clone(),
+                col_widths[col_idx],
+                align,
+                body_style,
+            );
+            r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
+            r_spans.extend(cell_spans);
+            r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
+            r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+        }
+        lines.push(MarkdownLine {
+            spans: r_spans,
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: true,
+        });
+    }
+
+    let mut bot_spans = Vec::new();
+    bot_spans.push(MarkdownSpan::Text(Span::styled("└", border_style)));
+    for col_idx in 0..num_cols {
+        let dashes = "─".repeat(col_widths[col_idx] + 2);
+        bot_spans.push(MarkdownSpan::Text(Span::styled(dashes, border_style)));
+        if col_idx < num_cols - 1 {
+            bot_spans.push(MarkdownSpan::Text(Span::styled("┴", border_style)));
+        }
+    }
+    bot_spans.push(MarkdownSpan::Text(Span::styled("┘", border_style)));
+    lines.push(MarkdownLine {
+        spans: bot_spans,
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: true,
+    });
+
+    lines
+}
+
 pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownLine> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
+    let input_lines: Vec<&str> = text.lines().collect();
+    let mut line_idx = 0;
 
-    for line in text.lines() {
+    while line_idx < input_lines.len() {
+        let line = input_lines[line_idx];
         let trimmed = line.trim();
+
+        // Handle table detection
+        if !in_code_block
+            && line_idx + 1 < input_lines.len()
+            && is_delimiter_row(input_lines[line_idx + 1])
+            && line.contains('|')
+        {
+            let header_raw = line;
+            let delimiter_raw = input_lines[line_idx + 1];
+            let mut body_raws = Vec::new();
+            let mut k = 2;
+            while line_idx + k < input_lines.len() {
+                let next_line = input_lines[line_idx + k];
+                let trimmed_next = next_line.trim();
+                if trimmed_next.contains('|')
+                    && !trimmed_next.starts_with("```")
+                    && !trimmed_next.starts_with("#")
+                    && trimmed_next != "---"
+                    && trimmed_next != "***"
+                    && trimmed_next != "___"
+                    && !trimmed_next.is_empty()
+                {
+                    body_raws.push(next_line);
+                    k += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let table_lines =
+                parse_and_format_table(header_raw, delimiter_raw, &body_raws, palette);
+            lines.extend(table_lines);
+            line_idx += k;
+            continue;
+        }
+
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
+            line_idx += 1;
             continue;
         }
 
@@ -342,7 +689,9 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: true,
                 is_blockquote: false,
+                is_table_row: false,
             });
+            line_idx += 1;
             continue;
         }
 
@@ -355,7 +704,9 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 ))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
+            line_idx += 1;
             continue;
         }
 
@@ -378,6 +729,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         } else if let Some(content) = line.strip_prefix("## ") {
             let spans = parse_inline_style_with_links(
@@ -391,6 +743,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         } else if let Some(content) = line.strip_prefix("### ") {
             let spans = parse_inline_style_with_links(
@@ -404,6 +757,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         } else if let Some(content) = line.strip_prefix("#### ") {
             let spans = parse_inline_style_with_links(
@@ -417,6 +771,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         } else if line == ">" || line.starts_with("> ") {
             // Blockquote
@@ -436,6 +791,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 spans,
                 is_code_block: false,
                 is_blockquote: true,
+                is_table_row: false,
             });
         } else {
             // Check for lists
@@ -464,6 +820,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 } else if content == "[x]"
                     || content.starts_with("[x] ")
@@ -489,6 +846,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 } else {
                     let mut spans = vec![
@@ -504,6 +862,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 }
             } else {
@@ -530,12 +889,14 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 } else if line.is_empty() {
                     lines.push(MarkdownLine {
                         spans: vec![MarkdownSpan::Text(Span::raw(""))],
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 } else {
                     let spans = parse_inline_style_with_links(
@@ -547,10 +908,13 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
+                        is_table_row: false,
                     });
                 }
             }
         }
+
+        line_idx += 1;
     }
 
     lines
@@ -601,6 +965,34 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
     let mut link_ranges = Vec::new();
 
     for md_line in lines {
+        if md_line.is_table_row {
+            let line_index = wrapped_lines.len();
+            let mut current_x = 0;
+            let mut line_spans = Vec::new();
+
+            for span in &md_line.spans {
+                match span {
+                    MarkdownSpan::Text(s) => {
+                        let w = UnicodeWidthStr::width(s.content.as_ref());
+                        current_x += w;
+                        line_spans.push(s.clone());
+                    }
+                    MarkdownSpan::Link { label_spans, url } => {
+                        let start_x = current_x;
+                        for s in label_spans {
+                            let w = UnicodeWidthStr::width(s.content.as_ref());
+                            current_x += w;
+                            line_spans.push(s.clone());
+                        }
+                        let end_x = current_x;
+                        link_ranges.push((line_index, start_x..end_x, url.clone()));
+                    }
+                }
+            }
+            wrapped_lines.push(Line::from(line_spans));
+            continue;
+        }
+
         // Step 1: Tokenize
         let mut tokens = Vec::new();
 
@@ -811,8 +1203,7 @@ fn commit_line(
     if is_code_block && current_width < width {
         let padding_bg = tokens_with_offsets
             .first()
-            .map(|(t, _)| t.style.bg)
-            .flatten()
+            .and_then(|(t, _)| t.style.bg)
             .or_else(|| prefix_span.and_then(|p| p.style.bg));
         let mut padding_style = Style::default();
         if let Some(bg) = padding_bg {
@@ -1164,5 +1555,131 @@ mod tests {
 
         assert_eq!(line0_text, "▏let variable =");
         assert_eq!(line1_text, "▏123456;       ");
+    }
+
+    #[test]
+    fn test_markdown_tables() {
+        let palette = test_palette();
+
+        // 1. Delimiter alignment and header parsing
+        let md = "\
+| Left | Center | Right | Default |
+| :--- | :---:  | ----: | ------- |
+| val1 | val2   | val3  | val4    |";
+
+        let lines = parse_markdown_with_links(md, &palette);
+        assert_eq!(lines.len(), 5);
+        assert!(lines[0].is_table_row);
+        assert!(lines[1].is_table_row);
+        assert!(lines[2].is_table_row);
+        assert!(lines[3].is_table_row);
+        assert!(lines[4].is_table_row);
+
+        let line0_text: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line0_text, "┌──────┬────────┬───────┬─────────┐");
+
+        let line2_text: String = lines[2]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line2_text, "├──────┼────────┼───────┼─────────┤");
+
+        let line4_text: String = lines[4]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line4_text, "└──────┴────────┴───────┴─────────┘");
+
+        // 2. Alignment of headers and values
+        let header_row_text: String = lines[1]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(header_row_text, "│ Left │ Center │ Right │ Default │");
+
+        let body_row_text: String = lines[3]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(body_row_text, "│ val1 │  val2  │  val3 │ val4    │");
+
+        // 3. Spans with inline formatting inside table cells
+        let md_formatted = "\
+| **Bold** | `Code` | [Link](url) |
+| --- | --- | --- |
+| val1 | val2 | val3 |";
+        let lines_fmt = parse_markdown_with_links(md_formatted, &palette);
+        assert_eq!(lines_fmt.len(), 5);
+
+        let bold_span = &lines_fmt[1].spans[2]; // border '│', padding ' ', then Bold spans
+        match bold_span {
+            MarkdownSpan::Text(span) => {
+                assert_eq!(span.content.as_ref(), "Bold");
+                assert!(span
+                    .style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::BOLD));
+            }
+            _ => panic!("Expected text span"),
+        }
+
+        let link_span = &lines_fmt[1].spans[10];
+        match link_span {
+            MarkdownSpan::Link { label_spans, url } => {
+                assert_eq!(url, "url");
+                assert_eq!(label_spans[0].content.as_ref(), "Link");
+            }
+            _ => panic!("Expected link span"),
+        }
+
+        // 4. Wrapping behavior: tables should be unwrapped!
+        let wrapped = wrap_markdown(&lines, 10);
+        assert_eq!(wrapped.lines.len(), 5);
+        let wrapped_line3: String = wrapped.lines[3]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(wrapped_line3, "│ val1 │  val2  │  val3 │ val4    │");
+
+        // 5. Escaped pipes handling
+        let md_escaped = "\
+| Escaped \\| Pipe | Col2 |
+| --- | --- |
+| val1 | val2 |";
+        let lines_escaped = parse_markdown_with_links(md_escaped, &palette);
+        assert_eq!(lines_escaped.len(), 5);
+        let esc_header: String = lines_escaped[1]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(esc_header, "│ Escaped | Pipe │ Col2 │");
     }
 }

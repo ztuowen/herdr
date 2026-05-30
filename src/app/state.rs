@@ -1770,6 +1770,7 @@ impl AppState {
             ))],
             is_code_block: false,
             is_blockquote: false,
+            is_table_row: false,
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
@@ -1779,11 +1780,13 @@ impl AppState {
                 ))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
             all_md_lines.push(crate::ui::MarkdownLine {
                 spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         }
         if is_err {
@@ -1796,6 +1799,7 @@ impl AppState {
                 ))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         } else {
             all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
@@ -1873,6 +1877,7 @@ impl AppState {
             ))],
             is_code_block: false,
             is_blockquote: false,
+            is_table_row: false,
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
@@ -1882,11 +1887,13 @@ impl AppState {
                 ))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
             all_md_lines.push(crate::ui::MarkdownLine {
                 spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
                 is_code_block: false,
                 is_blockquote: false,
+                is_table_row: false,
             });
         }
         all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));

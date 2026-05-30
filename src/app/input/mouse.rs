@@ -3168,7 +3168,7 @@ mod tests {
         let link_file = temp_dir.join(format!("herdr-test-link-{}.md", uuid::Uuid::new_v4()));
         let link_desc =
             "Check [my file](file:///path/to/my/file.txt) and [my website](https://example.com).";
-        std::fs::write(&link_file, &link_desc).unwrap();
+        std::fs::write(&link_file, link_desc).unwrap();
         let link_path = link_file.to_string_lossy().to_string();
 
         let item = app.state.add_kanban_item(

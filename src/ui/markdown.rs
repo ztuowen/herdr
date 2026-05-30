@@ -222,6 +222,7 @@ pub enum MarkdownSpan {
 pub struct MarkdownLine {
     pub spans: Vec<MarkdownSpan>,
     pub is_code_block: bool,
+    pub is_blockquote: bool,
 }
 
 fn parse_inline_chars_with_links(
@@ -340,6 +341,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: true,
+                is_blockquote: false,
             });
             continue;
         }
@@ -352,6 +354,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     Style::default().fg(palette.surface0),
                 ))],
                 is_code_block: false,
+                is_blockquote: false,
             });
             continue;
         }
@@ -374,6 +377,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: false,
+                is_blockquote: false,
             });
         } else if let Some(content) = line.strip_prefix("## ") {
             let spans = parse_inline_style_with_links(
@@ -386,6 +390,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: false,
+                is_blockquote: false,
             });
         } else if let Some(content) = line.strip_prefix("### ") {
             let spans = parse_inline_style_with_links(
@@ -398,6 +403,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: false,
+                is_blockquote: false,
             });
         } else if let Some(content) = line.strip_prefix("#### ") {
             let spans = parse_inline_style_with_links(
@@ -410,6 +416,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: false,
+                is_blockquote: false,
             });
         } else if line == ">" || line.starts_with("> ") {
             // Blockquote
@@ -428,6 +435,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
             lines.push(MarkdownLine {
                 spans,
                 is_code_block: false,
+                is_blockquote: true,
             });
         } else {
             // Check for lists
@@ -455,6 +463,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 } else if content == "[x]"
                     || content.starts_with("[x] ")
@@ -479,6 +488,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 } else {
                     let mut spans = vec![
@@ -493,6 +503,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 }
             } else {
@@ -518,11 +529,13 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 } else if line.is_empty() {
                     lines.push(MarkdownLine {
                         spans: vec![MarkdownSpan::Text(Span::raw(""))],
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 } else {
                     let spans = parse_inline_style_with_links(
@@ -533,6 +546,7 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
+                        is_blockquote: false,
                     });
                 }
             }
@@ -589,7 +603,26 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
     for md_line in lines {
         // Step 1: Tokenize
         let mut tokens = Vec::new();
-        for span in &md_line.spans {
+
+        let has_prefix = md_line.is_blockquote || md_line.is_code_block;
+
+        let spans_to_tokenize = if has_prefix && !md_line.spans.is_empty() {
+            &md_line.spans[1..]
+        } else {
+            &md_line.spans[..]
+        };
+
+        let prefix_span = if has_prefix && !md_line.spans.is_empty() {
+            if let MarkdownSpan::Text(ref s) = md_line.spans[0] {
+                Some(s.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        for span in spans_to_tokenize {
             match span {
                 MarkdownSpan::Text(s) => {
                     tokenize_span_content(&s.content, s.style, None, &mut tokens);
@@ -606,6 +639,14 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
         let mut current_line_tokens: Vec<(Token, usize)> = Vec::new();
         let mut current_line_width = 0;
         let mut is_first_subline = true;
+        let mut committed_any = false;
+
+        let prefix_width = prefix_span
+            .as_ref()
+            .map(|p| unicode_width::UnicodeWidthStr::width(p.content.as_ref()))
+            .unwrap_or(0);
+
+        let wrap_width = width.saturating_sub(prefix_width);
 
         let mut i = 0;
         while i < tokens.len() {
@@ -619,7 +660,7 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
                 continue;
             }
 
-            if current_line_width + token_width <= width || current_line_width == 0 {
+            if current_line_width + token_width <= wrap_width || current_line_width == 0 {
                 // Fits in current line, or it's the first token of the line (forced fit to prevent infinite loop)
                 current_line_tokens.push((tokens[i].clone(), current_line_width));
                 current_line_width += token_width;
@@ -633,7 +674,9 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
                     &mut link_ranges,
                     md_line.is_code_block,
                     width,
+                    prefix_span.as_ref(),
                 );
+                committed_any = true;
                 current_line_tokens.clear();
                 current_line_width = 0;
                 is_first_subline = false;
@@ -641,7 +684,7 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
         }
 
         // Commit any remaining tokens for this block
-        if !current_line_tokens.is_empty() || md_line.spans.is_empty() {
+        if !current_line_tokens.is_empty() || !committed_any || md_line.spans.is_empty() {
             commit_line(
                 &current_line_tokens,
                 wrapped_lines.len(),
@@ -649,6 +692,7 @@ pub fn wrap_markdown(lines: &[MarkdownLine], width: usize) -> WrappedMarkdown {
                 &mut link_ranges,
                 md_line.is_code_block,
                 width,
+                prefix_span.as_ref(),
             );
         }
     }
@@ -705,9 +749,19 @@ fn commit_line(
     link_ranges: &mut Vec<(usize, std::ops::Range<usize>, String)>,
     is_code_block: bool,
     width: usize,
+    prefix_span: Option<&Span<'static>>,
 ) {
     let mut spans = Vec::new();
     let mut active_link: Option<(usize, usize, String)> = None;
+
+    if let Some(prefix) = prefix_span {
+        spans.push(prefix.clone());
+    }
+
+    let prefix_width = prefix_span
+        .as_ref()
+        .map(|p| unicode_width::UnicodeWidthStr::width(p.content.as_ref()))
+        .unwrap_or(0);
 
     for (token, offset) in tokens_with_offsets {
         spans.push(Span::styled(token.text.clone(), token.style));
@@ -720,7 +774,11 @@ fn commit_line(
                 if active_url == url {
                     *end_col = token_end;
                 } else {
-                    link_ranges.push((line_index, start_col..*end_col, active_url.clone()));
+                    link_ranges.push((
+                        line_index,
+                        (start_col + prefix_width)..(*end_col + prefix_width),
+                        active_url.clone(),
+                    ));
                     active_link = Some((*offset, token_end, url.clone()));
                 }
             } else {
@@ -728,13 +786,21 @@ fn commit_line(
             }
         } else {
             if let Some((start_col, end_col, url)) = active_link.take() {
-                link_ranges.push((line_index, start_col..end_col, url));
+                link_ranges.push((
+                    line_index,
+                    (start_col + prefix_width)..(end_col + prefix_width),
+                    url,
+                ));
             }
         }
     }
 
     if let Some((start_col, end_col, url)) = active_link {
-        link_ranges.push((line_index, start_col..end_col, url));
+        link_ranges.push((
+            line_index,
+            (start_col + prefix_width)..(end_col + prefix_width),
+            url,
+        ));
     }
 
     let mut current_width = 0;
@@ -746,7 +812,8 @@ fn commit_line(
         let padding_bg = tokens_with_offsets
             .first()
             .map(|(t, _)| t.style.bg)
-            .flatten();
+            .flatten()
+            .or_else(|| prefix_span.and_then(|p| p.style.bg));
         let mut padding_style = Style::default();
         if let Some(bg) = padding_bg {
             padding_style = padding_style.bg(bg);
@@ -994,5 +1061,108 @@ mod tests {
                 span.content
             );
         }
+    }
+
+    #[test]
+    fn test_wrap_markdown_blockquote_wrapping() {
+        let palette = test_palette();
+        let md_lines = parse_markdown_with_links(
+            "> This is a very long blockquote line that wraps.",
+            &palette,
+        );
+
+        // Wrap to width 20. "│ " takes 2 characters, so wrap_width is 18.
+        let wrapped = wrap_markdown(&md_lines, 20);
+
+        assert_eq!(wrapped.lines.len(), 3);
+
+        for (i, line) in wrapped.lines.iter().enumerate() {
+            let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                line_text.starts_with("│ "),
+                "line {} does not start with quote prefix: {:?}",
+                i,
+                line_text
+            );
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line_text.as_str()) <= 20,
+                "line {} too wide: {} columns",
+                i,
+                unicode_width::UnicodeWidthStr::width(line_text.as_str())
+            );
+        }
+
+        let line0_text: String = wrapped.lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        let line1_text: String = wrapped.lines[1]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        let line2_text: String = wrapped.lines[2]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+
+        assert_eq!(line0_text, "│ This is a very ");
+        assert_eq!(line1_text, "│ long blockquote ");
+        assert_eq!(line2_text, "│ line that wraps.");
+    }
+
+    #[test]
+    fn test_wrap_markdown_code_block_wrapping() {
+        let palette = test_palette();
+        let md_lines = parse_markdown_with_links("```rust\nlet variable = 123456;\n```", &palette);
+
+        // Wrap to width 15. "▏" takes 1 character, so wrap_width is 14.
+        let wrapped = wrap_markdown(&md_lines, 15);
+
+        assert_eq!(wrapped.lines.len(), 2);
+
+        for (i, line) in wrapped.lines.iter().enumerate() {
+            let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                line_text.starts_with("▏"),
+                "line {} does not start with code border: {:?}",
+                i,
+                line_text
+            );
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(line_text.as_str()),
+                15,
+                "line {} does not extend across to full width: {:?}",
+                i,
+                line_text
+            );
+            // Verify background colors are correctly set to surface1
+            for (j, span) in line.spans.iter().enumerate() {
+                assert_eq!(
+                    span.style.bg,
+                    Some(palette.surface1),
+                    "line {}, span {} ({:?}) has wrong bg",
+                    i,
+                    j,
+                    span.content
+                );
+            }
+        }
+
+        let line0_text: String = wrapped.lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        let line1_text: String = wrapped.lines[1]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+
+        assert_eq!(line0_text, "▏let variable =");
+        assert_eq!(line1_text, "▏123456;       ");
     }
 }

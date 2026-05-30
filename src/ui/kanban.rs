@@ -393,6 +393,7 @@ fn render_kanban_detail_modal(
     all_md_lines.push(super::MarkdownLine {
         spans: vec![super::MarkdownSpan::Text(desc_title)],
         is_code_block: false,
+        is_blockquote: false,
     });
     if !item.description.is_empty() {
         all_md_lines.push(super::MarkdownLine {
@@ -401,10 +402,12 @@ fn render_kanban_detail_modal(
                 Style::default().fg(p.overlay0),
             ))],
             is_code_block: false,
+            is_blockquote: false,
         });
         all_md_lines.push(super::MarkdownLine {
             spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
             is_code_block: false,
+            is_blockquote: false,
         });
     }
     if is_error {
@@ -414,6 +417,7 @@ fn render_kanban_detail_modal(
                 Style::default().fg(p.red).add_modifier(Modifier::BOLD),
             ))],
             is_code_block: false,
+            is_blockquote: false,
         });
     } else {
         all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));

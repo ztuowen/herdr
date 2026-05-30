@@ -1769,6 +1769,7 @@ impl AppState {
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ))],
             is_code_block: false,
+            is_blockquote: false,
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
@@ -1777,10 +1778,12 @@ impl AppState {
                     ratatui::style::Style::default().fg(p.overlay0),
                 ))],
                 is_code_block: false,
+                is_blockquote: false,
             });
             all_md_lines.push(crate::ui::MarkdownLine {
                 spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
                 is_code_block: false,
+                is_blockquote: false,
             });
         }
         if is_err {
@@ -1792,6 +1795,7 @@ impl AppState {
                         .add_modifier(ratatui::style::Modifier::BOLD),
                 ))],
                 is_code_block: false,
+                is_blockquote: false,
             });
         } else {
             all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
@@ -1868,6 +1872,7 @@ impl AppState {
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ))],
             is_code_block: false,
+            is_blockquote: false,
         });
         if !item.description.is_empty() {
             all_md_lines.push(crate::ui::MarkdownLine {
@@ -1876,10 +1881,12 @@ impl AppState {
                     ratatui::style::Style::default().fg(p.overlay0),
                 ))],
                 is_code_block: false,
+                is_blockquote: false,
             });
             all_md_lines.push(crate::ui::MarkdownLine {
                 spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
                 is_code_block: false,
+                is_blockquote: false,
             });
         }
         all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));

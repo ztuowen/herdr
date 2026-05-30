@@ -14,7 +14,6 @@ include = ["src/**/*", "assets/sounds/*", "README.md", "LICENSE", "Cargo.toml"]
 [dependencies]
 base64 = "0.22.1"
 bincode = { version = "2", features = ["serde"] }
-cpal = "0.15"
 bytes = "1"
 crossterm = "0.29"
 ctrlc = "3"
@@ -35,6 +34,10 @@ tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 syntect = { version = "5.2", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
 once_cell = "1.19"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+cpal = "0.15"
+
 
 
 

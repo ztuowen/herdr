@@ -117,28 +117,10 @@ impl AudioPlayer {
 
 fn linux_audio_players() -> &'static [AudioPlayer] {
     // Do not add bare aplay here. It does not decode MP3 and plays MP3 bytes as raw PCM.
-    &[
-        AudioPlayer {
-            program: "paplay",
-            args: &[],
-        },
-        AudioPlayer {
-            program: "pw-play",
-            args: &[],
-        },
-        AudioPlayer {
-            program: "ffplay",
-            args: &["-nodisp", "-autoexit", "-loglevel", "quiet"],
-        },
-        AudioPlayer {
-            program: "mpg123",
-            args: &["-q"],
-        },
-        AudioPlayer {
-            program: "mpv",
-            args: &["--no-video", "--really-quiet"],
-        },
-    ]
+    &[AudioPlayer {
+        program: "pw-play",
+        args: &[],
+    }]
 }
 
 fn run_linux_player(path: &Path) -> Result<Output, String> {
@@ -185,7 +167,7 @@ mod tests {
             .map(|player| player.program)
             .collect();
 
-        assert_eq!(programs, ["paplay", "pw-play", "ffplay", "mpg123", "mpv"]);
+        assert_eq!(programs, ["pw-play"]);
         assert!(!programs.contains(&"aplay"));
     }
 }

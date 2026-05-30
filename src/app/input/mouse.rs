@@ -116,6 +116,12 @@ impl AppState {
                                     if !url.starts_with("http://") && !url.starts_with("https://") {
                                         self.request_clipboard_write = Some(url.into_bytes());
                                         return None;
+                                    } else {
+                                        #[cfg(not(test))]
+                                        if let Err(err) = crate::platform::open_url(&url) {
+                                            warn!("failed to open markdown link: {err}");
+                                        }
+                                        return None;
                                     }
                                 }
 

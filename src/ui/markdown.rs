@@ -538,6 +538,115 @@ fn parse_alignment(cell: &str) -> TableAlign {
     }
 }
 
+const MAX_COLUMN_WIDTH: usize = 30;
+
+fn tokens_to_spans(tokens: &[Token]) -> Vec<MarkdownSpan> {
+    let mut spans = Vec::new();
+    let mut current_link: Option<(String, Vec<Span<'static>>)> = None;
+
+    for token in tokens {
+        if let Some(ref url) = token.url {
+            if let Some((ref current_url, ref mut label_spans)) = current_link {
+                if current_url == url {
+                    label_spans.push(Span::styled(token.text.clone(), token.style));
+                } else {
+                    let (u, labels) = current_link.take().unwrap();
+                    spans.push(MarkdownSpan::Link {
+                        label_spans: labels,
+                        url: u,
+                    });
+                    current_link = Some((
+                        url.clone(),
+                        vec![Span::styled(token.text.clone(), token.style)],
+                    ));
+                }
+            } else {
+                current_link = Some((
+                    url.clone(),
+                    vec![Span::styled(token.text.clone(), token.style)],
+                ));
+            }
+        } else {
+            if let Some((u, labels)) = current_link.take() {
+                spans.push(MarkdownSpan::Link {
+                    label_spans: labels,
+                    url: u,
+                });
+            }
+            spans.push(MarkdownSpan::Text(Span::styled(
+                token.text.clone(),
+                token.style,
+            )));
+        }
+    }
+
+    if let Some((u, labels)) = current_link.take() {
+        spans.push(MarkdownSpan::Link {
+            label_spans: labels,
+            url: u,
+        });
+    }
+
+    spans
+}
+
+fn wrap_cell_spans(spans: &[MarkdownSpan], max_width: usize) -> Vec<Vec<MarkdownSpan>> {
+    if spans.is_empty() {
+        return vec![Vec::new()];
+    }
+
+    let mut tokens = Vec::new();
+    for span in spans {
+        match span {
+            MarkdownSpan::Text(s) => {
+                tokenize_span_content(&s.content, s.style, None, &mut tokens);
+            }
+            MarkdownSpan::Link { label_spans, url } => {
+                for s in label_spans {
+                    tokenize_span_content(&s.content, s.style, Some(url.clone()), &mut tokens);
+                }
+            }
+        }
+    }
+
+    if tokens.is_empty() {
+        return vec![Vec::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line_tokens = Vec::new();
+    let mut current_line_width = 0;
+    let mut is_first_subline = true;
+
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = &tokens[i];
+        let token_width = unicode_width::UnicodeWidthStr::width(token.text.as_str());
+
+        if !is_first_subline && current_line_width == 0 && token.text.starts_with(' ') {
+            i += 1;
+            continue;
+        }
+
+        if current_line_width + token_width <= max_width || current_line_width == 0 {
+            current_line_tokens.push(token.clone());
+            current_line_width += token_width;
+            i += 1;
+        } else {
+            lines.push(tokens_to_spans(&current_line_tokens));
+            current_line_tokens.clear();
+            current_line_width = 0;
+            is_first_subline = false;
+        }
+    }
+
+    if !current_line_tokens.is_empty() || lines.is_empty() {
+        lines.push(tokens_to_spans(&current_line_tokens));
+    }
+
+    lines
+}
+
 // Allowed because col_idx is used to index multiple aligned vectors (alignments, col_widths, header_spans, body_spans)
 // and manual index-based loops are clearer and safer than chained iterators here.
 #[allow(clippy::needless_range_loop)]
@@ -592,6 +701,7 @@ fn parse_and_format_table(
         })
         .collect();
 
+    // 1. Calculate initial column widths, capping them at MAX_COLUMN_WIDTH
     let mut col_widths = vec![3; num_cols];
     for col_idx in 0..num_cols {
         let mut max_w = spans_width(&header_spans[col_idx]);
@@ -599,6 +709,34 @@ fn parse_and_format_table(
             let cell_w = spans_width(&row[col_idx]);
             if cell_w > max_w {
                 max_w = cell_w;
+            }
+        }
+        col_widths[col_idx] = col_widths[col_idx].max(max_w.min(MAX_COLUMN_WIDTH));
+    }
+
+    // 2. Wrap all cells to their initial capped column widths
+    let wrapped_headers: Vec<Vec<Vec<MarkdownSpan>>> = (0..num_cols)
+        .map(|col_idx| wrap_cell_spans(&header_spans[col_idx], col_widths[col_idx]))
+        .collect();
+
+    let wrapped_body: Vec<Vec<Vec<Vec<MarkdownSpan>>>> = body_spans
+        .iter()
+        .map(|row| {
+            (0..num_cols)
+                .map(|col_idx| wrap_cell_spans(&row[col_idx], col_widths[col_idx]))
+                .collect()
+        })
+        .collect();
+
+    // 3. Re-evaluate column widths to accommodate any unbreakable long words after wrapping
+    for col_idx in 0..num_cols {
+        let mut max_w = 0;
+        for line in &wrapped_headers[col_idx] {
+            max_w = max_w.max(spans_width(line));
+        }
+        for row in &wrapped_body {
+            for line in &row[col_idx] {
+                max_w = max_w.max(spans_width(line));
             }
         }
         col_widths[col_idx] = col_widths[col_idx].max(max_w);
@@ -624,27 +762,35 @@ fn parse_and_format_table(
         is_table_row: true,
     });
 
-    let mut h_spans = Vec::new();
-    h_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
-    for col_idx in 0..num_cols {
-        let align = alignments[col_idx];
-        let cell_spans = pad_spans(
-            header_spans[col_idx].clone(),
-            col_widths[col_idx],
-            align,
-            header_style,
-        );
-        h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
-        h_spans.extend(cell_spans);
-        h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
+    // Render headers (might be multiple lines now)
+    let header_height = wrapped_headers
+        .iter()
+        .map(|cell| cell.len())
+        .max()
+        .unwrap_or(1);
+    for h_line_idx in 0..header_height {
+        let mut h_spans = Vec::new();
         h_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+        for col_idx in 0..num_cols {
+            let align = alignments[col_idx];
+            let cell_line_spans = if h_line_idx < wrapped_headers[col_idx].len() {
+                wrapped_headers[col_idx][h_line_idx].clone()
+            } else {
+                Vec::new()
+            };
+            let cell_spans = pad_spans(cell_line_spans, col_widths[col_idx], align, header_style);
+            h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
+            h_spans.extend(cell_spans);
+            h_spans.push(MarkdownSpan::Text(Span::styled(" ", header_style)));
+            h_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+        }
+        lines.push(MarkdownLine {
+            spans: h_spans,
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: true,
+        });
     }
-    lines.push(MarkdownLine {
-        spans: h_spans,
-        is_code_block: false,
-        is_blockquote: false,
-        is_table_row: true,
-    });
 
     let mut mid_spans = Vec::new();
     mid_spans.push(MarkdownSpan::Text(Span::styled("├", border_style)));
@@ -663,28 +809,50 @@ fn parse_and_format_table(
         is_table_row: true,
     });
 
-    for row_spans in body_spans {
-        let mut r_spans = Vec::new();
-        r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
-        for col_idx in 0..num_cols {
-            let align = alignments[col_idx];
-            let cell_spans = pad_spans(
-                row_spans[col_idx].clone(),
-                col_widths[col_idx],
-                align,
-                body_style,
-            );
-            r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
-            r_spans.extend(cell_spans);
-            r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
-            r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+    for (row_idx, row_cells) in wrapped_body.into_iter().enumerate() {
+        if row_idx > 0 {
+            let mut mid_spans = Vec::new();
+            mid_spans.push(MarkdownSpan::Text(Span::styled("├", border_style)));
+            for col_idx in 0..num_cols {
+                let dashes = "─".repeat(col_widths[col_idx] + 2);
+                mid_spans.push(MarkdownSpan::Text(Span::styled(dashes, border_style)));
+                if col_idx < num_cols - 1 {
+                    mid_spans.push(MarkdownSpan::Text(Span::styled("┼", border_style)));
+                }
+            }
+            mid_spans.push(MarkdownSpan::Text(Span::styled("┤", border_style)));
+            lines.push(MarkdownLine {
+                spans: mid_spans,
+                is_code_block: false,
+                is_blockquote: false,
+                is_table_row: true,
+            });
         }
-        lines.push(MarkdownLine {
-            spans: r_spans,
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: true,
-        });
+
+        let row_height = row_cells.iter().map(|cell| cell.len()).max().unwrap_or(1);
+        for r_line_idx in 0..row_height {
+            let mut r_spans = Vec::new();
+            r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+            for col_idx in 0..num_cols {
+                let align = alignments[col_idx];
+                let cell_line_spans = if r_line_idx < row_cells[col_idx].len() {
+                    row_cells[col_idx][r_line_idx].clone()
+                } else {
+                    Vec::new()
+                };
+                let cell_spans = pad_spans(cell_line_spans, col_widths[col_idx], align, body_style);
+                r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
+                r_spans.extend(cell_spans);
+                r_spans.push(MarkdownSpan::Text(Span::styled(" ", body_style)));
+                r_spans.push(MarkdownSpan::Text(Span::styled("│", border_style)));
+            }
+            lines.push(MarkdownLine {
+                spans: r_spans,
+                is_code_block: false,
+                is_blockquote: false,
+                is_table_row: true,
+            });
+        }
     }
 
     let mut bot_spans = Vec::new();
@@ -1895,6 +2063,85 @@ mod tests {
             })
             .collect();
         assert_eq!(esc_header, "│ Escaped | Pipe │ Col2 │");
+
+        // 6. Multiple rows with borders
+        let md_multi = "\
+| Col 1 | Col 2 |
+| --- | --- |
+| val1 | val2 |
+| val3 | val4 |";
+        let lines_multi = parse_markdown_with_links(md_multi, &palette);
+        assert_eq!(lines_multi.len(), 7); // top, header, mid, row1, mid, row2, bot
+
+        let line0_text: String = lines_multi[0]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line0_text, "┌───────┬───────┐");
+
+        let line1_text: String = lines_multi[1]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line1_text, "│ Col 1 │ Col 2 │");
+
+        let line2_text: String = lines_multi[2]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line2_text, "├───────┼───────┤");
+
+        let line3_text: String = lines_multi[3]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line3_text, "│ val1  │ val2  │");
+
+        let line4_text: String = lines_multi[4]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line4_text, "├───────┼───────┤");
+
+        let line5_text: String = lines_multi[5]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line5_text, "│ val3  │ val4  │");
+
+        let line6_text: String = lines_multi[6]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(line6_text, "└───────┴───────┘");
     }
 
     #[test]
@@ -1932,5 +2179,56 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert!(line_text.contains("k Label"));
+    }
+
+    #[test]
+    fn test_markdown_table_wrapping() {
+        let palette = test_palette();
+
+        // A table where one column is very wide and exceeds the 30-char limit
+        let md = "\
+| Header 1 | A very long header that will definitely exceed the limit of thirty characters |
+| :--- | :--- |
+| short | some text that is also very long and needs to be wrapped across multiple lines of output |";
+
+        let lines = parse_markdown_with_links(md, &palette);
+
+        // It should be more than 5 lines because of wrapping
+        assert!(lines.len() > 5);
+
+        // All lines should have `is_table_row: true`
+        for line in &lines {
+            assert!(line.is_table_row);
+        }
+
+        // Each row should have borders aligning perfectly. This means all lines representing the rows
+        // should have the exact same length (in visual character width).
+        let lengths: Vec<usize> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| match s {
+                        MarkdownSpan::Text(span) => {
+                            unicode_width::UnicodeWidthStr::width(span.content.as_ref())
+                        }
+                        MarkdownSpan::Link { label_spans, .. } => label_spans
+                            .iter()
+                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                            .sum(),
+                    })
+                    .sum()
+            })
+            .collect();
+
+        // Check that all line lengths are equal
+        let first_len = lengths[0];
+        for (i, &len) in lengths.iter().enumerate() {
+            assert_eq!(
+                len, first_len,
+                "Line {} length {} does not match first line length {}",
+                i, len, first_len
+            );
+        }
     }
 }

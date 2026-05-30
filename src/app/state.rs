@@ -2445,7 +2445,7 @@ mod tests {
         // Create a temporary file to use as description
         let temp_dir = std::env::temp_dir();
         let plan_file = temp_dir.join(format!("herdr-test-scroll-max-{}.md", uuid::Uuid::new_v4()));
-        let desc_text = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
+        let desc_text = "line1\n\nline2\n\nline3\n\nline4\n\nline5\n\nline6\n\nline7\n\nline8\n\nline9\n\nline10";
         std::fs::write(&plan_file, desc_text).unwrap();
         let plan_path = plan_file.to_string_lossy().to_string();
 

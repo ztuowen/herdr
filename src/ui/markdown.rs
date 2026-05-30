@@ -875,11 +875,34 @@ fn parse_and_format_table(
     lines
 }
 
+#[derive(Debug, Clone)]
+enum Block {
+    Paragraph(Vec<String>),
+    Blockquote(Vec<String>),
+    ListItem {
+        bullet: String,
+        indent: String,
+        lines: Vec<String>,
+    },
+    CodeBlock {
+        lang: String,
+        lines: Vec<String>,
+    },
+    Table {
+        header: String,
+        delimiter: String,
+        body: Vec<String>,
+    },
+    Header {
+        level: usize,
+        text: String,
+    },
+    HorizontalRule,
+    EmptyLine,
+}
+
 pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownLine> {
-    let mut lines = Vec::new();
-    let mut in_code_block = false;
-    let mut code_block_lang = String::new();
-    let mut code_block_lines = Vec::new();
+    let mut blocks = Vec::new();
     let input_lines: Vec<&str> = text.lines().collect();
     let mut line_idx = 0;
 
@@ -887,15 +910,46 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
         let line = input_lines[line_idx];
         let trimmed = line.trim();
 
-        // Handle table detection
-        if !in_code_block
-            && line_idx + 1 < input_lines.len()
+        // 1. Empty Line
+        if line.is_empty() {
+            blocks.push(Block::EmptyLine);
+            line_idx += 1;
+            continue;
+        }
+
+        // 2. Code Block
+        if trimmed.starts_with("```") {
+            let lang = trimmed
+                .strip_prefix("```")
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            let mut cb_lines = Vec::new();
+            line_idx += 1;
+            while line_idx < input_lines.len() {
+                let next_line = input_lines[line_idx];
+                if next_line.trim().starts_with("```") {
+                    line_idx += 1;
+                    break;
+                }
+                cb_lines.push(next_line.to_string());
+                line_idx += 1;
+            }
+            blocks.push(Block::CodeBlock {
+                lang,
+                lines: cb_lines,
+            });
+            continue;
+        }
+
+        // 3. Table
+        if line_idx + 1 < input_lines.len()
             && is_delimiter_row(input_lines[line_idx + 1])
             && line.contains('|')
         {
-            let header_raw = line;
-            let delimiter_raw = input_lines[line_idx + 1];
-            let mut body_raws = Vec::new();
+            let header = line.to_string();
+            let delimiter = input_lines[line_idx + 1].to_string();
+            let mut body = Vec::new();
             let mut k = 2;
             while line_idx + k < input_lines.len() {
                 let next_line = input_lines[line_idx + k];
@@ -908,255 +962,439 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                     && trimmed_next != "___"
                     && !trimmed_next.is_empty()
                 {
-                    body_raws.push(next_line);
+                    body.push(next_line.to_string());
                     k += 1;
                 } else {
                     break;
                 }
             }
-
-            let table_lines =
-                parse_and_format_table(header_raw, delimiter_raw, &body_raws, palette);
-            lines.extend(table_lines);
+            blocks.push(Block::Table {
+                header,
+                delimiter,
+                body,
+            });
             line_idx += k;
             continue;
         }
 
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            if in_code_block {
-                code_block_lang = trimmed
-                    .strip_prefix("```")
-                    .unwrap_or("")
-                    .trim()
-                    .to_lowercase();
-            } else {
-                let highlighted =
-                    highlight_code_block(&code_block_lines, &code_block_lang, palette);
-                lines.extend(highlighted);
-                code_block_lines.clear();
-                code_block_lang.clear();
-            }
-            line_idx += 1;
-            continue;
-        }
-
-        if in_code_block {
-            code_block_lines.push(line.to_string());
-            line_idx += 1;
-            continue;
-        }
-
-        // Check for horizontal rule
+        // 4. Horizontal Rule
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            lines.push(MarkdownLine {
-                spans: vec![MarkdownSpan::Text(Span::styled(
-                    "─".repeat(40),
-                    Style::default().fg(palette.surface0),
-                ))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
+            blocks.push(Block::HorizontalRule);
+            line_idx += 1;
+            continue;
+        }
+
+        // 5. Header
+        if let Some(content) = line.strip_prefix("# ") {
+            blocks.push(Block::Header {
+                level: 1,
+                text: content.to_string(),
+            });
+            line_idx += 1;
+            continue;
+        } else if let Some(content) = line.strip_prefix("## ") {
+            blocks.push(Block::Header {
+                level: 2,
+                text: content.to_string(),
+            });
+            line_idx += 1;
+            continue;
+        } else if let Some(content) = line.strip_prefix("### ") {
+            blocks.push(Block::Header {
+                level: 3,
+                text: content.to_string(),
+            });
+            line_idx += 1;
+            continue;
+        } else if let Some(content) = line.strip_prefix("#### ") {
+            blocks.push(Block::Header {
+                level: 4,
+                text: content.to_string(),
             });
             line_idx += 1;
             continue;
         }
 
-        // Check for headers
-        if let Some(content) = line.strip_prefix("# ") {
-            let mut spans = vec![MarkdownSpan::Text(Span::styled(
-                "█ ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            ))];
-            spans.extend(parse_inline_style_with_links(
-                content,
-                palette,
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        } else if let Some(content) = line.strip_prefix("## ") {
-            let spans = parse_inline_style_with_links(
-                content,
-                palette,
-                Style::default()
-                    .fg(palette.teal)
-                    .add_modifier(Modifier::BOLD),
-            );
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        } else if let Some(content) = line.strip_prefix("### ") {
-            let spans = parse_inline_style_with_links(
-                content,
-                palette,
-                Style::default()
-                    .fg(palette.peach)
-                    .add_modifier(Modifier::BOLD),
-            );
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        } else if let Some(content) = line.strip_prefix("#### ") {
-            let spans = parse_inline_style_with_links(
-                content,
-                palette,
-                Style::default()
-                    .fg(palette.mauve)
-                    .add_modifier(Modifier::BOLD),
-            );
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        } else if line == ">" || line.starts_with("> ") {
-            // Blockquote
-            let content = line.strip_prefix("> ").unwrap_or("");
-            let mut spans = vec![MarkdownSpan::Text(Span::styled(
-                "│ ",
-                Style::default().fg(palette.accent),
-            ))];
-            spans.extend(parse_inline_style_with_links(
-                content,
-                palette,
-                Style::default()
-                    .fg(palette.overlay1)
-                    .add_modifier(Modifier::ITALIC),
-            ));
-            lines.push(MarkdownLine {
-                spans,
-                is_code_block: false,
-                is_blockquote: true,
-                is_table_row: false,
-            });
+        // 6. Blockquote
+        if line == ">" || line.starts_with("> ") {
+            let mut bq_lines = Vec::new();
+            let content = line
+                .strip_prefix("> ")
+                .unwrap_or_else(|| line.strip_prefix('>').unwrap_or(""));
+
+            if content.trim().is_empty() {
+                blocks.push(Block::Blockquote(vec![String::new()]));
+                line_idx += 1;
+                continue;
+            }
+
+            bq_lines.push(content.to_string());
+            line_idx += 1;
+
+            while line_idx < input_lines.len() {
+                let next_line = input_lines[line_idx];
+                if next_line == ">" || next_line.starts_with("> ") {
+                    let next_content = next_line
+                        .strip_prefix("> ")
+                        .unwrap_or_else(|| next_line.strip_prefix('>').unwrap_or(""));
+                    if next_content.trim().is_empty() {
+                        break;
+                    }
+                    bq_lines.push(next_content.to_string());
+                    line_idx += 1;
+                } else {
+                    break;
+                }
+            }
+            blocks.push(Block::Blockquote(bq_lines));
+            continue;
+        }
+
+        // 7. List Item Start
+        let indent_len = line.chars().take_while(|&c| c == ' ').count();
+        let suffix = &line[indent_len..];
+
+        let mut bullet_info = None;
+        if suffix.starts_with("- ") || suffix.starts_with("* ") || suffix.starts_with("+ ") {
+            let bullet = suffix[..2].to_string();
+            let content = suffix[2..].to_string();
+            bullet_info = Some((bullet, content));
         } else {
-            // Check for lists
-            let indent_len = line.chars().take_while(|&c| c == ' ').count();
-            let suffix = &line[indent_len..];
+            let digit_chars: String = suffix.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digit_chars.is_empty() && suffix[digit_chars.len()..].starts_with(". ") {
+                let bullet = suffix[..digit_chars.len() + 2].to_string();
+                let content = suffix[digit_chars.len() + 2..].to_string();
+                bullet_info = Some((bullet, content));
+            }
+        }
 
-            if suffix.starts_with("- ") || suffix.starts_with("* ") || suffix.starts_with("+ ") {
-                let content = &suffix[2..];
-                let indent_str = " ".repeat(indent_len);
+        if let Some((bullet, content)) = bullet_info {
+            let indent = " ".repeat(indent_len);
+            let mut li_lines = vec![content];
+            line_idx += 1;
 
-                if content == "[ ]" || content.starts_with("[ ] ") {
-                    let task_text = if content.len() > 4 { &content[4..] } else { "" };
-                    let mut spans = vec![
-                        MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
-                        MarkdownSpan::Text(Span::styled(
-                            "[ ] ",
-                            Style::default().fg(palette.overlay1),
-                        )),
-                    ];
-                    spans.extend(parse_inline_style_with_links(
-                        task_text,
-                        palette,
-                        Style::default().fg(palette.text),
-                    ));
-                    lines.push(MarkdownLine {
-                        spans,
-                        is_code_block: false,
-                        is_blockquote: false,
-                        is_table_row: false,
-                    });
-                } else if content == "[x]"
-                    || content.starts_with("[x] ")
-                    || content == "[X]"
-                    || content.starts_with("[X] ")
-                {
-                    let task_text = if content.len() > 4 { &content[4..] } else { "" };
-                    let mut spans = vec![
-                        MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
-                        MarkdownSpan::Text(Span::styled(
-                            "[✓] ",
-                            Style::default().fg(palette.green),
-                        )),
-                    ];
-                    spans.extend(parse_inline_style_with_links(
-                        task_text,
-                        palette,
+            while line_idx < input_lines.len() {
+                let next_line = input_lines[line_idx];
+                if next_line.is_empty() {
+                    break;
+                }
+                let next_indent = next_line.chars().take_while(|&c| c == ' ').count();
+                if next_indent > 0 {
+                    let next_trimmed = next_line.trim();
+                    if next_trimmed.starts_with("```")
+                        || next_trimmed == "---"
+                        || next_trimmed == "***"
+                        || next_trimmed == "___"
+                        || next_trimmed.starts_with("# ")
+                        || next_trimmed.starts_with("## ")
+                        || next_trimmed.starts_with("### ")
+                        || next_trimmed.starts_with("#### ")
+                        || next_trimmed == ">"
+                        || next_trimmed.starts_with("> ")
+                    {
+                        break;
+                    }
+
+                    let next_suffix = &next_line[next_indent..];
+                    let is_new_list = next_suffix.starts_with("- ")
+                        || next_suffix.starts_with("* ")
+                        || next_suffix.starts_with("+ ")
+                        || {
+                            let digits: String = next_suffix
+                                .chars()
+                                .take_while(|c| c.is_ascii_digit())
+                                .collect();
+                            !digits.is_empty() && next_suffix[digits.len()..].starts_with(". ")
+                        };
+                    if is_new_list {
+                        break;
+                    }
+
+                    li_lines.push(next_line.trim().to_string());
+                    line_idx += 1;
+                } else {
+                    break;
+                }
+            }
+            blocks.push(Block::ListItem {
+                bullet,
+                indent,
+                lines: li_lines,
+            });
+            continue;
+        }
+
+        // 8. Normal Paragraph
+        let mut para_lines = vec![line.to_string()];
+        line_idx += 1;
+        while line_idx < input_lines.len() {
+            let next_line = input_lines[line_idx];
+            if next_line.is_empty() {
+                break;
+            }
+            let next_trimmed = next_line.trim();
+            if next_trimmed.starts_with("```")
+                || next_trimmed == "---"
+                || next_trimmed == "***"
+                || next_trimmed == "___"
+                || next_trimmed.starts_with("# ")
+                || next_trimmed.starts_with("## ")
+                || next_trimmed.starts_with("### ")
+                || next_trimmed.starts_with("#### ")
+                || next_trimmed == ">"
+                || next_trimmed.starts_with("> ")
+            {
+                break;
+            }
+            let next_indent = next_line.chars().take_while(|&c| c == ' ').count();
+            let next_suffix = &next_line[next_indent..];
+            let is_list = next_suffix.starts_with("- ")
+                || next_suffix.starts_with("* ")
+                || next_suffix.starts_with("+ ")
+                || {
+                    let digits: String = next_suffix
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    !digits.is_empty() && next_suffix[digits.len()..].starts_with(". ")
+                };
+            if is_list {
+                break;
+            }
+
+            para_lines.push(next_line.to_string());
+            line_idx += 1;
+        }
+        blocks.push(Block::Paragraph(para_lines));
+    }
+
+    let mut out_lines = Vec::new();
+    for block in blocks {
+        match block {
+            Block::EmptyLine => {
+                out_lines.push(MarkdownLine {
+                    spans: vec![MarkdownSpan::Text(Span::raw(""))],
+                    is_code_block: false,
+                    is_blockquote: false,
+                    is_table_row: false,
+                });
+            }
+            Block::HorizontalRule => {
+                out_lines.push(MarkdownLine {
+                    spans: vec![MarkdownSpan::Text(Span::styled(
+                        "─".repeat(40),
+                        Style::default().fg(palette.surface0),
+                    ))],
+                    is_code_block: false,
+                    is_blockquote: false,
+                    is_table_row: false,
+                });
+            }
+            Block::CodeBlock { lang, lines } => {
+                let highlighted = highlight_code_block(&lines, &lang, palette);
+                out_lines.extend(highlighted);
+            }
+            Block::Table {
+                header,
+                delimiter,
+                body,
+            } => {
+                let body_refs: Vec<&str> = body.iter().map(|s| s.as_str()).collect();
+                let table_lines = parse_and_format_table(&header, &delimiter, &body_refs, palette);
+                out_lines.extend(table_lines);
+            }
+            Block::Header { level, text } => {
+                let mut spans = Vec::new();
+                let style = match level {
+                    1 => {
+                        spans.push(MarkdownSpan::Text(Span::styled(
+                            "█ ",
+                            Style::default()
+                                .fg(palette.accent)
+                                .add_modifier(Modifier::BOLD),
+                        )));
                         Style::default()
-                            .fg(palette.subtext0)
-                            .add_modifier(Modifier::CROSSED_OUT),
-                    ));
-                    lines.push(MarkdownLine {
-                        spans,
-                        is_code_block: false,
-                        is_blockquote: false,
-                        is_table_row: false,
-                    });
+                            .fg(palette.accent)
+                            .add_modifier(Modifier::BOLD)
+                    }
+                    2 => Style::default()
+                        .fg(palette.teal)
+                        .add_modifier(Modifier::BOLD),
+                    3 => Style::default()
+                        .fg(palette.peach)
+                        .add_modifier(Modifier::BOLD),
+                    _ => Style::default()
+                        .fg(palette.mauve)
+                        .add_modifier(Modifier::BOLD),
+                };
+                spans.extend(parse_inline_style_with_links(&text, palette, style));
+                out_lines.push(MarkdownLine {
+                    spans,
+                    is_code_block: false,
+                    is_blockquote: false,
+                    is_table_row: false,
+                });
+            }
+            Block::Paragraph(lines) => {
+                let mut joined = String::new();
+                for (i, l) in lines.iter().enumerate() {
+                    let trimmed = if i == 0 {
+                        l.trim_end().to_string()
+                    } else {
+                        l.trim().to_string()
+                    };
+                    if !trimmed.is_empty() {
+                        if !joined.is_empty() {
+                            joined.push(' ');
+                        }
+                        joined.push_str(&trimmed);
+                    }
+                }
+                let spans = parse_inline_style_with_links(
+                    &joined,
+                    palette,
+                    Style::default().fg(palette.text),
+                );
+                out_lines.push(MarkdownLine {
+                    spans,
+                    is_code_block: false,
+                    is_blockquote: false,
+                    is_table_row: false,
+                });
+            }
+            Block::Blockquote(lines) => {
+                let mut joined = String::new();
+                for l in &lines {
+                    let trimmed = l.trim().to_string();
+                    if !trimmed.is_empty() {
+                        if !joined.is_empty() {
+                            joined.push(' ');
+                        }
+                        joined.push_str(&trimmed);
+                    }
+                }
+                let mut spans = vec![MarkdownSpan::Text(Span::styled(
+                    "│ ",
+                    Style::default().fg(palette.accent),
+                ))];
+                spans.extend(parse_inline_style_with_links(
+                    &joined,
+                    palette,
+                    Style::default()
+                        .fg(palette.overlay1)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+                out_lines.push(MarkdownLine {
+                    spans,
+                    is_code_block: false,
+                    is_blockquote: true,
+                    is_table_row: false,
+                });
+            }
+            Block::ListItem {
+                bullet,
+                indent,
+                lines,
+            } => {
+                let mut joined = String::new();
+                for (i, l) in lines.iter().enumerate() {
+                    let trimmed = if i == 0 {
+                        l.trim_end().to_string()
+                    } else {
+                        l.trim().to_string()
+                    };
+                    if !trimmed.is_empty() {
+                        if !joined.is_empty() {
+                            joined.push(' ');
+                        }
+                        joined.push_str(&trimmed);
+                    }
+                }
+
+                if bullet.starts_with("- ") || bullet.starts_with("* ") || bullet.starts_with("+ ")
+                {
+                    let is_task_unchecked = joined.starts_with("[ ] ") || joined == "[ ]";
+                    let is_task_checked = joined.starts_with("[x] ")
+                        || joined == "[x]"
+                        || joined.starts_with("[X] ")
+                        || joined == "[X]";
+
+                    if is_task_unchecked {
+                        let task_text = if joined.len() > 4 { &joined[4..] } else { "" };
+                        let mut spans = vec![
+                            MarkdownSpan::Text(Span::styled(indent, Style::default())),
+                            MarkdownSpan::Text(Span::styled(
+                                "[ ] ",
+                                Style::default().fg(palette.overlay1),
+                            )),
+                        ];
+                        spans.extend(parse_inline_style_with_links(
+                            task_text,
+                            palette,
+                            Style::default().fg(palette.text),
+                        ));
+                        out_lines.push(MarkdownLine {
+                            spans,
+                            is_code_block: false,
+                            is_blockquote: false,
+                            is_table_row: false,
+                        });
+                    } else if is_task_checked {
+                        let task_text = if joined.len() > 4 { &joined[4..] } else { "" };
+                        let mut spans = vec![
+                            MarkdownSpan::Text(Span::styled(indent, Style::default())),
+                            MarkdownSpan::Text(Span::styled(
+                                "[✓] ",
+                                Style::default().fg(palette.green),
+                            )),
+                        ];
+                        spans.extend(parse_inline_style_with_links(
+                            task_text,
+                            palette,
+                            Style::default()
+                                .fg(palette.subtext0)
+                                .add_modifier(Modifier::CROSSED_OUT),
+                        ));
+                        out_lines.push(MarkdownLine {
+                            spans,
+                            is_code_block: false,
+                            is_blockquote: false,
+                            is_table_row: false,
+                        });
+                    } else {
+                        let mut spans = vec![
+                            MarkdownSpan::Text(Span::styled(indent, Style::default())),
+                            MarkdownSpan::Text(Span::styled(
+                                "• ",
+                                Style::default().fg(palette.accent),
+                            )),
+                        ];
+                        spans.extend(parse_inline_style_with_links(
+                            &joined,
+                            palette,
+                            Style::default().fg(palette.text),
+                        ));
+                        out_lines.push(MarkdownLine {
+                            spans,
+                            is_code_block: false,
+                            is_blockquote: false,
+                            is_table_row: false,
+                        });
+                    }
                 } else {
                     let mut spans = vec![
-                        MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
-                        MarkdownSpan::Text(Span::styled("• ", Style::default().fg(palette.accent))),
-                    ];
-                    spans.extend(parse_inline_style_with_links(
-                        content,
-                        palette,
-                        Style::default().fg(palette.text),
-                    ));
-                    lines.push(MarkdownLine {
-                        spans,
-                        is_code_block: false,
-                        is_blockquote: false,
-                        is_table_row: false,
-                    });
-                }
-            } else {
-                // Check for ordered list
-                let digit_chars: String =
-                    suffix.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if !digit_chars.is_empty() && suffix[digit_chars.len()..].starts_with(". ") {
-                    let num_len = digit_chars.len();
-                    let content = &suffix[num_len + 2..];
-                    let indent_str = " ".repeat(indent_len);
-                    let mut spans = vec![
-                        MarkdownSpan::Text(Span::styled(indent_str, Style::default())),
+                        MarkdownSpan::Text(Span::styled(indent, Style::default())),
                         MarkdownSpan::Text(Span::styled(
-                            format!("{}. ", digit_chars),
+                            bullet,
                             Style::default().fg(palette.accent),
                         )),
                     ];
                     spans.extend(parse_inline_style_with_links(
-                        content,
+                        &joined,
                         palette,
                         Style::default().fg(palette.text),
                     ));
-                    lines.push(MarkdownLine {
-                        spans,
-                        is_code_block: false,
-                        is_blockquote: false,
-                        is_table_row: false,
-                    });
-                } else if line.is_empty() {
-                    lines.push(MarkdownLine {
-                        spans: vec![MarkdownSpan::Text(Span::raw(""))],
-                        is_code_block: false,
-                        is_blockquote: false,
-                        is_table_row: false,
-                    });
-                } else {
-                    let spans = parse_inline_style_with_links(
-                        line,
-                        palette,
-                        Style::default().fg(palette.text),
-                    );
-                    lines.push(MarkdownLine {
+                    out_lines.push(MarkdownLine {
                         spans,
                         is_code_block: false,
                         is_blockquote: false,
@@ -1165,16 +1403,9 @@ pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownL
                 }
             }
         }
-
-        line_idx += 1;
     }
 
-    if in_code_block && !code_block_lines.is_empty() {
-        let highlighted = highlight_code_block(&code_block_lines, &code_block_lang, palette);
-        lines.extend(highlighted);
-    }
-
-    lines
+    out_lines
 }
 
 // Allowed because this is a public API kept for backward compatibility and verified in unit tests.
@@ -2230,5 +2461,91 @@ mod tests {
                 i, len, first_len
             );
         }
+    }
+
+    #[test]
+    fn test_paragraph_block_reflow() {
+        let palette = test_palette();
+        let md = "\
+This is paragraph line 1.
+This is paragraph line 2.
+
+> This is a blockquote line 1
+> and blockquote line 2
+
+- List item line 1
+  list item line 2";
+        let lines = parse_markdown_with_links(md, &palette);
+
+        // We expect:
+        // 1. Paragraph line (containing joined line 1 and line 2)
+        // 2. Empty line
+        // 3. Blockquote line (containing joined line 1 and line 2)
+        // 4. Empty line
+        // 5. List item line (containing joined line 1 and line 2)
+
+        // Check paragraph
+        assert_eq!(lines[0].is_code_block, false);
+        assert_eq!(lines[0].is_blockquote, false);
+        let para_text: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(
+            para_text,
+            "This is paragraph line 1. This is paragraph line 2."
+        );
+
+        // Check empty line
+        let empty_text: String = lines[1]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(empty_text, "");
+
+        // Check blockquote
+        assert_eq!(lines[2].is_blockquote, true);
+        let bq_text: String = lines[2]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(
+            bq_text,
+            "│ This is a blockquote line 1 and blockquote line 2"
+        );
+
+        // Check empty line
+        let empty_text_2: String = lines[3]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(empty_text_2, "");
+
+        // Check list item
+        let list_text: String = lines[4]
+            .spans
+            .iter()
+            .map(|s| match s {
+                MarkdownSpan::Text(span) => span.content.as_ref(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(list_text, "• List item line 1 list item line 2");
     }
 }

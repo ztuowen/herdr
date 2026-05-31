@@ -1466,7 +1466,15 @@ impl App {
 
         self.cancel_audio_summary();
 
-        let system_instruction = "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user.".to_string();
+        let system_instruction = self
+            .state
+            .extensions
+            .speech_to_text
+            .summary_system_instruction
+            .clone()
+            .unwrap_or_else(|| {
+                "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user.".to_string()
+            });
 
         let event_tx = self.event_tx.clone();
 

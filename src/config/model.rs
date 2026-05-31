@@ -378,6 +378,7 @@ pub struct SpeechToTextConfig {
     pub system_instruction: Option<String>,
     pub agent_system_instruction: Option<String>,
     pub terminal_system_instruction: Option<String>,
+    pub summary_system_instruction: Option<String>,
 }
 
 impl Default for KeysConfig {

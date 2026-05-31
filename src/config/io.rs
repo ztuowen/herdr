@@ -501,6 +501,7 @@ resume_agents_on_restore = true
 [speech_to_text]
 gemini_api_key = "test_key"
 model = "gemini-2.0-flash"
+summary_system_instruction = "test prompt"
 "#,
         )
         .unwrap();
@@ -512,6 +513,14 @@ model = "gemini-2.0-flash"
         assert_eq!(
             loaded.config.speech_to_text.model.as_deref(),
             Some("gemini-2.0-flash")
+        );
+        assert_eq!(
+            loaded
+                .config
+                .speech_to_text
+                .summary_system_instruction
+                .as_deref(),
+            Some("test prompt")
         );
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());

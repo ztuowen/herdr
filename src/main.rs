@@ -295,6 +295,10 @@ pane_history = false
 # Optional post-processing prompt for standard terminal/shell panes (falls back to system_instruction if unset).
 # Runtime fallback: "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation."
 # terminal_system_instruction = "..."
+#
+# Optional system prompt for the audio summary mode (summarizing tab text to speak aloud).
+# Runtime fallback: "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user."
+# summary_system_instruction = "..."
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {

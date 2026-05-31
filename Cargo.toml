@@ -53,10 +53,6 @@ cpal = "0.15"
 name = "herdr"
 path = "src/main.rs"
 
-[[bin]]
-name = "herdr-md"
-path = "src/bin/herdr-md.rs"
-
 
 
 

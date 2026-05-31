@@ -11,6 +11,7 @@ use crate::api::schema::{
 mod agent;
 mod integration;
 mod kanban;
+mod md;
 mod pane;
 mod server;
 mod status;
@@ -47,6 +48,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "integration" => integration::run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         "kanban" => kanban::run_kanban_command(&args[2..])?,
+        "md" => md::run_md_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 

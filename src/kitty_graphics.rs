@@ -461,73 +461,8 @@ fn collect_visible_placements(
 
     if let Ok(static_placements) = app.extensions.static_image_placements.lock() {
         for sp in &*static_placements {
-            if let Some((png_bytes, w_px, h_px, failed)) =
-                crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)
-            {
-                if !failed {
-                    let mut hasher = DefaultHasher::new();
-                    sp.formula.hash(&mut hasher);
-                    let formula_hash = hasher.finish() as u32;
-
-                    let image_id = 900_000 + (formula_hash % 99_999);
-                    let placement_id = 900_000 + (formula_hash % 99_999);
-
-                    let grid_width_px = sp.grid_cols * cell_size.width_px;
-                    let grid_height_px = sp.grid_rows * cell_size.height_px;
-
-                    // Scale and pad the math image to match the grid cell size,
-                    // preserving aspect ratio and preventing distortion.
-                    let (final_bytes, final_w, final_h) = if let Some(padded_bytes) =
-                        crate::math_compiler::scale_and_pad_math_image(
-                            &png_bytes,
-                            w_px,
-                            h_px,
-                            grid_width_px,
-                            grid_height_px,
-                        ) {
-                        (padded_bytes, grid_width_px, grid_height_px)
-                    } else {
-                        (png_bytes, w_px, h_px)
-                    };
-
-                    let mut fingerprint_hasher = DefaultHasher::new();
-                    final_bytes.hash(&mut fingerprint_hasher);
-                    let data_fingerprint = fingerprint_hasher.finish();
-
-                    let placement = KittyImagePlacement {
-                        image_id,
-                        placement_id,
-                        z: 10,
-                        x_offset: 0,
-                        y_offset: 0,
-                        image_width: final_w,
-                        image_height: final_h,
-                        format: KittyImageFormat::Png,
-                        data_len: final_bytes.len(),
-                        data_fingerprint,
-                        data: final_bytes,
-                        render: crate::ghostty::KittyPlacementRenderInfo {
-                            pixel_width: 0,
-                            pixel_height: 0,
-                            grid_cols: sp.grid_cols,
-                            grid_rows: sp.grid_rows,
-                            viewport_col: sp.viewport_col,
-                            viewport_row: sp.viewport_row,
-                            source_x: 0,
-                            source_y: 0,
-                            source_width: 0,
-                            source_height: 0,
-                        },
-                    };
-
-                    placements.push(HostPlacement {
-                        pane_id: PaneId::from_raw(999_999),
-                        area: sp.area,
-                        cell_size,
-                        placement,
-                        scrollback_offset: 0,
-                    });
-                }
+            if let Some(hp) = convert_static_placement(sp, cell_size) {
+                placements.push(hp);
             }
         }
     }
@@ -845,6 +780,131 @@ fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
         let encoded = base64::engine::general_purpose::STANDARD.encode(chunk);
         let _ = write!(out, "\x1b_Gm={more};{encoded}\x1b\\");
     }
+}
+
+fn convert_static_placement(
+    sp: &crate::app::state::StaticImagePlacement,
+    cell_size: HostCellSize,
+) -> Option<HostPlacement> {
+    if let Some((png_bytes, w_px, h_px, failed)) =
+        crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)
+    {
+        if !failed {
+            let mut hasher = DefaultHasher::new();
+            sp.formula.hash(&mut hasher);
+            let formula_hash = hasher.finish() as u32;
+
+            let image_id = 900_000 + (formula_hash % 99_999);
+            let placement_id = 900_000 + (formula_hash % 99_999);
+
+            let grid_width_px = sp.grid_cols * cell_size.width_px;
+            let grid_height_px = sp.grid_rows * cell_size.height_px;
+
+            // Scale and pad the math image to match the grid cell size,
+            // preserving aspect ratio and preventing distortion.
+            let (final_bytes, final_w, final_h) = if let Some(padded_bytes) =
+                crate::math_compiler::scale_and_pad_math_image(
+                    &png_bytes,
+                    w_px,
+                    h_px,
+                    grid_width_px,
+                    grid_height_px,
+                ) {
+                (padded_bytes, grid_width_px, grid_height_px)
+            } else {
+                (png_bytes, w_px, h_px)
+            };
+
+            let mut fingerprint_hasher = DefaultHasher::new();
+            final_bytes.hash(&mut fingerprint_hasher);
+            let data_fingerprint = fingerprint_hasher.finish();
+
+            let placement = KittyImagePlacement {
+                image_id,
+                placement_id,
+                z: 10,
+                x_offset: 0,
+                y_offset: 0,
+                image_width: final_w,
+                image_height: final_h,
+                format: KittyImageFormat::Png,
+                data_len: final_bytes.len(),
+                data_fingerprint,
+                data: final_bytes,
+                render: crate::ghostty::KittyPlacementRenderInfo {
+                    pixel_width: 0,
+                    pixel_height: 0,
+                    grid_cols: sp.grid_cols,
+                    grid_rows: sp.grid_rows,
+                    viewport_col: sp.viewport_col,
+                    viewport_row: sp.viewport_row,
+                    source_x: 0,
+                    source_y: 0,
+                    source_width: 0,
+                    source_height: 0,
+                },
+            };
+
+            Some(HostPlacement {
+                pane_id: PaneId::from_raw(999_999),
+                area: sp.area,
+                cell_size,
+                placement,
+                scrollback_offset: 0,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+pub(crate) fn paint_static_placements_standalone(
+    static_placements: &[crate::app::state::StaticImagePlacement],
+    cell_size: HostCellSize,
+    cache: &mut HostGraphicsCache,
+) -> io::Result<()> {
+    let mut placements = Vec::new();
+    for sp in static_placements {
+        if let Some(hp) = convert_static_placement(sp, cell_size) {
+            placements.push(hp);
+        }
+    }
+
+    let mut bytes = Vec::new();
+    // Standalone TUI is single-view and doesn't change active tab/workspace layouts
+    let view_changed = false;
+    encode_graphics_update(
+        &mut bytes,
+        &placements,
+        view_changed,
+        &mut cache.images,
+        &mut cache.placements,
+    );
+
+    if !bytes.is_empty() {
+        let mut framed = Vec::with_capacity(bytes.len() + 8);
+        framed.extend_from_slice(b"\x1b7");
+        framed.extend_from_slice(&bytes);
+        framed.extend_from_slice(b"\x1b8");
+
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(&framed)?;
+        stdout.flush()?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn clear_standalone_placements(cache: &mut HostGraphicsCache) -> io::Result<()> {
+    let bytes = cache.clear_bytes();
+    if !bytes.is_empty() {
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(&bytes)?;
+        stdout.flush()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

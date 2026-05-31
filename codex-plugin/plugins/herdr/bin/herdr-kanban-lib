@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+HERDR_BIN="${HERDR_BIN:-herdr}"
+CODEX_BIN="${CODEX_BIN:-codex}"
+HERDR_KANBAN_DRY_RUN="${HERDR_KANBAN_DRY_RUN:-1}"
+HERDR_KANBAN_WORKTREE="${HERDR_KANBAN_WORKTREE:-$(pwd)}"
+HERDR_KANBAN_MAX_WORKERS="${HERDR_KANBAN_MAX_WORKERS:-1}"
+HERDR_KANBAN_MAX_REVIEWERS="${HERDR_KANBAN_MAX_REVIEWERS:-1}"
+HERDR_KANBAN_INTERVAL="${HERDR_KANBAN_INTERVAL:-10}"
+HERDR_KANBAN_AGENT_PREFIX="${HERDR_KANBAN_AGENT_PREFIX:-kanban}"
+HERDR_KANBAN_WORKSPACE_PREFIX="${HERDR_KANBAN_WORKSPACE_PREFIX:-kanban}"
+HERDR_KANBAN_WAIT_TIMEOUT_MS="${HERDR_KANBAN_WAIT_TIMEOUT_MS:-1000}"
+
+kanban_log() {
+  printf '%s\n' "$*" >&2
+}
+
+kanban_is_dry_run() {
+  [ "$HERDR_KANBAN_DRY_RUN" != "0" ]
+}
+
+kanban_run() {
+  if kanban_is_dry_run; then
+    kanban_log "dry-run: $*"
+  else
+    "$@"
+  fi
+}
+
+kanban_need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    kanban_log "missing required command: $1"
+    exit 127
+  fi
+}
+
+kanban_require_runtime() {
+  kanban_need "$HERDR_BIN"
+  kanban_need python3
+}
+
+kanban_short_uuid() {
+  printf '%s' "$1" | cut -c1-8
+}
+
+kanban_sanitize_name() {
+  printf '%s' "$1" | tr -c '[:alnum:]_.-' '-'
+}
+
+kanban_codex_command() {
+  local prompt="$1"
+  python3 - "$CODEX_BIN" "$HERDR_KANBAN_WORKTREE" "$prompt" <<'PY'
+import shlex
+import sys
+
+codex_bin, worktree, prompt = sys.argv[1:4]
+argv = [
+    codex_bin,
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--cd",
+    worktree,
+    prompt,
+]
+print(" ".join(shlex.quote(arg) for arg in argv))
+PY
+}
+
+kanban_prompt_worker() {
+  local uuid="$1"
+  cat <<EOF
+Use the herdr-kanban-worker skill.
+
+Card: $uuid
+
+Read the card from Herdr Kanban. First attach this pane with:
+
+herdr kanban attach $uuid
+
+Then move the card to ongoing, implement only the scoped work, record validation evidence in the card description, and move it to reviewing. If human input or manual intervention is required, record the concrete blocker and move it to blocked.
+EOF
+}
+
+kanban_prompt_reviewer() {
+  local uuid="$1"
+  cat <<EOF
+Use the herdr-kanban-reviewer skill.
+
+Card: $uuid
+
+Read the card from Herdr Kanban and review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill. Use blocked with review_state: human-review-required for subjective UI or manual review.
+EOF
+}
+
+kanban_update_card_meta() {
+  local path="$1"
+  local owner_role="$2"
+  local assigned_pane="$3"
+  local assigned_workspace="$4"
+  local last_actor="$5"
+  python3 - "$path" "$owner_role" "$assigned_pane" "$assigned_workspace" "$last_actor" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+owner_role = sys.argv[2]
+assigned_pane = sys.argv[3]
+assigned_workspace = sys.argv[4]
+last_actor = sys.argv[5]
+
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+fields = {
+    "owner_role": owner_role,
+    "assigned_pane": assigned_pane,
+    "assigned_workspace": assigned_workspace,
+    "last_actor": last_actor,
+}
+
+def render_frontmatter(existing):
+    lines = []
+    seen = set()
+    for line in existing:
+        key = line.split(":", 1)[0].strip() if ":" in line else ""
+        if key in fields:
+            lines.append(f"{key}: {fields[key]}")
+            seen.add(key)
+        else:
+            lines.append(line)
+    for key, value in fields.items():
+        if key not in seen:
+            lines.append(f"{key}: {value}")
+    return lines
+
+if text.startswith("---\n"):
+    end = text.find("\n---\n", 4)
+    if end != -1:
+        front = text[4:end].splitlines()
+        body = text[end + 5 :]
+        updated = "---\n" + "\n".join(render_frontmatter(front)) + "\n---\n" + body
+    else:
+        updated = text
+else:
+    updated = (
+        "---\n"
+        + "\n".join(f"{key}: {value}" for key, value in fields.items())
+        + "\n---\n\n"
+        + text
+    )
+
+path.write_text(updated, encoding="utf-8")
+PY
+}
+
+kanban_clear_assignment_meta() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    raise SystemExit(0)
+text = path.read_text(encoding="utf-8")
+fields = {
+    "owner_role": "",
+    "assigned_pane": "",
+    "assigned_workspace": "",
+    "last_actor": "sweeper",
+}
+
+if not text.startswith("---\n"):
+    raise SystemExit(0)
+end = text.find("\n---\n", 4)
+if end == -1:
+    raise SystemExit(0)
+front = text[4:end].splitlines()
+body = text[end + 5 :]
+out = []
+seen = set()
+for line in front:
+    key = line.split(":", 1)[0].strip() if ":" in line else ""
+    if key in fields:
+        out.append(f"{key}: {fields[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, value in fields.items():
+    if key not in seen:
+        out.append(f"{key}: {value}")
+path.write_text("---\n" + "\n".join(out) + "\n---\n" + body, encoding="utf-8")
+PY
+}

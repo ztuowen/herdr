@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=herdr-kanban-lib
+source "$script_dir/herdr-kanban-lib"
+
+kanban_require_runtime
+
+cards_json="$("$HERDR_BIN" kanban list)"
+panes_json="$("$HERDR_BIN" pane list)"
+workspaces_json="$("$HERDR_BIN" workspace list)"
+
+while IFS=$'\t' read -r action a b c d; do
+  [ -n "${action:-}" ] || continue
+  case "$action" in
+    clear-card)
+      uuid="$a"
+      description_path="$b"
+      pane_id="$c"
+      workspace_id="$d"
+      kanban_log "sweep: clear stale assignment card=$uuid pane=$pane_id workspace=$workspace_id"
+      if kanban_is_dry_run; then
+        kanban_log "dry-run: clear assignment metadata in $description_path"
+      else
+        kanban_clear_assignment_meta "$description_path"
+      fi
+      ;;
+    close-pane)
+      pane_id="$a"
+      name="$b"
+      workspace_id="$c"
+      status="$d"
+      kanban_log "sweep: close disposable pane pane=$pane_id name=$name status=$status workspace=$workspace_id"
+      kanban_run "$HERDR_BIN" pane close "$pane_id"
+      ;;
+    close-workspace)
+      workspace_id="$a"
+      label="$b"
+      kanban_log "sweep: close empty disposable workspace workspace=$workspace_id label=$label"
+      kanban_run "$HERDR_BIN" workspace close "$workspace_id"
+      ;;
+    warn)
+      kanban_log "sweep warning: card=$a $b"
+      ;;
+  esac
+done < <(python3 - "$cards_json" "$panes_json" "$workspaces_json" "$HERDR_KANBAN_WORKSPACE_PREFIX" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+cards = json.loads(sys.argv[1]).get("result", {}).get("items", [])
+panes_list = json.loads(sys.argv[2]).get("result", {}).get("panes", [])
+workspaces = json.loads(sys.argv[3]).get("result", {}).get("workspaces", [])
+workspace_prefix = sys.argv[4]
+
+panes = {pane.get("pane_id") for pane in panes_list if pane.get("pane_id")}
+pane_status = {pane.get("pane_id"): pane.get("agent_status") for pane in panes_list if pane.get("pane_id")}
+assigned_panes = set()
+
+for card in cards:
+    path_value = card.get("description") or ""
+    if not path_value:
+        continue
+    path = pathlib.Path(path_value)
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
+    workspace = re.search(r"^assigned_workspace:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned_pane = assigned.group(1) if assigned else ""
+    assigned_workspace = workspace.group(1) if workspace else ""
+    status = card.get("status")
+    if assigned_pane:
+        assigned_panes.add(assigned_pane)
+    if assigned_pane and assigned_pane not in panes and status in {"todo", "ongoing", "reviewing"}:
+        print("\t".join(["clear-card", card["uuid"], str(path), assigned_pane, assigned_workspace]))
+    if status == "reviewing" and "## Validation Evidence" not in text:
+        print("\t".join(["warn", card["uuid"], "reviewing without Validation Evidence"]))
+    if status == "blocked" and "blocked_reason:" in text and re.search(r"^blocked_reason:\s*$", text, re.MULTILINE):
+        print("\t".join(["warn", card["uuid"], "blocked without blocked_reason"]))
+
+for pane in panes_list:
+    status = pane.get("agent_status")
+    pane_id = pane.get("pane_id") or ""
+    workspace_id = pane.get("workspace_id") or ""
+    if pane_id in assigned_panes and status in {"idle", "done"}:
+        print("\t".join(["close-pane", pane_id, "assigned", workspace_id, status or ""]))
+
+for workspace in workspaces:
+    label = workspace.get("label") or ""
+    workspace_id = workspace.get("workspace_id") or ""
+    pane_count = workspace.get("pane_count")
+    if label.startswith(f"{workspace_prefix} ") and pane_count == 0:
+        print("\t".join(["close-workspace", workspace_id, label]))
+PY
+)

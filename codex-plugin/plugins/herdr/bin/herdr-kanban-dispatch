@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=herdr-kanban-lib
+source "$script_dir/herdr-kanban-lib"
+
+kanban_require_runtime
+kanban_need "$CODEX_BIN"
+
+cards_json="$("$HERDR_BIN" kanban list)"
+panes_json="$("$HERDR_BIN" pane list)"
+
+selection_json="$(python3 - "$cards_json" "$panes_json" "$HERDR_KANBAN_MAX_WORKERS" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+cards = json.loads(sys.argv[1]).get("result", {}).get("items", [])
+panes = json.loads(sys.argv[2]).get("result", {}).get("panes", [])
+max_workers = int(sys.argv[3])
+pane_status = {pane.get("pane_id"): pane.get("agent_status") for pane in panes if pane.get("pane_id")}
+
+active = 0
+for card in cards:
+    path_value = card.get("description") or ""
+    if not path_value:
+        continue
+    path = pathlib.Path(path_value)
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    owner = re.search(r"^owner_role:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
+    if not owner or not assigned or owner.group(1) != "worker":
+        continue
+    status = pane_status.get(assigned.group(1))
+    if status and status not in {"idle", "done"}:
+        active += 1
+
+capacity = max(0, max_workers - active)
+selected = []
+for card in cards:
+    if capacity <= 0:
+        break
+    if card.get("status") != "todo":
+        continue
+    title = card.get("title") or ""
+    if title.startswith("clarify:"):
+        continue
+    path_value = card.get("description") or ""
+    if not path_value:
+        continue
+    path = pathlib.Path(path_value)
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
+    if assigned:
+        continue
+    required = [
+        "## Objective",
+        "## Context",
+        "## Scope",
+        "## Out of Scope",
+        "## Acceptance",
+        "## Validation",
+        "## Handoff Rules",
+    ]
+    if any(section not in text for section in required):
+        continue
+    selected.append(card)
+    capacity -= 1
+
+print(json.dumps(selected))
+PY
+)"
+
+while IFS=$'\t' read -r uuid title description_path; do
+  [ -n "${uuid:-}" ] || continue
+  short="$(kanban_short_uuid "$uuid")"
+  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX worker $short"
+  prompt="$(kanban_prompt_worker "$uuid")"
+  codex_command="$(kanban_codex_command "$prompt")"
+
+  kanban_log "dispatch worker: $uuid $title"
+  if kanban_is_dry_run; then
+    kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
+    kanban_log "dry-run: $HERDR_BIN pane run <root-pane> '$codex_command'"
+    continue
+  fi
+
+  workspace_json="$("$HERDR_BIN" workspace create --cwd "$HERDR_KANBAN_WORKTREE" --label "$workspace_label" --no-focus)"
+  read -r workspace_id pane_id < <(python3 - "$workspace_json" <<'PY'
+import json
+import sys
+result = json.loads(sys.argv[1])["result"]
+print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
+PY
+)
+  kanban_update_card_meta "$description_path" "worker" "$pane_id" "$workspace_id" "dispatcher"
+  "$HERDR_BIN" pane run "$pane_id" "$codex_command"
+done < <(python3 - "$selection_json" <<'PY'
+import json
+import sys
+
+for card in json.loads(sys.argv[1]):
+    print("\t".join([card["uuid"], card["title"], card.get("description") or ""]))
+PY
+)

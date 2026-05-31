@@ -28,6 +28,29 @@ herdr kanban detach <uuid>
 
 `herdr kanban attach` must be run inside the pane that owns the work.
 
+## Plugin Automation Scripts
+
+The plugin includes complementary orchestration scripts under `bin/`. These scripts use Herdr's existing CLI/socket API and do not require Herdr core changes.
+
+```bash
+herdr-kanban-card-check <uuid>
+herdr-kanban-install
+herdr-kanban-sweep
+herdr-kanban-review
+herdr-kanban-dispatch
+herdr-kanban-run
+```
+
+They default to dry-run mode. Set `HERDR_KANBAN_DRY_RUN=0` to let them create Herdr workspaces, spawn Codex panes, write assignment metadata, and close disposable panes.
+
+Spawned Codex panes use YOLO mode:
+
+```bash
+codex --dangerously-bypass-approvals-and-sandbox --cd <worktree> "<role prompt>"
+```
+
+See `kanban-automation-scripts.md` and `kanban-orchestration-flow.html` for the operational plan.
+
 ## Status Semantics
 
 - `todo`: ready routine work, unless prefixed with `clarify:`.

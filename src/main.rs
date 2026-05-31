@@ -26,6 +26,7 @@ mod client;
 mod config;
 mod detect;
 mod events;
+mod extensions;
 mod ghostty;
 mod handoff_runtime;
 mod input;

@@ -1,3 +1,6 @@
+// Allow dead code in app/api/kanban.rs when the kanban feature is disabled.
+#![allow(dead_code)]
+
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
     KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanUpdateParams, ResponseResult,
@@ -16,7 +19,7 @@ impl App {
         }
         active
     }
-    pub(super) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
+    pub(crate) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
         if let Some(ref path_str) = params.description {
             if !path_str.is_empty() {
                 let path = std::path::Path::new(path_str);
@@ -39,6 +42,7 @@ impl App {
         let active_tids = self.active_pane_terminal_ids();
         if self
             .state
+            .extensions
             .kanban
             .clear_dead_terminals(|tid| active_tids.contains(tid))
         {
@@ -46,7 +50,7 @@ impl App {
             self.schedule_session_save();
         }
 
-        let item = self.state.kanban.add_item(
+        let item = self.state.extensions.kanban.add_item(
             params.title,
             params.description,
             params.status,
@@ -57,7 +61,7 @@ impl App {
         encode_success(id, ResponseResult::KanbanItem { item })
     }
 
-    pub(super) fn handle_kanban_list(&mut self, id: String, params: KanbanListParams) -> String {
+    pub(crate) fn handle_kanban_list(&mut self, id: String, params: KanbanListParams) -> String {
         let target_terminal_id = params.terminal_id.map(|tid| {
             if let Ok(resolved) = self.resolve_terminal_target(&tid) {
                 resolved.terminal_id
@@ -69,6 +73,7 @@ impl App {
         let active_tids = self.active_pane_terminal_ids();
         if self
             .state
+            .extensions
             .kanban
             .clear_dead_terminals(|tid| active_tids.contains(tid))
         {
@@ -78,6 +83,7 @@ impl App {
 
         let items = self
             .state
+            .extensions
             .kanban
             .items
             .iter()
@@ -99,7 +105,7 @@ impl App {
         encode_success(id, ResponseResult::KanbanList { items })
     }
 
-    pub(super) fn handle_kanban_update(
+    pub(crate) fn handle_kanban_update(
         &mut self,
         id: String,
         params: KanbanUpdateParams,
@@ -126,6 +132,7 @@ impl App {
         let active_tids = self.active_pane_terminal_ids();
         if self
             .state
+            .extensions
             .kanban
             .clear_dead_terminals(|tid| active_tids.contains(tid))
         {
@@ -133,7 +140,7 @@ impl App {
             self.schedule_session_save();
         }
 
-        match self.state.kanban.update_item(
+        match self.state.extensions.kanban.update_item(
             &params.uuid,
             params.title,
             params.description,
@@ -154,7 +161,7 @@ impl App {
         }
     }
 
-    pub(super) fn handle_kanban_delete(
+    pub(crate) fn handle_kanban_delete(
         &mut self,
         id: String,
         params: KanbanDeleteParams,
@@ -162,6 +169,7 @@ impl App {
         let active_tids = self.active_pane_terminal_ids();
         if self
             .state
+            .extensions
             .kanban
             .clear_dead_terminals(|tid| active_tids.contains(tid))
         {
@@ -169,7 +177,7 @@ impl App {
             self.schedule_session_save();
         }
 
-        match self.state.kanban.delete_item(&params.uuid) {
+        match self.state.extensions.kanban.delete_item(&params.uuid) {
             Some(item) => {
                 self.state.mark_session_dirty();
                 self.schedule_session_save();

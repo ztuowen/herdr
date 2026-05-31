@@ -1063,7 +1063,7 @@ pub struct StaticImagePlacement {
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
-    pub static_image_placements: std::sync::Mutex<Vec<StaticImagePlacement>>,
+    pub extensions: crate::extensions::ExtensionsState,
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
     /// Terminal ids whose size is currently owned by a direct attach client.
@@ -1136,9 +1136,6 @@ pub struct AppState {
     /// Last reported focus state for the outer terminal hosting herdr.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
-    pub recording_workspace: Option<String>,
-    pub live_transcription: Option<String>,
-    pub speech_to_text: crate::config::SpeechToTextConfig,
     // Config
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
@@ -1203,7 +1200,6 @@ pub struct AppState {
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
-    pub kanban: crate::kanban::KanbanState,
     pub prefix_previous_mode: Option<Mode>,
 }
 
@@ -1432,7 +1428,10 @@ impl AppState {
     /// Create an AppState for testing — no channels, no PTYs.
     pub fn test_new() -> Self {
         Self {
-            static_image_placements: std::sync::Mutex::new(Vec::new()),
+            extensions: crate::extensions::ExtensionsState::new(
+                crate::config::SpeechToTextConfig::default(),
+                Vec::new(),
+            ),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
@@ -1507,9 +1506,6 @@ impl AppState {
             toast: None,
             copy_feedback: None,
             outer_terminal_focus: None,
-            recording_workspace: None,
-            live_transcription: None,
-            speech_to_text: crate::config::SpeechToTextConfig::default(),
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             default_sidebar_width: 26,
@@ -1561,7 +1557,6 @@ impl AppState {
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
-            kanban: crate::kanban::KanbanState::default(),
             prefix_previous_mode: None,
         }
     }
@@ -1721,9 +1716,9 @@ mod tests {
     #[test]
     fn kanban_state_helpers() {
         let mut state = AppState::test_new();
-        assert!(state.kanban.items.is_empty());
+        assert!(state.extensions.kanban.items.is_empty());
 
-        let item1 = state.kanban.add_item(
+        let item1 = state.extensions.kanban.add_item(
             "Task 1".to_string(),
             Some("Desc 1".to_string()),
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -1734,7 +1729,7 @@ mod tests {
         assert_eq!(item1.description, "Desc 1");
         assert_eq!(item1.status, crate::api::schema::KanbanStatus::Todo);
 
-        let item2 = state.kanban.add_item(
+        let item2 = state.extensions.kanban.add_item(
             "Task 2".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::InProgress),
@@ -1742,11 +1737,12 @@ mod tests {
         );
         assert_eq!(item2.description, "");
 
-        assert_eq!(state.kanban.items_in_column(0).len(), 1);
-        assert_eq!(state.kanban.items_in_column(1).len(), 1);
+        assert_eq!(state.extensions.kanban.items_in_column(0).len(), 1);
+        assert_eq!(state.extensions.kanban.items_in_column(1).len(), 1);
 
         // Update item 1
         let updated = state
+            .extensions
             .kanban
             .update_item(
                 &item1.uuid,
@@ -1761,20 +1757,20 @@ mod tests {
         assert_eq!(updated.status, crate::api::schema::KanbanStatus::InProgress);
 
         // Now both should be in InProgress column
-        assert_eq!(state.kanban.items_in_column(0).len(), 0);
-        assert_eq!(state.kanban.items_in_column(1).len(), 2);
+        assert_eq!(state.extensions.kanban.items_in_column(0).len(), 0);
+        assert_eq!(state.extensions.kanban.items_in_column(1).len(), 2);
 
         // Shift item tests
-        state.kanban.selected_col = 1;
-        state.kanban.selected_row = 0;
-        state.kanban.shift_item_right();
-        assert_eq!(state.kanban.selected_col, 2);
-        assert_eq!(state.kanban.items_in_column(2).len(), 1);
+        state.extensions.kanban.selected_col = 1;
+        state.extensions.kanban.selected_row = 0;
+        state.extensions.kanban.shift_item_right();
+        assert_eq!(state.extensions.kanban.selected_col, 2);
+        assert_eq!(state.extensions.kanban.items_in_column(2).len(), 1);
 
         // kanban_item_at test
         state.view.terminal_area = Rect::new(0, 0, 100, 20);
-        state.kanban.items.clear();
-        state.kanban.add_item(
+        state.extensions.kanban.items.clear();
+        state.extensions.kanban.add_item(
             "Task 1".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -1788,9 +1784,9 @@ mod tests {
         assert_eq!(item.title, "Task 1");
 
         // Delete item
-        let deleted = state.kanban.delete_item(&item.uuid).unwrap();
+        let deleted = state.extensions.kanban.delete_item(&item.uuid).unwrap();
         assert_eq!(deleted.uuid, item.uuid);
-        assert_eq!(state.kanban.items.len(), 0);
+        assert_eq!(state.extensions.kanban.items.len(), 0);
     }
 
     #[test]
@@ -1805,14 +1801,14 @@ mod tests {
         std::fs::write(&plan_file, desc_text).unwrap();
         let plan_path = plan_file.to_string_lossy().to_string();
 
-        let item = state.kanban.add_item(
+        let item = state.extensions.kanban.add_item(
             "Test Task".to_string(),
             Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
 
-        state.kanban.detail_uuid = Some(item.uuid.clone());
+        state.extensions.kanban.detail_uuid = Some(item.uuid.clone());
 
         // Max scroll should correctly calculate the height including the path
         let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&state);

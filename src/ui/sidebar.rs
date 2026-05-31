@@ -864,10 +864,10 @@ fn render_workspace_list(
     if area.height > 0 {
         let kanban_rect = app.sidebar_kanban_button_rect();
         if kanban_rect.width > 0 {
-            let todo_count = app.kanban.items_in_column(0).len();
-            let in_progress_count = app.kanban.items_in_column(1).len();
-            let review_count = app.kanban.items_in_column(2).len();
-            let done_count = app.kanban.items_in_column(3).len();
+            let todo_count = app.extensions.kanban.items_in_column(0).len();
+            let in_progress_count = app.extensions.kanban.items_in_column(1).len();
+            let review_count = app.extensions.kanban.items_in_column(2).len();
+            let done_count = app.extensions.kanban.items_in_column(3).len();
 
             let is_active = app.mode == Mode::Kanban;
 

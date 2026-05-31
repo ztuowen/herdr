@@ -314,7 +314,7 @@ impl App {
         Some((runtime, self.public_workspace_id(ws_idx)))
     }
 
-    pub(super) fn lookup_runtime_sender(
+    pub(crate) fn lookup_runtime_sender(
         &self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,

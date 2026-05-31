@@ -26,7 +26,6 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
-use self::kanban::render_kanban;
 use self::keybind_help::render_keybind_help_overlay;
 pub(crate) use self::markdown::MarkdownDocument;
 use self::menus::{
@@ -176,9 +175,17 @@ fn compute_view_internal(
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     if app.mode == Mode::Kanban {
-        app.kanban.selected_col = app.kanban.selected_col.min(3);
-        let items_len = app.kanban.items_in_column(app.kanban.selected_col).len();
-        app.kanban.selected_row = app.kanban.selected_row.min(items_len.saturating_sub(1));
+        app.extensions.kanban.selected_col = app.extensions.kanban.selected_col.min(3);
+        let items_len = app
+            .extensions
+            .kanban
+            .items_in_column(app.extensions.kanban.selected_col)
+            .len();
+        app.extensions.kanban.selected_row = app
+            .extensions
+            .kanban
+            .selected_row
+            .min(items_len.saturating_sub(1));
     }
 
     if is_mobile_width(area, app.mobile_width_threshold) {
@@ -373,7 +380,7 @@ pub fn render_with_runtime_registry(
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
 ) {
-    if let Ok(mut placements) = app.static_image_placements.lock() {
+    if let Ok(mut placements) = app.extensions.static_image_placements.lock() {
         placements.clear();
     }
 
@@ -391,9 +398,7 @@ pub fn render_with_runtime_registry(
     if app.view.layout != ViewLayout::Mobile {
         render_tab_bar(app, frame, tab_bar_area);
     }
-    if app.mode == Mode::Kanban {
-        render_kanban(app, frame, terminal_area);
-    } else {
+    if !crate::extensions::render_extension_ui(app, frame, terminal_area) {
         render_panes(app, terminal_runtimes, frame, terminal_area);
     }
 
@@ -471,7 +476,7 @@ fn render_notifications(app: &AppState, frame: &mut Frame, terminal_area: Rect) 
         };
         render_copy_feedback(frame, area, feedback, copy_feedback_offset, &app.palette);
     }
-    if let Some(text) = &app.live_transcription {
+    if let Some(text) = &app.extensions.live_transcription {
         render_live_transcription(frame, terminal_area, text, &app.palette);
     }
 }

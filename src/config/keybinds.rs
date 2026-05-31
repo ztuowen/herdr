@@ -297,6 +297,8 @@ pub struct Keybinds {
     pub resize_mode: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
     pub toggle_kanban: ActionKeybinds,
+    // Allow dead code on speech_to_text keybinds field when speech feature is disabled in build.
+    #[allow(dead_code)]
     pub speech_to_text: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }

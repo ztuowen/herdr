@@ -1,3 +1,6 @@
+// Allow dead code in ui/kanban.rs when the kanban feature is disabled in the build.
+#![allow(dead_code)]
+
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -9,7 +12,7 @@ use ratatui::{
 use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::AppState;
 
-pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
 
     let is_portrait = app.view.layout == crate::app::state::ViewLayout::Mobile;
@@ -42,10 +45,10 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
     for (name, color, col_idx) in statuses {
         let col_area = sections[col_idx];
-        let items = app.kanban.items_in_column(col_idx);
+        let items = app.extensions.kanban.items_in_column(col_idx);
         let count = items.len();
 
-        let is_col_focused = app.kanban.selected_col == col_idx;
+        let is_col_focused = app.extensions.kanban.selected_col == col_idx;
 
         // Render column block
         let col_border_color = if is_col_focused { p.accent } else { p.surface0 };
@@ -82,7 +85,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                 // Compute scroll offset for the focused column
                 let scroll_offset = if is_col_focused {
-                    let row = app.kanban.selected_row;
+                    let row = app.extensions.kanban.selected_row;
                     if max_visible_cards == 0 {
                         0
                     } else if row >= max_visible_cards {
@@ -104,7 +107,8 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                     let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
 
-                    let is_card_selected = is_col_focused && app.kanban.selected_row == actual_idx;
+                    let is_card_selected =
+                        is_col_focused && app.extensions.kanban.selected_row == actual_idx;
 
                     let mut has_active_terminal = false;
                     if let Some(ref tid) = item.terminal_id {
@@ -163,7 +167,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                 // Compute scroll offset for the focused column (now row)
                 let scroll_offset = if is_col_focused {
-                    app.kanban.selected_row
+                    app.extensions.kanban.selected_row
                 } else {
                     0
                 };
@@ -176,7 +180,8 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     let card_height = 4u16.min(inner_area.height);
                     let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
 
-                    let is_card_selected = is_col_focused && app.kanban.selected_row == actual_idx;
+                    let is_card_selected =
+                        is_col_focused && app.extensions.kanban.selected_row == actual_idx;
 
                     let mut has_active_terminal = false;
                     if let Some(ref tid) = item.terminal_id {
@@ -244,9 +249,15 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
 
-    // Render detailed modal if app.kanban.detail_uuid is Some
-    if let Some(ref uuid) = app.kanban.detail_uuid {
-        if let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) {
+    // Render detailed modal if app.extensions.kanban.detail_uuid is Some
+    if let Some(ref uuid) = app.extensions.kanban.detail_uuid {
+        if let Some(item) = app
+            .extensions
+            .kanban
+            .items
+            .iter()
+            .find(|it| it.uuid == *uuid)
+        {
             render_kanban_detail_modal(app, frame, area, item);
         }
     }
@@ -366,7 +377,7 @@ fn render_kanban_detail_modal(
 
     let max_scroll = kanban_detail_max_scroll(app);
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
+        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
         max_offset_from_bottom: max_scroll as usize,
         viewport_rows: rows[6].height.max(1) as usize,
     };
@@ -391,17 +402,22 @@ fn render_kanban_detail_modal(
 
     let wrapped = doc.wrap(
         desc_area.width as usize,
-        app.kanban.detail_horizontal_scroll as usize,
+        app.extensions.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
 
-    let desc_text = Paragraph::new(wrapped.lines().to_vec()).scroll((app.kanban.detail_scroll, 0));
+    let desc_text =
+        Paragraph::new(wrapped.lines().to_vec()).scroll((app.extensions.kanban.detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
 
     if app.kitty_graphics_enabled && cell_size.is_known() {
-        if let Ok(mut placements) = app.static_image_placements.lock() {
-            wrapped.push_image_placements(&mut placements, desc_area, app.kanban.detail_scroll);
+        if let Ok(mut placements) = app.extensions.static_image_placements.lock() {
+            wrapped.push_image_placements(
+                &mut placements,
+                desc_area,
+                app.extensions.kanban.detail_scroll,
+            );
         }
     }
 
@@ -513,10 +529,16 @@ pub fn kanban_detail_modal_size(area: Rect) -> (u16, u16) {
 }
 
 pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
-    let Some(ref uuid) = app.kanban.detail_uuid else {
+    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
         return 0;
     };
-    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+    let Some(item) = app
+        .extensions
+        .kanban
+        .items
+        .iter()
+        .find(|it| it.uuid == *uuid)
+    else {
         return 0;
     };
     let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
@@ -549,7 +571,7 @@ pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
 
     let wrapped = doc.wrap(
         desc_area.width as usize,
-        app.kanban.detail_horizontal_scroll as usize,
+        app.extensions.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
@@ -557,10 +579,16 @@ pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
 }
 
 pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
-    let Some(ref uuid) = app.kanban.detail_uuid else {
+    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
         return 0;
     };
-    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+    let Some(item) = app
+        .extensions
+        .kanban
+        .items
+        .iter()
+        .find(|it| it.uuid == *uuid)
+    else {
         return 0;
     };
     let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
@@ -586,7 +614,7 @@ pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
 
     let max_scroll = kanban_detail_max_scroll(app);
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
+        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
         max_offset_from_bottom: max_scroll as usize,
         viewport_rows: desc_area.height.max(1) as usize,
     };
@@ -614,10 +642,16 @@ pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
 }
 
 pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), String, String)> {
-    let Some(ref uuid) = app.kanban.detail_uuid else {
+    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
         return Vec::new();
     };
-    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+    let Some(item) = app
+        .extensions
+        .kanban
+        .items
+        .iter()
+        .find(|it| it.uuid == *uuid)
+    else {
         return Vec::new();
     };
     let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
@@ -643,7 +677,7 @@ pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), Strin
 
     let max_scroll = kanban_detail_max_scroll(app);
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
+        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
         max_offset_from_bottom: max_scroll as usize,
         viewport_rows: desc_area.height.max(1) as usize,
     };
@@ -668,12 +702,12 @@ pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), Strin
 
     let wrapped = doc.wrap(
         text_area.width as usize,
-        app.kanban.detail_horizontal_scroll as usize,
+        app.extensions.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
 
-    wrapped.active_hyperlinks(text_area, app.kanban.detail_scroll)
+    wrapped.active_hyperlinks(text_area, app.extensions.kanban.detail_scroll)
 }
 
 pub fn kanban_item_at(
@@ -702,13 +736,13 @@ pub fn kanban_item_at(
                 col_area.height.saturating_sub(2),
             );
 
-            let items = app.kanban.items_in_column(col_idx);
+            let items = app.extensions.kanban.items_in_column(col_idx);
             let count = items.len();
             if count == 0 {
                 continue;
             }
 
-            let is_col_focused = app.kanban.selected_col == col_idx;
+            let is_col_focused = app.extensions.kanban.selected_col == col_idx;
             let card_height: u16 = 4;
             let spacing: u16 = 1;
             let total_card_height = card_height + spacing;
@@ -720,7 +754,7 @@ pub fn kanban_item_at(
                 .unwrap_or(0);
 
             let scroll_offset = if is_col_focused {
-                let row = app.kanban.selected_row;
+                let row = app.extensions.kanban.selected_row;
                 if max_visible_cards == 0 {
                     0
                 } else if row >= max_visible_cards {
@@ -769,18 +803,18 @@ pub fn kanban_item_at(
                 col_area.height.saturating_sub(2),
             );
 
-            let items = app.kanban.items_in_column(col_idx);
+            let items = app.extensions.kanban.items_in_column(col_idx);
             let count = items.len();
             if count == 0 {
                 continue;
             }
 
-            let is_col_focused = app.kanban.selected_col == col_idx;
+            let is_col_focused = app.extensions.kanban.selected_col == col_idx;
             let card_width = inner_area.width;
             let max_visible_cards = 1;
 
             let scroll_offset = if is_col_focused {
-                app.kanban.selected_row
+                app.extensions.kanban.selected_row
             } else {
                 0
             };

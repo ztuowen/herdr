@@ -50,202 +50,7 @@ impl App {
             return;
         }
 
-        if let AppEvent::SpeechPartialTranscription { workspace_id, text } = ev {
-            if self.state.recording_workspace.as_ref() == Some(&workspace_id) {
-                let sanitized = sanitize_transcription_text(&text);
-                self.state.live_transcription = Some(sanitized);
-                self.render_dirty.store(true, Ordering::Release);
-                self.render_notify.notify_one();
-            }
-            return;
-        }
-
-        if let AppEvent::SpeechRawTranscribed {
-            workspace_id,
-            result,
-        } = ev
-        {
-            let previous_toast = self.state.toast.clone();
-            match result {
-                Ok(raw_text) => {
-                    let mut pane_found = false;
-                    if let Some(ws_idx) = self
-                        .state
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.id == workspace_id)
-                    {
-                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                            if let Some(pane_id) = ws.focused_pane_id() {
-                                pane_found = true;
-
-                                let is_agent = if let Some(pane) = ws.pane_state(pane_id) {
-                                    let term_id = pane.attached_terminal_id.clone();
-                                    if let Some(term) = self.state.terminals.get(&term_id) {
-                                        term.is_agent_terminal()
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                };
-
-                                let system_instruction = if is_agent {
-                                    self.state.speech_to_text.agent_system_instruction.clone()
-                                        .or_else(|| self.state.speech_to_text.system_instruction.clone())
-                                        .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation.".to_string())
-                                } else {
-                                    self.state.speech_to_text.terminal_system_instruction.clone()
-                                        .or_else(|| self.state.speech_to_text.system_instruction.clone())
-                                        .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation.".to_string())
-                                };
-
-                                self.state.toast = Some(crate::app::state::ToastNotification {
-                                    kind: crate::app::state::ToastKind::Finished,
-                                    title: "Speech to Text".into(),
-                                    context: "Refining...".into(),
-                                    target: None,
-                                });
-
-                                let event_tx = self.event_tx.clone();
-                                let api_key = match &self.state.speech_to_text.gemini_api_key {
-                                    Some(k) if !k.trim().is_empty() => k.clone(),
-                                    _ => {
-                                        let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
-                                            workspace_id: workspace_id.clone(),
-                                            pane_id: Some(pane_id),
-                                            result: Err(
-                                                "No Gemini API key configured for post-processing."
-                                                    .to_string(),
-                                            ),
-                                        });
-                                        return;
-                                    }
-                                };
-
-                                let workspace_id_clone = workspace_id.clone();
-                                let raw_text_clone = raw_text.clone();
-                                std::thread::spawn(move || {
-                                    let postprocess_result = crate::speech::run_gemini_postprocess(
-                                        api_key,
-                                        raw_text_clone,
-                                        system_instruction,
-                                    );
-                                    let _ = event_tx.blocking_send(AppEvent::SpeechTranscribed {
-                                        workspace_id: workspace_id_clone,
-                                        pane_id: Some(pane_id),
-                                        result: postprocess_result,
-                                    });
-                                });
-                            }
-                        }
-                    }
-
-                    if !pane_found {
-                        let event_tx = self.event_tx.clone();
-                        let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
-                            workspace_id,
-                            pane_id: None,
-                            result: Ok(raw_text),
-                        });
-                    }
-                }
-                Err(err) => {
-                    self.state.live_transcription = None;
-                    self.state.recording_workspace = None;
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::NeedsAttention,
-                        title: "Speech to Text Error".into(),
-                        context: err,
-                        target: None,
-                    });
-                }
-            }
-            self.sync_toast_deadline(previous_toast);
-            self.render_dirty.store(true, Ordering::Release);
-            self.render_notify.notify_one();
-            return;
-        }
-
-        if let AppEvent::SpeechTranscribed {
-            workspace_id,
-            pane_id,
-            result,
-        } = ev
-        {
-            self.state.live_transcription = None;
-            self.state.recording_workspace = None;
-            let previous_toast = self.state.toast.clone();
-            match result {
-                Ok(transcription) => {
-                    let sanitized = sanitize_transcription_text(&transcription);
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::Finished,
-                        title: "Speech to Text".into(),
-                        context: sanitized.clone(),
-                        target: None,
-                    });
-                    if let Some(ws_idx) = self
-                        .state
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.id == workspace_id)
-                    {
-                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                            let target_pane_id = pane_id.or_else(|| ws.focused_pane_id());
-                            if let Some(focused_pane_id) = target_pane_id {
-                                if let Some(runtime) =
-                                    self.lookup_runtime_sender(ws_idx, focused_pane_id)
-                                {
-                                    let bracketed = runtime
-                                        .input_state()
-                                        .map(|s| s.bracketed_paste)
-                                        .unwrap_or(false);
-                                    let payload = if bracketed {
-                                        format!("\x1b[200~{sanitized}\x1b[201~")
-                                    } else {
-                                        sanitized.clone()
-                                    };
-                                    tracing::info!(
-                                        "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, text={:?}",
-                                        workspace_id,
-                                        focused_pane_id,
-                                        bracketed,
-                                        sanitized
-                                    );
-                                    if let Err(e) =
-                                        runtime.try_send_bytes(bytes::Bytes::from(payload))
-                                    {
-                                        tracing::error!("Speech to text: failed to write transcription to PTY: {:?}", e);
-                                    }
-                                } else {
-                                    tracing::warn!(
-                                        "Speech to text: could not find active runtime for workspace={}, pane={:?}",
-                                        workspace_id,
-                                        focused_pane_id
-                                    );
-                                }
-                            } else {
-                                tracing::warn!(
-                                    "Speech to text: no focused pane in workspace={}",
-                                    workspace_id
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::NeedsAttention,
-                        title: "Speech to Text Error".into(),
-                        context: err,
-                        target: None,
-                    });
-                }
-            }
-            self.sync_toast_deadline(previous_toast);
-            self.render_dirty.store(true, Ordering::Release);
-            self.render_notify.notify_one();
+        if crate::extensions::handle_extension_event(self, &ev) {
             return;
         }
 
@@ -583,13 +388,15 @@ impl App {
         }
     }
 
-    pub(super) fn sync_toast_deadline(
+    pub(crate) fn sync_toast_deadline(
         &mut self,
         previous_toast: Option<crate::app::state::ToastNotification>,
     ) {
         if self.state.toast != previous_toast {
             self.toast_deadline = self.state.toast.as_ref().and_then(|toast| {
-                if toast.context == "Transcribing..." || self.state.recording_workspace.is_some() {
+                if toast.context == "Transcribing..."
+                    || self.state.extensions.recording_workspace.is_some()
+                {
                     None
                 } else {
                     let duration = match toast.kind {
@@ -678,6 +485,14 @@ impl App {
         &mut self,
         request: crate::api::schema::Request,
     ) -> String {
+        if let Some(res) = crate::extensions::handle_extension_api_request(
+            self,
+            request.id.clone(),
+            &request.method,
+        ) {
+            return res;
+        }
+
         use crate::api::schema::{
             ErrorBody, ErrorResponse, Method, ResponseResult, SuccessResponse,
         };
@@ -774,10 +589,7 @@ impl App {
             Method::IntegrationUninstall(params) => {
                 return self.handle_integration_uninstall(request.id, params);
             }
-            Method::KanbanAdd(params) => return self.handle_kanban_add(request.id, params),
-            Method::KanbanList(params) => return self.handle_kanban_list(request.id, params),
-            Method::KanbanUpdate(params) => return self.handle_kanban_update(request.id, params),
-            Method::KanbanDelete(params) => return self.handle_kanban_delete(request.id, params),
+
             _ => {
                 return responses::encode_error(
                     request.id,
@@ -790,57 +602,12 @@ impl App {
         serde_json::to_string(&response).unwrap()
     }
 }
-
-fn sanitize_transcription_text(text: &str) -> String {
-    let mut result = String::new();
-    let mut last_was_space = false;
-
-    for c in text.chars() {
-        if c.is_control() {
-            continue;
-        }
-
-        if c.is_whitespace() {
-            if !last_was_space {
-                result.push(' ');
-                last_was_space = true;
-            }
-        } else {
-            result.push(c);
-            last_was_space = false;
-        }
-    }
-
-    result.trim().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::ToastKind;
     use crate::detect::{Agent, AgentState};
-
-    #[test]
-    fn test_sanitize_transcription_text() {
-        // Test normal text
-        assert_eq!(sanitize_transcription_text("hello world"), "hello world");
-
-        // Test ASCII control characters (should be removed)
-        assert_eq!(
-            sanitize_transcription_text("hello\x15world\x03\r\n"),
-            "helloworld"
-        );
-
-        // Test multiple whitespace characters (should be collapsed to a single space)
-        assert_eq!(
-            sanitize_transcription_text("hello   \t  world"),
-            "hello world"
-        );
-        assert_eq!(
-            sanitize_transcription_text("  hello world  "),
-            "hello world"
-        );
-    }
-
+    use crate::events::AppEvent;
     fn init_repo(path: &std::path::Path) {
         let status = std::process::Command::new("git")
             .args(["init", "-q"])

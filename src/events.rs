@@ -23,6 +23,7 @@ pub struct WorktreeRemoveResult {
 }
 
 /// An event from a background task to the main loop.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum AppEvent {
     /// A pane's child process exited.

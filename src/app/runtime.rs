@@ -115,7 +115,7 @@ impl App {
             }
             crate::raw_input::RawInputEvent::OuterFocusLost => {
                 self.state.outer_terminal_focus = Some(false);
-                if self.state.recording_workspace.is_some() {
+                if self.state.extensions.recording_workspace.is_some() {
                     self.stop_recording(true);
                     self.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::NeedsAttention,

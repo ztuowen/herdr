@@ -526,7 +526,7 @@ mod tests {
             state.sidebar_width,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
-            state.kanban.items.clone(),
+            state.extensions.kanban.items.clone(),
         )
     }
 

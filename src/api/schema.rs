@@ -1065,6 +1065,8 @@ pub enum KanbanStatus {
     Done,
 }
 
+// Allow dead code in KanbanStatus helper implementation when the Kanban feature is disabled.
+#[allow(dead_code)]
 impl KanbanStatus {
     pub fn as_str(self) -> &'static str {
         match self {

@@ -415,7 +415,7 @@ fn collect_visible_placements(
         }
     }
 
-    if let Ok(static_placements) = app.static_image_placements.lock() {
+    if let Ok(static_placements) = app.extensions.static_image_placements.lock() {
         for sp in &*static_placements {
             if let Some((png_bytes, w_px, h_px, failed)) =
                 crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)

@@ -925,7 +925,11 @@ async fn run_client_loop(
                         }
                     };
 
-                    let api_key = match loaded_config.config.speech_to_text.gemini_api_key.as_ref()
+                    let api_key = match loaded_config
+                        .config
+                        .speech_to_text
+                        .gemini_api_key
+                        .as_ref()
                     {
                         Some(k) if !k.trim().is_empty() => k.clone(),
                         _ => {

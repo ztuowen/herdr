@@ -61,7 +61,7 @@ impl App {
             self.release_events_supported = true;
         }
 
-        if self.handle_speech_to_text_key(key) {
+        if crate::extensions::handle_extension_key(self, key) {
             return;
         }
 
@@ -96,9 +96,7 @@ impl App {
                     Mode::GlobalMenu => handle_global_menu_key(&mut self.state, key_event),
                     Mode::KeybindHelp => handle_keybind_help_key(&mut self.state, key_event),
                     Mode::Navigator => handle_navigator_key(&mut self.state, key_event),
-                    Mode::Kanban => {
-                        handle_kanban_key(&mut self.state, key);
-                    }
+                    Mode::Kanban => {}
                     Mode::Terminal => unreachable!(),
                 }
             }
@@ -119,6 +117,7 @@ impl App {
         if self.no_session
             && self
                 .state
+                .extensions
                 .speech_to_text
                 .gemini_api_key
                 .as_ref()
@@ -127,11 +126,17 @@ impl App {
             return false;
         }
 
-        if self.state.recording_workspace.is_some() {
+        if self.state.extensions.recording_workspace.is_some() {
             let is_stt_key = self.state.keybinds.speech_to_text.matches_direct_key(key)
                 || self.state.keybinds.speech_to_text.matches_prefix_key(key)
-                || (self.speech_recorder.recording_key().is_some()
-                    && key.code == self.speech_recorder.recording_key().unwrap().code);
+                || (self.extensions.speech_recorder.recording_key().is_some()
+                    && key.code
+                        == self
+                            .extensions
+                            .speech_recorder
+                            .recording_key()
+                            .unwrap()
+                            .code);
 
             if is_stt_key || key.code == KeyCode::Esc {
                 if key.kind == crossterm::event::KeyEventKind::Repeat {
@@ -155,7 +160,7 @@ impl App {
                     true
                 } else if key.kind == crossterm::event::KeyEventKind::Press {
                     if !self.release_events_supported {
-                        if let Some(start_time) = self.speech_recorder.start_time() {
+                        if let Some(start_time) = self.extensions.speech_recorder.start_time() {
                             start_time.elapsed() >= std::time::Duration::from_millis(400)
                         } else {
                             true
@@ -601,7 +606,7 @@ fn capture_snapshot(state: &AppState) -> crate::persist::SessionSnapshot {
         state.sidebar_width,
         state.sidebar_section_split,
         state.collapsed_space_keys.clone(),
-        state.kanban.items.clone(),
+        state.extensions.kanban.items.clone(),
     )
 }
 

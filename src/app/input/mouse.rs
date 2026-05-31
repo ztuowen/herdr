@@ -75,7 +75,7 @@ impl AppState {
         }
 
         if self.mode == Mode::Kanban {
-            if self.kanban.detail_uuid.is_some() {
+            if self.extensions.kanban.detail_uuid.is_some() {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         let (width, height) =
@@ -88,7 +88,7 @@ impl AppState {
                                 && mouse.row >= rect.y
                                 && mouse.row < rect.y + rect.height;
                             if !inside {
-                                self.kanban.set_detail_uuid(None);
+                                self.extensions.kanban.set_detail_uuid(None);
                             } else if rect.height >= 9 {
                                 let inner = Rect::new(
                                     rect.x + 1,
@@ -131,9 +131,13 @@ impl AppState {
                                 // Check if user clicked on the terminal row (rows[5])
                                 let terminal_row = rows[5];
                                 if mouse.row == terminal_row.y {
-                                    if let Some(ref uuid) = self.kanban.detail_uuid {
-                                        if let Some(item) =
-                                            self.kanban.items.iter().find(|it| it.uuid == *uuid)
+                                    if let Some(ref uuid) = self.extensions.kanban.detail_uuid {
+                                        if let Some(item) = self
+                                            .extensions
+                                            .kanban
+                                            .items
+                                            .iter()
+                                            .find(|it| it.uuid == *uuid)
                                         {
                                             if let Some(ref tid) = item.terminal_id {
                                                 let status = self.kanban_pane_status(tid);
@@ -148,7 +152,9 @@ impl AppState {
                                                                 pane_id,
                                                             },
                                                         );
-                                                        self.kanban.set_detail_uuid(None);
+                                                        self.extensions
+                                                            .kanban
+                                                            .set_detail_uuid(None);
                                                     }
                                                 }
                                             }
@@ -165,41 +171,47 @@ impl AppState {
                                     {
                                         let offset = mouse.column - x_start;
                                         if offset < 22 {
-                                            self.kanban.set_detail_uuid(None);
+                                            self.extensions.kanban.set_detail_uuid(None);
                                         } else if offset < 38 {
-                                            if let Some(ref uuid) = self.kanban.detail_uuid {
+                                            if let Some(ref uuid) =
+                                                self.extensions.kanban.detail_uuid
+                                            {
                                                 self.request_clipboard_write =
                                                     Some(uuid.clone().into_bytes());
                                             }
                                         } else {
-                                            self.kanban.delete_selected();
+                                            self.extensions.kanban.delete_selected();
                                             self.mark_session_dirty();
-                                            self.kanban.set_detail_uuid(None);
+                                            self.extensions.kanban.set_detail_uuid(None);
                                         }
                                     }
                                 }
                             }
                         } else {
-                            self.kanban.set_detail_uuid(None);
+                            self.extensions.kanban.set_detail_uuid(None);
                         }
                     }
                     MouseEventKind::ScrollUp => {
                         let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(self);
-                        self.kanban.scroll_detail(-3, max_scroll);
+                        self.extensions.kanban.scroll_detail(-3, max_scroll);
                     }
                     MouseEventKind::ScrollDown => {
                         let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(self);
-                        self.kanban.scroll_detail(3, max_scroll);
+                        self.extensions.kanban.scroll_detail(3, max_scroll);
                     }
                     MouseEventKind::ScrollLeft => {
                         let max_scroll =
                             crate::ui::kanban::kanban_detail_max_horizontal_scroll(self);
-                        self.kanban.scroll_horizontal_detail(-2, max_scroll);
+                        self.extensions
+                            .kanban
+                            .scroll_horizontal_detail(-2, max_scroll);
                     }
                     MouseEventKind::ScrollRight => {
                         let max_scroll =
                             crate::ui::kanban::kanban_detail_max_horizontal_scroll(self);
-                        self.kanban.scroll_horizontal_detail(2, max_scroll);
+                        self.extensions
+                            .kanban
+                            .scroll_horizontal_detail(2, max_scroll);
                     }
                     _ => {}
                 }
@@ -221,11 +233,13 @@ impl AppState {
                     if let Some((col_idx, row_idx, item)) =
                         crate::ui::kanban::kanban_item_at(self, mouse.column, mouse.row)
                     {
-                        self.kanban.selected_col = col_idx;
-                        self.kanban.selected_row = row_idx;
+                        self.extensions.kanban.selected_col = col_idx;
+                        self.extensions.kanban.selected_row = row_idx;
 
                         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-                            self.kanban.set_detail_uuid(Some(item.uuid.clone()));
+                            self.extensions
+                                .kanban
+                                .set_detail_uuid(Some(item.uuid.clone()));
                         } else {
                             let mut navigated = false;
                             if let Some(ref term_id_str) = item.terminal_id {
@@ -243,7 +257,9 @@ impl AppState {
                                 }
                             }
                             if !navigated {
-                                self.kanban.set_detail_uuid(Some(item.uuid.clone()));
+                                self.extensions
+                                    .kanban
+                                    .set_detail_uuid(Some(item.uuid.clone()));
                             }
                         }
                     }
@@ -284,21 +300,22 @@ impl AppState {
                     }
 
                     if let Some(col_idx) = hovered_col {
-                        if self.kanban.selected_col != col_idx {
-                            self.kanban.selected_col = col_idx;
-                            self.kanban.selected_row = 0;
+                        if self.extensions.kanban.selected_col != col_idx {
+                            self.extensions.kanban.selected_col = col_idx;
+                            self.extensions.kanban.selected_row = 0;
                         }
 
-                        let items_count = self.kanban.items_in_column(col_idx).len();
+                        let items_count = self.extensions.kanban.items_in_column(col_idx).len();
                         if items_count > 0 {
                             match mouse.kind {
                                 MouseEventKind::ScrollUp => {
-                                    self.kanban.selected_row =
-                                        self.kanban.selected_row.saturating_sub(1);
+                                    self.extensions.kanban.selected_row =
+                                        self.extensions.kanban.selected_row.saturating_sub(1);
                                 }
                                 MouseEventKind::ScrollDown => {
-                                    self.kanban.selected_row =
-                                        (self.kanban.selected_row + 1).min(items_count - 1);
+                                    self.extensions.kanban.selected_row =
+                                        (self.extensions.kanban.selected_row + 1)
+                                            .min(items_count - 1);
                                 }
                                 _ => {}
                             }
@@ -2985,8 +3002,8 @@ mod tests {
         let term_id_str = app.state.workspaces[0].tabs[0].panes[&pane_id]
             .attached_terminal_id
             .to_string();
-        app.state.kanban.items.clear();
-        app.state.kanban.add_item(
+        app.state.extensions.kanban.items.clear();
+        app.state.extensions.kanban.add_item(
             "Tracked Task".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -3007,8 +3024,11 @@ mod tests {
 
         // Right click should stay in Kanban mode and open the detailed modal
         assert_eq!(app.state.mode, Mode::Kanban);
-        let tracked_item = app.state.kanban.items.first().unwrap().clone();
-        assert_eq!(app.state.kanban.detail_uuid, Some(tracked_item.uuid));
+        let tracked_item = app.state.extensions.kanban.items.first().unwrap().clone();
+        assert_eq!(
+            app.state.extensions.kanban.detail_uuid,
+            Some(tracked_item.uuid)
+        );
         // Insert active terminal state to make the terminal clickable/jumpable
         let terminal_state = crate::terminal::TerminalState::new(
             app.state.workspaces[0].tabs[0].panes[&pane_id]
@@ -3031,15 +3051,15 @@ mod tests {
 
         // Click should jump to Terminal mode, focus the pane, and close detail modal
         assert_eq!(app.state.mode, Mode::Terminal);
-        assert_eq!(app.state.kanban.detail_uuid, None);
+        assert_eq!(app.state.extensions.kanban.detail_uuid, None);
 
         // Restore terminal area for the rest of the test
         app.state.view.terminal_area = Rect::new(26, 0, 84, 20);
 
         // Reset to Kanban mode and clear pane_id to test fallback to detail modal
         app.state.mode = Mode::Kanban;
-        app.state.kanban.items.clear();
-        let item = app.state.kanban.add_item(
+        app.state.extensions.kanban.items.clear();
+        let item = app.state.extensions.kanban.add_item(
             "Fallback Task".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -3048,7 +3068,10 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 30, 3));
         assert_eq!(app.state.mode, Mode::Kanban);
-        assert_eq!(app.state.kanban.detail_uuid, Some(item.uuid.clone()));
+        assert_eq!(
+            app.state.extensions.kanban.detail_uuid,
+            Some(item.uuid.clone())
+        );
 
         // Click outside the modal to close it
         app.handle_mouse(mouse(
@@ -3056,30 +3079,30 @@ mod tests {
             1, // in sidebar area, which is outside detailed modal
             1,
         ));
-        assert_eq!(app.state.kanban.detail_uuid, None);
+        assert_eq!(app.state.extensions.kanban.detail_uuid, None);
 
         // Test scrolling over Kanban columns
-        app.state.kanban.items.clear();
+        app.state.extensions.kanban.items.clear();
         for i in 0..5 {
-            app.state.kanban.add_item(
+            app.state.extensions.kanban.add_item(
                 format!("Task {i}"),
                 None,
                 Some(crate::api::schema::KanbanStatus::Todo),
                 None,
             );
         }
-        app.state.kanban.selected_col = 0;
-        app.state.kanban.selected_row = 0;
+        app.state.extensions.kanban.selected_col = 0;
+        app.state.extensions.kanban.selected_row = 0;
 
         // Scroll down
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 30, 3));
-        assert_eq!(app.state.kanban.selected_col, 0);
-        assert_eq!(app.state.kanban.selected_row, 1);
+        assert_eq!(app.state.extensions.kanban.selected_col, 0);
+        assert_eq!(app.state.extensions.kanban.selected_row, 1);
 
         // Scroll up
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 30, 3));
-        assert_eq!(app.state.kanban.selected_col, 0);
-        assert_eq!(app.state.kanban.selected_row, 0);
+        assert_eq!(app.state.extensions.kanban.selected_col, 0);
+        assert_eq!(app.state.extensions.kanban.selected_row, 0);
 
         // Test scrolling over Kanban columns in Mobile layout (vertical splits/rows)
         app.state.view.layout = ViewLayout::Mobile;
@@ -3089,27 +3112,27 @@ mod tests {
                                                                 // Four rows/vertical columns, each gets 5 rows:
                                                                 // Todo: y=0..5, InProgress: y=5..10, NeedReview: y=10..15, Done: y=15..20
 
-        app.state.kanban.items.clear();
+        app.state.extensions.kanban.items.clear();
         for i in 0..5 {
-            app.state.kanban.add_item(
+            app.state.extensions.kanban.add_item(
                 format!("Task {i}"),
                 None,
                 Some(crate::api::schema::KanbanStatus::InProgress), // Column 1
                 None,
             );
         }
-        app.state.kanban.selected_col = 0;
-        app.state.kanban.selected_row = 0;
+        app.state.extensions.kanban.selected_col = 0;
+        app.state.extensions.kanban.selected_row = 0;
 
         // Scroll down on In Progress (hover at y = 7, inside y = 5..10)
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 10, 7));
-        assert_eq!(app.state.kanban.selected_col, 1);
-        assert_eq!(app.state.kanban.selected_row, 1);
+        assert_eq!(app.state.extensions.kanban.selected_col, 1);
+        assert_eq!(app.state.extensions.kanban.selected_row, 1);
 
         // Scroll up on In Progress (hover at y = 7)
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 10, 7));
-        assert_eq!(app.state.kanban.selected_col, 1);
-        assert_eq!(app.state.kanban.selected_row, 0);
+        assert_eq!(app.state.extensions.kanban.selected_col, 1);
+        assert_eq!(app.state.extensions.kanban.selected_row, 0);
 
         // Reset layout to Desktop
         app.state.view.layout = ViewLayout::Desktop;
@@ -3122,47 +3145,56 @@ mod tests {
         std::fs::write(&plan_file, &desc_text).unwrap();
         let plan_path = plan_file.to_string_lossy().to_string();
 
-        let item = app.state.kanban.add_item(
+        let item = app.state.extensions.kanban.add_item(
             "Scroll Task".to_string(),
             Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        app.state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        app.state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
-        assert_eq!(app.state.kanban.detail_scroll, 0);
+        assert_eq!(app.state.extensions.kanban.detail_scroll, 0);
         let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&app.state);
         assert!(max_scroll > 0);
 
         // Scroll down in modal using mouse wheel
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 40, 10));
-        assert_eq!(app.state.kanban.detail_scroll, 3);
+        assert_eq!(app.state.extensions.kanban.detail_scroll, 3);
 
         // Scroll up in modal using mouse wheel
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 40, 10));
-        assert_eq!(app.state.kanban.detail_scroll, 0);
+        assert_eq!(app.state.extensions.kanban.detail_scroll, 0);
 
         // Click outside (e.g. sidebar col 1) should close detailed view
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1, 1));
-        assert_eq!(app.state.kanban.detail_uuid, None);
+        assert_eq!(app.state.extensions.kanban.detail_uuid, None);
 
         // Test clicking footer buttons inside detailed modal
-        app.state.kanban.items.clear();
-        app.state.kanban.selected_col = 0;
-        app.state.kanban.selected_row = 0;
-        let item = app.state.kanban.add_item(
+        app.state.extensions.kanban.items.clear();
+        app.state.extensions.kanban.selected_col = 0;
+        app.state.extensions.kanban.selected_row = 0;
+        let item = app.state.extensions.kanban.add_item(
             "Button Click Task".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        app.state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        app.state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
         // Click Copy UUID button (x = 40, y = 20)
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 40, 20));
-        assert_eq!(app.state.kanban.detail_uuid, Some(item.uuid.clone()));
+        assert_eq!(
+            app.state.extensions.kanban.detail_uuid,
+            Some(item.uuid.clone())
+        );
         let event = app.event_rx.try_recv().unwrap();
         assert!(matches!(
             event,
@@ -3171,13 +3203,16 @@ mod tests {
 
         // Click Close Details button (x = 15, y = 20)
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 15, 20));
-        assert_eq!(app.state.kanban.detail_uuid, None);
+        assert_eq!(app.state.extensions.kanban.detail_uuid, None);
 
         // Re-open and Click Delete Card button (x = 60, y = 20)
-        app.state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        app.state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 60, 20));
-        assert_eq!(app.state.kanban.detail_uuid, None);
-        assert!(app.state.kanban.items.is_empty());
+        assert_eq!(app.state.extensions.kanban.detail_uuid, None);
+        assert!(app.state.extensions.kanban.items.is_empty());
 
         // Test clicking hyperlinks inside detailed modal
         let link_file = temp_dir.join(format!("herdr-test-link-{}.md", uuid::Uuid::new_v4()));
@@ -3186,13 +3221,16 @@ mod tests {
         std::fs::write(&link_file, link_desc).unwrap();
         let link_path = link_file.to_string_lossy().to_string();
 
-        let item = app.state.kanban.add_item(
+        let item = app.state.extensions.kanban.add_item(
             "Link Test Task".to_string(),
             Some(link_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        app.state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        app.state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
         let links = crate::ui::kanban::active_kanban_detail_hyperlinks(&app.state);

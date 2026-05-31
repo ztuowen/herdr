@@ -11,7 +11,7 @@ mod api_helpers;
 mod config_io;
 mod creation;
 mod ids;
-mod input;
+pub(crate) mod input;
 mod runtime;
 mod session;
 pub mod state;
@@ -117,7 +117,9 @@ pub struct App {
     pub(crate) overlay_panes: HashMap<crate::layout::PaneId, OverlayPaneState>,
     pub(crate) local_terminal_notifications: bool,
     pub(crate) config_reloaded_from_disk: bool,
-    pub(crate) speech_recorder: crate::speech::SpeechRecorder,
+    // Allow dead code on extensions runtime when speech or kanban features are disabled in build.
+    #[allow(dead_code)]
+    pub(crate) extensions: crate::extensions::ExtensionsRuntime,
     pub(crate) release_events_supported: bool,
 }
 pub(crate) const APP_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -399,8 +401,8 @@ impl App {
         };
 
         let mut state = AppState {
-            static_image_placements: std::sync::Mutex::new(Vec::new()),
             terminals: std::collections::HashMap::new(),
+            terminal_runtime_shutdowns: Vec::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             workspaces,
@@ -483,9 +485,10 @@ impl App {
             toast: None,
             copy_feedback: None,
             outer_terminal_focus: None,
-            recording_workspace: None,
-            live_transcription: None,
-            speech_to_text: config.speech_to_text.clone(),
+            extensions: crate::extensions::ExtensionsState::new(
+                config.speech_to_text.clone(),
+                kanban_items,
+            ),
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,
@@ -537,8 +540,6 @@ impl App {
             global_menu: state::MenuListState::new(0),
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
-            terminal_runtime_shutdowns: Vec::new(),
-            kanban: crate::kanban::KanbanState::new(kanban_items),
             prefix_previous_mode: None,
         };
 
@@ -603,7 +604,7 @@ impl App {
             overlay_panes: HashMap::new(),
             local_terminal_notifications: true,
             config_reloaded_from_disk: false,
-            speech_recorder: crate::speech::SpeechRecorder::new(),
+            extensions: crate::extensions::ExtensionsRuntime::new(),
             release_events_supported: false,
         }
     }
@@ -654,7 +655,8 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
-        app.state.kanban = crate::kanban::KanbanState::new(snapshot.kanban_items.clone());
+        app.state.extensions.kanban =
+            crate::kanban::KanbanState::new(snapshot.kanban_items.clone());
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -1138,7 +1140,7 @@ impl App {
         }
 
         if !invalid_section("speech_to_text") {
-            self.state.speech_to_text = config.speech_to_text.clone();
+            self.state.extensions.speech_to_text = config.speech_to_text.clone();
         }
 
         if !invalid_section("experimental") {
@@ -1437,9 +1439,9 @@ impl App {
                 false
             };
 
-            self.state.recording_workspace = Some(workspace_id.clone());
-            self.speech_recorder.start_server(key);
-            self.state.live_transcription = Some(String::new());
+            self.state.extensions.recording_workspace = Some(workspace_id.clone());
+            self.extensions.speech_recorder.start_server(key);
+            self.state.extensions.live_transcription = Some(String::new());
 
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::Finished,
@@ -1448,32 +1450,33 @@ impl App {
                 target: None,
             });
 
-            if let Err(e) = self
-                .event_tx
-                .try_send(crate::events::AppEvent::SpeechStartRecording {
-                    workspace_id,
-                    pane_id,
-                    is_agent,
-                })
+            if let Err(e) =
+                self.event_tx
+                    .try_send(crate::events::AppEvent::SpeechStartRecording {
+                        workspace_id,
+                        pane_id,
+                        is_agent,
+                    })
             {
                 tracing::error!("failed to send SpeechStartRecording: {:?}", e);
             }
             return true;
         }
 
-        let api_key = match &self.state.speech_to_text.gemini_api_key {
+        let api_key = match &self.state.extensions.speech_to_text.gemini_api_key {
             Some(k) if !k.trim().is_empty() => k.clone(),
             _ => return false,
         };
 
         let model = self
             .state
+            .extensions
             .speech_to_text
             .model
             .clone()
             .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
 
-        if let Err(e) = self.speech_recorder.start_local(
+        if let Err(e) = self.extensions.speech_recorder.start_local(
             workspace_id.clone(),
             key,
             api_key,
@@ -1489,8 +1492,8 @@ impl App {
             return false;
         }
 
-        self.state.recording_workspace = Some(workspace_id);
-        self.state.live_transcription = Some(String::new());
+        self.state.extensions.recording_workspace = Some(workspace_id);
+        self.state.extensions.live_transcription = Some(String::new());
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::Finished,
             title: "Speech to Text".into(),
@@ -1502,7 +1505,7 @@ impl App {
     }
 
     pub(crate) fn stop_recording(&mut self, abort: bool) {
-        let active = self.speech_recorder.stop();
+        let active = self.extensions.speech_recorder.stop();
 
         if !abort && active.is_some() {
             let previous_toast = self.state.toast.clone();
@@ -1525,8 +1528,8 @@ impl App {
         }
 
         if abort {
-            self.state.recording_workspace = None;
-            self.state.live_transcription = None;
+            self.state.extensions.recording_workspace = None;
+            self.state.extensions.live_transcription = None;
         }
     }
 }
@@ -3687,11 +3690,11 @@ last_pane = "prefix+tab"
             crate::api::EventHub::default(),
         );
 
-        assert_eq!(app.state.kanban.items.len(), 1);
-        assert_eq!(app.state.kanban.items[0].uuid, "test-uuid-123");
-        assert_eq!(app.state.kanban.items[0].title, "Mock Title");
+        assert_eq!(app.state.extensions.kanban.items.len(), 1);
+        assert_eq!(app.state.extensions.kanban.items[0].uuid, "test-uuid-123");
+        assert_eq!(app.state.extensions.kanban.items[0].title, "Mock Title");
         assert_eq!(
-            app.state.kanban.items[0].status,
+            app.state.extensions.kanban.items[0].status,
             crate::api::schema::KanbanStatus::InProgress
         );
 
@@ -3732,7 +3735,7 @@ last_pane = "prefix+tab"
         );
 
         // Add a Kanban item but keep workspaces empty
-        app.state.kanban.add_item(
+        app.state.extensions.kanban.add_item(
             "Test Save".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -3749,7 +3752,7 @@ last_pane = "prefix+tab"
         assert_eq!(parsed.kanban_items[0].title, "Test Save");
 
         // Clear kanban items and save again
-        app.state.kanban.items.clear();
+        app.state.extensions.kanban.items.clear();
         app.save_session_now();
 
         // Verify session.json is now deleted/cleared
@@ -3767,14 +3770,14 @@ last_pane = "prefix+tab"
         app.state.selected = 0;
         app.state.mode = Mode::Kanban;
 
-        let item = app.state.kanban.add_item(
+        let item = app.state.extensions.kanban.add_item(
             "Test Card".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        app.state.kanban.selected_col = 0;
-        app.state.kanban.selected_row = 0;
+        app.state.extensions.kanban.selected_col = 0;
+        app.state.extensions.kanban.selected_row = 0;
 
         // Route 'c' key in Kanban mode
         app.route_client_input(b"c".to_vec());

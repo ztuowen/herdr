@@ -1,3 +1,7 @@
+// Allow dead code in src/kanban.rs when the kanban feature is disabled in the build.
+// This preserves the pure data structure for snapshot/session compatibility.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -450,10 +450,10 @@ fn render_mobile_switcher_content(
 
     let active = app.mode == Mode::Kanban;
     let bg = mobile_item_bg(false, active, p);
-    let todo_count = app.kanban.items_in_column(0).len();
-    let in_progress_count = app.kanban.items_in_column(1).len();
-    let review_count = app.kanban.items_in_column(2).len();
-    let done_count = app.kanban.items_in_column(3).len();
+    let todo_count = app.extensions.kanban.items_in_column(0).len();
+    let in_progress_count = app.extensions.kanban.items_in_column(1).len();
+    let review_count = app.extensions.kanban.items_in_column(2).len();
+    let done_count = app.extensions.kanban.items_in_column(3).len();
 
     let kanban_style = if active {
         Style::default()

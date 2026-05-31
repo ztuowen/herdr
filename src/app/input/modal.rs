@@ -813,44 +813,50 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
     }
 
     let key_event = key.as_key_event();
-    if state.kanban.detail_uuid.is_some() {
+    if state.extensions.kanban.detail_uuid.is_some() {
         match key_event.code {
             KeyCode::Esc => {
-                state.kanban.set_detail_uuid(None);
+                state.extensions.kanban.set_detail_uuid(None);
             }
             KeyCode::Char('c') | KeyCode::Char('y') => {
-                if let Some(ref uuid) = state.kanban.detail_uuid {
+                if let Some(ref uuid) = state.extensions.kanban.detail_uuid {
                     state.request_clipboard_write = Some(uuid.clone().into_bytes());
                 }
             }
             KeyCode::Char('d') | KeyCode::Delete => {
-                state.kanban.delete_selected();
+                state.extensions.kanban.delete_selected();
                 state.mark_session_dirty();
-                state.kanban.set_detail_uuid(None);
+                state.extensions.kanban.set_detail_uuid(None);
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
-                state.kanban.scroll_detail(-1, max_scroll);
+                state.extensions.kanban.scroll_detail(-1, max_scroll);
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
-                state.kanban.scroll_detail(1, max_scroll);
+                state.extensions.kanban.scroll_detail(1, max_scroll);
             }
             KeyCode::Left | KeyCode::Char('h') => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_horizontal_scroll(state);
-                state.kanban.scroll_horizontal_detail(-2, max_scroll);
+                state
+                    .extensions
+                    .kanban
+                    .scroll_horizontal_detail(-2, max_scroll);
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_horizontal_scroll(state);
-                state.kanban.scroll_horizontal_detail(2, max_scroll);
+                state
+                    .extensions
+                    .kanban
+                    .scroll_horizontal_detail(2, max_scroll);
             }
             KeyCode::PageUp => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
-                state.kanban.scroll_detail(-10, max_scroll);
+                state.extensions.kanban.scroll_detail(-10, max_scroll);
             }
             KeyCode::PageDown => {
                 let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
-                state.kanban.scroll_detail(10, max_scroll);
+                state.extensions.kanban.scroll_detail(10, max_scroll);
             }
             _ => {}
         }
@@ -864,81 +870,84 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
             leave_modal(state);
         }
         KeyCode::Char('c') | KeyCode::Char('y') => {
-            let col = state.kanban.selected_col;
-            let items = state.kanban.items_in_column(col);
-            if let Some(item) = items.get(state.kanban.selected_row) {
+            let col = state.extensions.kanban.selected_col;
+            let items = state.extensions.kanban.items_in_column(col);
+            if let Some(item) = items.get(state.extensions.kanban.selected_row) {
                 state.request_clipboard_write = Some(item.uuid.clone().into_bytes());
             }
         }
         KeyCode::Left if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
-            state.kanban.shift_item_left();
+            state.extensions.kanban.shift_item_left();
             state.mark_session_dirty();
         }
         KeyCode::Char('H') if !is_portrait => {
-            state.kanban.shift_item_left();
+            state.extensions.kanban.shift_item_left();
             state.mark_session_dirty();
         }
         KeyCode::Right if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
-            state.kanban.shift_item_right();
+            state.extensions.kanban.shift_item_right();
             state.mark_session_dirty();
         }
         KeyCode::Char('L') if !is_portrait => {
-            state.kanban.shift_item_right();
+            state.extensions.kanban.shift_item_right();
             state.mark_session_dirty();
         }
         KeyCode::Up if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
-            state.kanban.shift_item_left();
+            state.extensions.kanban.shift_item_left();
             state.mark_session_dirty();
         }
         KeyCode::Char('K') if is_portrait => {
-            state.kanban.shift_item_left();
+            state.extensions.kanban.shift_item_left();
             state.mark_session_dirty();
         }
         KeyCode::Down if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
-            state.kanban.shift_item_right();
+            state.extensions.kanban.shift_item_right();
             state.mark_session_dirty();
         }
         KeyCode::Char('J') if is_portrait => {
-            state.kanban.shift_item_right();
+            state.extensions.kanban.shift_item_right();
             state.mark_session_dirty();
         }
         KeyCode::Left | KeyCode::Char('h') => {
             if is_portrait {
-                state.kanban.move_row_up();
+                state.extensions.kanban.move_row_up();
             } else {
-                state.kanban.move_col_left();
+                state.extensions.kanban.move_col_left();
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
             if is_portrait {
-                state.kanban.move_row_down();
+                state.extensions.kanban.move_row_down();
             } else {
-                state.kanban.move_col_right();
+                state.extensions.kanban.move_col_right();
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if is_portrait {
-                state.kanban.move_col_left();
+                state.extensions.kanban.move_col_left();
             } else {
-                state.kanban.move_row_up();
+                state.extensions.kanban.move_row_up();
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if is_portrait {
-                state.kanban.move_col_right();
+                state.extensions.kanban.move_col_right();
             } else {
-                state.kanban.move_row_down();
+                state.extensions.kanban.move_row_down();
             }
         }
         KeyCode::Char(' ') | KeyCode::Enter => {
-            let col = state.kanban.selected_col;
-            let items = state.kanban.items_in_column(col);
-            if let Some(item) = items.get(state.kanban.selected_row) {
-                state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+            let col = state.extensions.kanban.selected_col;
+            let items = state.extensions.kanban.items_in_column(col);
+            if let Some(item) = items.get(state.extensions.kanban.selected_row) {
+                state
+                    .extensions
+                    .kanban
+                    .set_detail_uuid(Some(item.uuid.clone()));
             }
         }
         KeyCode::Char('d') | KeyCode::Delete => {
-            state.kanban.delete_selected();
+            state.extensions.kanban.delete_selected();
             state.mark_session_dirty();
         }
         _ => {}
@@ -1422,8 +1431,8 @@ mod tests {
     fn test_kanban_key_copy_uuid() {
         let mut state = state_with_workspaces(&["test"]);
         state.mode = Mode::Kanban;
-        state.kanban.items.clear();
-        let item = state.kanban.add_item(
+        state.extensions.kanban.items.clear();
+        let item = state.extensions.kanban.add_item(
             "Copy Task".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -1431,8 +1440,8 @@ mod tests {
         );
 
         // Selected col/row indices should match the added item's column
-        state.kanban.selected_col = 0; // "todo" column is 0
-        state.kanban.selected_row = 0;
+        state.extensions.kanban.selected_col = 0; // "todo" column is 0
+        state.extensions.kanban.selected_row = 0;
 
         // 1. Test copy in non-detailed view using 'c'
         state.request_clipboard_write = None;
@@ -1463,7 +1472,10 @@ mod tests {
         );
 
         // 3. Open detailed view
-        state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
         state.request_clipboard_write = None;
 
         // 4. Test copy in detailed view using 'c'
@@ -1504,8 +1516,8 @@ mod tests {
 
         let mut state = state_with_workspaces(&["test"]);
         state.mode = Mode::Kanban;
-        state.kanban.items.clear();
-        let item = state.kanban.add_item(
+        state.extensions.kanban.items.clear();
+        let item = state.extensions.kanban.add_item(
             "Scroll Task".to_string(),
             Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -1513,9 +1525,12 @@ mod tests {
         );
 
         state.view.terminal_area = Rect::new(0, 0, 80, 24);
-        state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
 
-        assert_eq!(state.kanban.detail_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_scroll, 0);
 
         // Calculate max scroll first
         let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&state);
@@ -1530,49 +1545,49 @@ mod tests {
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 1);
+        assert_eq!(state.extensions.kanban.detail_scroll, 1);
 
         // Scroll down 1 using Down arrow
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 2);
+        assert_eq!(state.extensions.kanban.detail_scroll, 2);
 
         // Scroll up 1 using 'k'
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 1);
+        assert_eq!(state.extensions.kanban.detail_scroll, 1);
 
         // Scroll up 1 using Up arrow
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_scroll, 0);
 
         // Scroll up at 0 shouldn't underflow
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_scroll, 0);
 
         // PageDown scroll
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::PageDown, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, max_scroll.min(10));
+        assert_eq!(state.extensions.kanban.detail_scroll, max_scroll.min(10));
 
         // PageUp scroll back to 0
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::PageUp, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_scroll, 0);
 
         let _ = std::fs::remove_file(plan_file);
     }
@@ -1593,8 +1608,8 @@ mod tests {
 
         let mut state = state_with_workspaces(&["test"]);
         state.mode = Mode::Kanban;
-        state.kanban.items.clear();
-        let item = state.kanban.add_item(
+        state.extensions.kanban.items.clear();
+        let item = state.extensions.kanban.add_item(
             "Wide Table Task".to_string(),
             Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -1602,37 +1617,40 @@ mod tests {
         );
 
         state.view.terminal_area = Rect::new(0, 0, 40, 24); // narrow width to force horizontal scrolling
-        state.kanban.set_detail_uuid(Some(item.uuid.clone()));
+        state
+            .extensions
+            .kanban
+            .set_detail_uuid(Some(item.uuid.clone()));
 
-        assert_eq!(state.kanban.detail_horizontal_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_horizontal_scroll, 0);
 
         // Scroll right 2 using 'l'
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_horizontal_scroll, 2);
+        assert_eq!(state.extensions.kanban.detail_horizontal_scroll, 2);
 
         // Scroll right 2 using Right arrow
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Right, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_horizontal_scroll, 4);
+        assert_eq!(state.extensions.kanban.detail_horizontal_scroll, 4);
 
         // Scroll left 2 using 'h'
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_horizontal_scroll, 2);
+        assert_eq!(state.extensions.kanban.detail_horizontal_scroll, 2);
 
         // Scroll left 2 using Left arrow
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Left, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.detail_horizontal_scroll, 0);
+        assert_eq!(state.extensions.kanban.detail_horizontal_scroll, 0);
 
         let _ = std::fs::remove_file(plan_file);
     }
@@ -1641,21 +1659,21 @@ mod tests {
     fn test_kanban_portrait_navigation() {
         let mut state = state_with_workspaces(&["test"]);
         state.mode = Mode::Kanban;
-        state.kanban.items.clear();
+        state.extensions.kanban.items.clear();
 
-        let _item0_0 = state.kanban.add_item(
+        let _item0_0 = state.extensions.kanban.add_item(
             "Task 1".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        let _item0_1 = state.kanban.add_item(
+        let _item0_1 = state.extensions.kanban.add_item(
             "Task 2".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        let _item1_0 = state.kanban.add_item(
+        let _item1_0 = state.extensions.kanban.add_item(
             "Task 3".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::InProgress),
@@ -1665,47 +1683,47 @@ mod tests {
         // Set layout to mobile (which triggers row-wise Kanban layout and keybindings)
         state.view.layout = crate::app::state::ViewLayout::Mobile;
 
-        state.kanban.selected_col = 0;
-        state.kanban.selected_row = 0;
+        state.extensions.kanban.selected_col = 0;
+        state.extensions.kanban.selected_row = 0;
 
         // Down should move to next column (InProgress = 1)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.selected_col, 1);
-        assert_eq!(state.kanban.selected_row, 0);
+        assert_eq!(state.extensions.kanban.selected_col, 1);
+        assert_eq!(state.extensions.kanban.selected_row, 0);
 
         // Up should move to previous column (Todo = 0)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.selected_col, 0);
-        assert_eq!(state.kanban.selected_row, 0);
+        assert_eq!(state.extensions.kanban.selected_col, 0);
+        assert_eq!(state.extensions.kanban.selected_row, 0);
 
         // Right should move to next row (item index 1)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Right, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.selected_col, 0);
-        assert_eq!(state.kanban.selected_row, 1);
+        assert_eq!(state.extensions.kanban.selected_col, 0);
+        assert_eq!(state.extensions.kanban.selected_row, 1);
 
         // Left should move to previous row (item index 0)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Left, KeyModifiers::empty())),
         );
-        assert_eq!(state.kanban.selected_col, 0);
-        assert_eq!(state.kanban.selected_row, 0);
+        assert_eq!(state.extensions.kanban.selected_col, 0);
+        assert_eq!(state.extensions.kanban.selected_row, 0);
 
         // Shift+Down should shift item right/down (from Todo to InProgress)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
         );
-        assert_eq!(state.kanban.selected_col, 1);
-        assert_eq!(state.kanban.items_in_column(1).len(), 2);
+        assert_eq!(state.extensions.kanban.selected_col, 1);
+        assert_eq!(state.extensions.kanban.items_in_column(1).len(), 2);
     }
 }

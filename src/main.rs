@@ -152,6 +152,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # toggle_sidebar = "prefix+b"
 # toggle_kanban = "ctrl+k"
 # speech_to_text = "ctrl+q"
+# audio_summary = "ctrl+w"
+
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
 # They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.

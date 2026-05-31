@@ -1,0 +1,24 @@
+{
+  "name": "herdr",
+  "version": "0.1.0",
+  "description": "Herdr Kanban workflow skills for agent coordination.",
+  "author": {
+    "name": "Herdr local"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Herdr",
+    "shortDescription": "Coordinate agents through Herdr Kanban.",
+    "longDescription": "Herdr provides Kanban workflow skills for triage, dispatch, worker execution, review, and board sweeping with all handoffs carried by Herdr card state.",
+    "developerName": "Herdr local",
+    "category": "Productivity",
+    "capabilities": [
+      "Kanban triage",
+      "Agent dispatch",
+      "Worker handoff",
+      "Review routing",
+      "Board sweeping"
+    ],
+    "defaultPrompt": "Coordinate this work through Herdr Kanban."
+  }
+}

@@ -15,7 +15,7 @@ Terminal workspace manager for AI coding agents. Rust + ratatui.
 
 Read-only investigation can happen in the shared checkout.
 
-Small changes or small tasks are fine in the default main worktree. If you find unrelated implementation changes already in progress in the main worktree, use a dedicated worktree instead. Use a dedicated worktree for bigger features too.
+All code edits, tests, validation, and commits must happen in a dedicated task worktree. Do not make exceptions for small changes or small tasks in the shared checkout.
 
 Use this layout:
 

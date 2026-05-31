@@ -2880,7 +2880,7 @@ fn kanban_cli_attach_detach_behavior() {
     assert!(res.status.success());
 
     // 5. herdr kanban attach without HERDR_PANE_ID: should fail
-    let res = run_cli(&socket_path, &["kanban", "attach", "uuid-123"]);
+    let res = run_cli_without_pane_env(&socket_path, &["kanban", "attach", "uuid-123"]);
     assert_eq!(res.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&res.stderr);
     assert!(stderr.contains("HERDR_PANE_ID environment variable is not set"));
@@ -2959,7 +2959,7 @@ fn kanban_cli_list_pane_behavior() {
     assert!(res.status.success());
 
     // 3. herdr kanban list --pane without HERDR_PANE_ID: should fail
-    let res = run_cli(&socket_path, &["kanban", "list", "--pane"]);
+    let res = run_cli_without_pane_env(&socket_path, &["kanban", "list", "--pane"]);
     assert_eq!(res.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&res.stderr);
     assert!(stderr.contains("HERDR_PANE_ID environment variable is not set"));
@@ -2989,5 +2989,13 @@ fn run_cli_with_env(
     for (k, v) in envs {
         command.env(k, v);
     }
+    command.output().unwrap()
+}
+
+fn run_cli_without_pane_env(socket_path: &Path, args: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
+    command.args(args);
+    command.env("HERDR_SOCKET_PATH", socket_path);
+    command.env_remove("HERDR_PANE_ID");
     command.output().unwrap()
 }

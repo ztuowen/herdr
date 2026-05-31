@@ -9,6 +9,8 @@ use tracing::{error, info};
 
 use crate::events::AppEvent;
 
+const MIN_SUMMARY_OUTPUT_CHANNELS: u16 = 2;
+
 pub struct TabSummarizer {
     _stream: cpal::Stream,
     active: Arc<AtomicBool>,
@@ -32,9 +34,7 @@ pub fn start_summary(
         .default_output_device()
         .ok_or_else(|| "No default output device found.".to_string())?;
 
-    let config = device
-        .default_output_config()
-        .map_err(|e| format!("Failed to get default output config: {}", e))?;
+    let config = summary_output_config(&device)?;
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
@@ -119,6 +119,51 @@ pub fn start_summary(
         _stream: stream,
         active,
     })
+}
+
+fn summary_output_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
+    let default_config = device
+        .default_output_config()
+        .map_err(|e| format!("Failed to get default output config: {}", e))?;
+
+    if default_config.channels() >= MIN_SUMMARY_OUTPUT_CHANNELS {
+        return Ok(default_config);
+    }
+
+    let supported_configs = device
+        .supported_output_configs()
+        .map_err(|e| format!("Failed to get supported output configs: {}", e))?;
+
+    stereo_output_config_from_ranges(&default_config, supported_configs).ok_or_else(|| {
+        "Default output device does not advertise a stereo output config.".to_string()
+    })
+}
+
+fn stereo_output_config_from_ranges(
+    default_config: &cpal::SupportedStreamConfig,
+    ranges: impl IntoIterator<Item = cpal::SupportedStreamConfigRange>,
+) -> Option<cpal::SupportedStreamConfig> {
+    let preferred_sample_rate = default_config.sample_rate();
+    let preferred_sample_format = default_config.sample_format();
+
+    ranges
+        .into_iter()
+        .filter(|range| range.channels() >= MIN_SUMMARY_OUTPUT_CHANNELS)
+        .map(|range| {
+            let min_rate = range.min_sample_rate().0;
+            let max_rate = range.max_sample_rate().0;
+            let sample_rate = cpal::SampleRate(preferred_sample_rate.0.clamp(min_rate, max_rate));
+            let score = (
+                range.sample_format() != preferred_sample_format,
+                range.channels() != MIN_SUMMARY_OUTPUT_CHANNELS,
+                sample_rate.0.abs_diff(preferred_sample_rate.0),
+                range.channels(),
+            );
+
+            (score, range.with_sample_rate(sample_rate))
+        })
+        .min_by_key(|(score, _)| *score)
+        .map(|(_, config)| config)
 }
 
 fn write_output_data<T>(
@@ -434,5 +479,86 @@ async fn run_websocket_summary(
             }
             let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cpal::{SampleFormat, SampleRate, SupportedBufferSize};
+
+    #[test]
+    fn stereo_output_config_prefers_stereo_when_default_is_mono() {
+        let default_config = cpal::SupportedStreamConfig::new(
+            1,
+            SampleRate(48_000),
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        );
+        let ranges = vec![
+            cpal::SupportedStreamConfigRange::new(
+                1,
+                SampleRate(44_100),
+                SampleRate(48_000),
+                SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            ),
+            cpal::SupportedStreamConfigRange::new(
+                2,
+                SampleRate(44_100),
+                SampleRate(48_000),
+                SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            ),
+        ];
+
+        let config = stereo_output_config_from_ranges(&default_config, ranges)
+            .expect("stereo config should be selected");
+
+        assert_eq!(config.channels(), 2);
+        assert_eq!(config.sample_rate(), SampleRate(48_000));
+        assert_eq!(config.sample_format(), SampleFormat::F32);
+    }
+
+    #[test]
+    fn stereo_output_config_clamps_default_sample_rate_to_supported_range() {
+        let default_config = cpal::SupportedStreamConfig::new(
+            1,
+            SampleRate(48_000),
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        );
+        let ranges = vec![cpal::SupportedStreamConfigRange::new(
+            2,
+            SampleRate(24_000),
+            SampleRate(44_100),
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        )];
+
+        let config = stereo_output_config_from_ranges(&default_config, ranges)
+            .expect("stereo config should be selected");
+
+        assert_eq!(config.channels(), 2);
+        assert_eq!(config.sample_rate(), SampleRate(44_100));
+    }
+
+    #[test]
+    fn stereo_output_config_returns_none_without_stereo_support() {
+        let default_config = cpal::SupportedStreamConfig::new(
+            1,
+            SampleRate(48_000),
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        );
+        let ranges = vec![cpal::SupportedStreamConfigRange::new(
+            1,
+            SampleRate(44_100),
+            SampleRate(48_000),
+            SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        )];
+
+        assert!(stereo_output_config_from_ranges(&default_config, ranges).is_none());
     }
 }

@@ -16,6 +16,7 @@
 - Pane shutdown no longer warns that a pane is still alive after the direct child has already exited and been reaped. (#338)
 - Closing the last pane or tab in a parent worktree workspace now shows the existing confirmation before closing the whole worktree group. (#369)
 - Speech-to-text transcription sent to agent panes now submits automatically again, while regular terminal panes still receive only the transcribed text.
+- Agent audio summaries now use a stereo-capable output stream when the default output device reports mono, so spoken summaries play through at least stereo output when supported by the device.
 
 ## [0.6.5] - 2026-05-29
 

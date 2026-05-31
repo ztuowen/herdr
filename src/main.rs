@@ -289,16 +289,14 @@ pane_history = false
 # system_instruction = "..."
 #
 # Optional post-processing prompt for AI-agent panes (falls back to system_instruction if unset).
-# Runtime fallback: "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation."
-# agent_system_instruction = "..."
+# agent_system_instruction = "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation."
 #
 # Optional post-processing prompt for standard terminal/shell panes (falls back to system_instruction if unset).
-# Runtime fallback: "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation."
-# terminal_system_instruction = "..."
+# terminal_system_instruction = "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation."
 #
 # Optional system prompt for the audio summary mode (summarizing tab text to speak aloud).
-# Runtime fallback: "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user."
-# summary_system_instruction = "..."
+# summary_system_instruction = "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user."
+
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {

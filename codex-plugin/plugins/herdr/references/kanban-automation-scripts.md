@@ -103,6 +103,7 @@ The prompt also includes the card description file path so the worker can update
 5. Runs Codex in that workspace's root pane in YOLO mode with the reviewer skill prompt.
 
 The reviewer prompt includes the card description file path so review notes and routing decisions can be recorded directly in the handoff document.
+When review needs human input, reviewers write the next ask into `## Human Review Request`, set `review_state` to `human-review-required` or `triage-question-required`, set `blocked_reason`, and move the card to `blocked`; triage or the coordinator surfaces the ask.
 
 ## Sweep Flow
 

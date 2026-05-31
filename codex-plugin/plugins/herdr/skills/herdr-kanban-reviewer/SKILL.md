@@ -43,3 +43,15 @@ Human UI/interface review:
 - describe what the human must inspect
 
 This path is valid when code-level review passes but final presentation, interaction feel, visual polish, copy, or interface behavior needs human judgment.
+
+## Next Ask Handoff
+
+If review needs human input, do not ask the human directly. Update the card description instead:
+
+- set `review_state: human-review-required` when final acceptance needs human judgment
+- set `review_state: triage-question-required` when the card is underspecified, acceptance criteria are wrong, or a product/design ambiguity needs triage
+- set `blocked_reason` with a short concrete reason
+- fill `## Human Review Request` with the exact question, options, or artifact to inspect
+- move the card to `blocked`
+
+Triage or the coordinator owns surfacing that ask to the human and making the card routable again.

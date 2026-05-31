@@ -93,7 +93,9 @@ Use the herdr-kanban-reviewer skill.
 Card: $uuid
 Description file: $description_path
 
-Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill. Use blocked with review_state: human-review-required for subjective UI or manual review, and record review notes in the description file.
+Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill.
+
+If review needs human input, do not ask the human directly. Update the description file with review notes, set review_state to human-review-required or triage-question-required, set blocked_reason with a short reason, fill ## Human Review Request with the exact question or artifact to inspect, and move the card to blocked.
 EOF
 }
 

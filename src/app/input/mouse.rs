@@ -3279,4 +3279,42 @@ mod tests {
         let _ = std::fs::remove_file(link_file);
         let _ = std::fs::remove_file(plan_file);
     }
+
+    #[test]
+    fn double_clicking_agent_detail_row_triggers_audio_summary() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("main".into());
+        let first_pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let first_terminal_id = app.state.workspaces[0].tabs[0].panes[&first_pane]
+            .attached_terminal_id
+            .clone();
+
+        app.state.extensions.speech_to_text.gemini_api_key = Some("test_key".to_string());
+
+        app.state
+            .terminals
+            .get_mut(&first_terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Pi);
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        // Perform first click on the agent row
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 13));
+
+        // Ensure the last click time is tracked
+        assert!(app.last_agent_click.is_some());
+
+        // Perform second click within the click window
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 13));
+
+        // Check that the toast is set indicating audio is playing or error (due to no cpal audio device in test runner)
+        assert!(app.state.toast.is_some());
+        let toast = app.state.toast.as_ref().unwrap();
+        assert!(toast.title.starts_with("Audio Summary"));
+    }
 }

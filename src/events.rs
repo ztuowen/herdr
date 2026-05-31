@@ -116,4 +116,6 @@ pub enum AppEvent {
     },
     /// Signal the client to stop recording audio.
     SpeechStopRecording { abort: bool },
+    /// Signal that the audio summary playback is finished.
+    AudioSummaryFinished,
 }

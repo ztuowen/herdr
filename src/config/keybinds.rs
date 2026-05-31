@@ -300,6 +300,7 @@ pub struct Keybinds {
     // Allow dead code on speech_to_text keybinds field when speech feature is disabled in build.
     #[allow(dead_code)]
     pub speech_to_text: ActionKeybinds,
+    pub audio_summary: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -484,6 +485,7 @@ impl Config {
             toggle_sidebar: action!("keys.toggle_sidebar", &self.keys.toggle_sidebar),
             toggle_kanban: action!("keys.toggle_kanban", &self.keys.toggle_kanban),
             speech_to_text: action!("keys.speech_to_text", &self.keys.speech_to_text),
+            audio_summary: action!("keys.audio_summary", &self.keys.audio_summary),
             custom_commands: Vec::new(),
         };
 

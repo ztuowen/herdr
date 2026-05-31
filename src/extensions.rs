@@ -30,12 +30,14 @@ impl ExtensionsState {
 
 pub struct ExtensionsRuntime {
     pub speech_recorder: crate::speech::SpeechRecorder,
+    pub tab_summarizer: Option<crate::speech::summary::TabSummarizer>,
 }
 
 impl ExtensionsRuntime {
     pub fn new() -> Self {
         Self {
             speech_recorder: crate::speech::SpeechRecorder::new(),
+            tab_summarizer: None,
         }
     }
 }
@@ -246,6 +248,18 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                 }
             }
             app.sync_toast_deadline(previous_toast);
+            app.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            app.render_notify.notify_one();
+            true
+        }
+        AppEvent::AudioSummaryFinished => {
+            app.extensions.tab_summarizer = None;
+            if let Some(toast) = &app.state.toast {
+                if toast.title == "Audio Summary" {
+                    app.state.toast = None;
+                }
+            }
             app.render_dirty
                 .store(true, std::sync::atomic::Ordering::Release);
             app.render_notify.notify_one();

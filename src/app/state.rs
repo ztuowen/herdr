@@ -1405,6 +1405,35 @@ impl AppState {
             revision: None,
         }
     }
+
+    pub fn gather_tab_content(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        ws_idx: usize,
+        tab_idx: usize,
+    ) -> Option<String> {
+        let ws = self.workspaces.get(ws_idx)?;
+        let tab = ws.tabs.get(tab_idx)?;
+        let mut parts = Vec::new();
+        let mut pane_ids: Vec<crate::layout::PaneId> = tab.panes.keys().copied().collect();
+        pane_ids.sort_by_key(|pid| ws.public_pane_number(*pid).unwrap_or(0));
+
+        for pid in pane_ids {
+            if let Some(rt) = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pid) {
+                let text = rt.visible_text();
+                if !text.trim().is_empty() {
+                    let public_num = ws.public_pane_number(pid).unwrap_or(1);
+                    parts.push(format!("[Pane {}]\n{}", public_num, text.trim()));
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1850,5 +1879,36 @@ mod tests {
             status.agent_status,
             Some(crate::api::schema::AgentStatus::Unknown)
         );
+    }
+
+    #[tokio::test]
+    async fn test_gather_tab_content() {
+        let mut state = AppState::test_new();
+        let ws = Workspace::test_new("test");
+        let root_pane = ws.tabs[0].root_pane;
+        state.workspaces = vec![ws];
+        state.ensure_test_terminals();
+
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        // 1. Gather on empty tab (no runtimes inserted)
+        let empty_content = state.gather_tab_content(&terminal_runtimes, 0, 0);
+        assert!(empty_content.is_none());
+
+        // 2. Insert test runtime with text
+        state.insert_test_runtime(
+            root_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                80,
+                24,
+                b"Hello World from pane 1",
+            ),
+        );
+
+        let content = state.gather_tab_content(&terminal_runtimes, 0, 0);
+        assert!(content.is_some());
+        let content_str = content.unwrap();
+        assert!(content_str.contains("[Pane 1]"));
+        assert!(content_str.contains("Hello World from pane 1"));
     }
 }

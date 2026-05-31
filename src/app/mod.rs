@@ -100,6 +100,7 @@ pub struct App {
     pub(crate) git_refresh_in_flight: bool,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
     pub(crate) last_pane_click: Option<PaneClickState>,
+    pub(crate) last_agent_click: Option<(usize, usize, crate::layout::PaneId, std::time::Instant)>,
     pub(crate) next_resize_poll: Instant,
     pub(crate) next_animation_tick: Option<Instant>,
     pub(crate) next_auto_update_check: Option<Instant>,
@@ -581,6 +582,7 @@ impl App {
             git_refresh_in_flight: false,
             last_sidebar_divider_click: None,
             last_pane_click: None,
+            last_agent_click: None,
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
             next_animation_tick: None,
             next_auto_update_check: auto_updates_enabled(no_session)
@@ -1411,6 +1413,89 @@ impl App {
     /// the server's AppState maintains view geometry from virtual rendering.
     fn handle_mouse_event_headless(&mut self, mouse: crossterm::event::MouseEvent) {
         self.handle_mouse(mouse);
+    }
+
+    pub(crate) fn cancel_audio_summary(&mut self) {
+        if let Some(summarizer) = self.extensions.tab_summarizer.take() {
+            summarizer.stop();
+        }
+        if let Some(toast) = &self.state.toast {
+            if toast.title == "Audio Summary" {
+                self.state.toast = None;
+            }
+        }
+        self.render_dirty
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.render_notify.notify_one();
+    }
+
+    pub(crate) fn trigger_audio_summary(&mut self, ws_idx: usize, tab_idx: usize) {
+        let Some(api_key) = self.state.extensions.speech_to_text.gemini_api_key.clone() else {
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Audio Summary Error".into(),
+                context: "Gemini API key is not configured.".into(),
+                target: None,
+            });
+            return;
+        };
+
+        let model = self
+            .state
+            .extensions
+            .speech_to_text
+            .model
+            .clone()
+            .unwrap_or_else(|| "gemini-2.5-flash".to_string());
+
+        let Some(text_content) =
+            self.state
+                .gather_tab_content(&self.terminal_runtimes, ws_idx, tab_idx)
+        else {
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Audio Summary".into(),
+                context: "No text found to summarize.".into(),
+                target: None,
+            });
+            return;
+        };
+
+        self.cancel_audio_summary();
+
+        let system_instruction = "You are an AI assistant. Summarize the text present on the screen layout. Be concise and conversational, as this summary will be read aloud to the user.".to_string();
+
+        let event_tx = self.event_tx.clone();
+
+        match crate::speech::summary::start_summary(
+            api_key,
+            model,
+            system_instruction,
+            text_content,
+            event_tx,
+        ) {
+            Ok(summarizer) => {
+                self.extensions.tab_summarizer = Some(summarizer);
+                self.state.toast = Some(crate::app::state::ToastNotification {
+                    kind: crate::app::state::ToastKind::Finished,
+                    title: "Audio Summary".into(),
+                    context: "Playing audio summary...".into(),
+                    target: None,
+                });
+            }
+            Err(err) => {
+                self.state.toast = Some(crate::app::state::ToastNotification {
+                    kind: crate::app::state::ToastKind::NeedsAttention,
+                    title: "Audio Summary Error".into(),
+                    context: err,
+                    target: None,
+                });
+            }
+        }
+
+        self.render_dirty
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.render_notify.notify_one();
     }
 
     pub(crate) fn start_recording(&mut self, ws_idx: usize, key: TerminalKey) -> bool {

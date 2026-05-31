@@ -246,6 +246,8 @@ pub struct KeysConfig {
     pub indexed: IndexedKeysConfig,
     /// Toggle speech-to-text recording. Default: "ctrl+q"
     pub speech_to_text: BindingConfig,
+    /// Play audio summary of the active tab if on an agent terminal. Default: "ctrl+w"
+    pub audio_summary: BindingConfig,
     /// Prefix-mode custom command bindings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<CommandKeybindConfig>,
@@ -431,6 +433,7 @@ impl Default for KeysConfig {
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
             speech_to_text: BindingConfig::one("ctrl+q"),
+            audio_summary: BindingConfig::one("ctrl+w"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
         }

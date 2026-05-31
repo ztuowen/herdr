@@ -61,6 +61,40 @@ impl App {
             self.release_events_supported = true;
         }
 
+        if key.kind == crossterm::event::KeyEventKind::Press {
+            let is_audio_summary_trigger =
+                self.state.keybinds.audio_summary.matches_direct_key(key)
+                    || (self.state.mode == Mode::Prefix
+                        && self.state.keybinds.audio_summary.matches_prefix_key(key));
+
+            if is_audio_summary_trigger {
+                let is_agent = self
+                    .state
+                    .active
+                    .and_then(|ws_idx| {
+                        let ws = self.state.workspaces.get(ws_idx)?;
+                        let pane_id = ws.focused_pane_id()?;
+                        let pane = ws.pane_state(pane_id)?;
+                        let term = self.state.terminals.get(&pane.attached_terminal_id)?;
+                        Some(term.is_agent_terminal())
+                    })
+                    .unwrap_or(false);
+
+                if is_agent {
+                    if let Some(ws_idx) = self.state.active {
+                        let tab_idx = self.state.workspaces[ws_idx].active_tab;
+                        self.trigger_audio_summary(ws_idx, tab_idx);
+                        if self.state.mode == Mode::Prefix {
+                            self::navigate::leave_command_mode(&mut self.state);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            self.cancel_audio_summary();
+        }
+
         if crate::extensions::handle_extension_key(self, key) {
             return;
         }
@@ -283,6 +317,10 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            self.cancel_audio_summary();
+        }
+
         if self.handle_overlay_mouse(mouse) {
             return;
         }
@@ -308,6 +346,11 @@ impl App {
         }
 
         if self.handle_modified_url_click(mouse) {
+            return;
+        }
+
+        let handled_agent_double_click = self.handle_agent_double_click(mouse);
+        if handled_agent_double_click {
             return;
         }
 
@@ -428,6 +471,49 @@ impl App {
         // Preserve a short highlight after copying so the user gets visible
         // confirmation without leaving a persistent selection behind.
         self.copy_double_clicked_word(click)
+    }
+
+    fn handle_agent_double_click(&mut self, mouse: MouseEvent) -> bool {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return false;
+        }
+
+        let target = if self.state.sidebar_collapsed {
+            self.state.collapsed_agent_detail_target_at(mouse.row)
+        } else {
+            let sidebar = self.state.view.sidebar_rect;
+            let in_sidebar = mouse.column >= sidebar.x
+                && mouse.column < sidebar.x + sidebar.width
+                && mouse.row >= sidebar.y
+                && mouse.row < sidebar.y + sidebar.height;
+            if !in_sidebar {
+                return false;
+            }
+            self.state.agent_detail_target_at(mouse.row)
+        };
+
+        let Some((ws_idx, tab_idx, pane_id)) = target else {
+            return false;
+        };
+
+        let now = std::time::Instant::now();
+        let is_double_click =
+            self.last_agent_click
+                .is_some_and(|(last_ws, last_tab, last_pane, last_time)| {
+                    last_ws == ws_idx
+                        && last_tab == tab_idx
+                        && last_pane == pane_id
+                        && now.duration_since(last_time) <= super::SIDEBAR_DOUBLE_CLICK_WINDOW
+                });
+
+        self.last_agent_click = Some((ws_idx, tab_idx, pane_id, now));
+
+        if is_double_click {
+            self.trigger_audio_summary(ws_idx, tab_idx);
+            true
+        } else {
+            false
+        }
     }
 
     fn pane_click_candidate(&mut self, mouse: MouseEvent) -> Option<PaneClickState> {

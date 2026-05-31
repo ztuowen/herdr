@@ -11,30 +11,22 @@ use ratatui::{
 
 use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::AppState;
+use crate::kanban::{KanbanBoardLayout, KanbanBoardProjection};
+
+pub(crate) fn kanban_board_layout(app: &AppState) -> KanbanBoardLayout {
+    if app.view.layout == crate::app::state::ViewLayout::Mobile {
+        KanbanBoardLayout::Mobile
+    } else {
+        KanbanBoardLayout::Desktop
+    }
+}
 
 pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
-
-    let is_portrait = app.view.layout == crate::app::state::ViewLayout::Mobile;
-
-    // Split main area into 4 columns/rows
-    let sections = if is_portrait {
-        Layout::vertical([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(area)
-    } else {
-        Layout::horizontal([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(area)
-    };
+    let projection = app
+        .extensions
+        .kanban
+        .board_projection(area, kanban_board_layout(app));
 
     let statuses = [
         ("todo", p.overlay1, 0),
@@ -44,18 +36,20 @@ pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     ];
 
     for (name, color, col_idx) in statuses {
-        let col_area = sections[col_idx];
-        let items = app.extensions.kanban.items_in_column(col_idx);
-        let count = items.len();
-
-        let is_col_focused = app.extensions.kanban.selected_col == col_idx;
+        let Some(column) = projection.columns.get(col_idx) else {
+            continue;
+        };
 
         // Render column block
-        let col_border_color = if is_col_focused { p.accent } else { p.surface0 };
-        let col_title = format!(" {} ({}) ", name.to_uppercase(), count);
+        let col_border_color = if column.is_selected {
+            p.accent
+        } else {
+            p.surface0
+        };
+        let col_title = format!(" {} ({}) ", name.to_uppercase(), column.item_count);
         let col_block = Block::default()
             .borders(Borders::ALL)
-            .border_type(if is_col_focused {
+            .border_type(if column.is_selected {
                 BorderType::Thick
             } else {
                 BorderType::Plain
@@ -64,185 +58,24 @@ pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
             .title(Span::styled(
                 col_title,
                 Style::default()
-                    .fg(if is_col_focused { p.accent } else { color })
+                    .fg(if column.is_selected { p.accent } else { color })
                     .add_modifier(Modifier::BOLD),
             ));
 
-        let inner_area = col_block.inner(col_area);
-        frame.render_widget(col_block, col_area);
+        frame.render_widget(col_block, column.area);
 
         // Draw cards in this column
-        if count > 0 {
-            if !is_portrait {
-                let card_height: u16 = 4; // Title (up to 2 lines) + borders
-                let spacing: u16 = 1;
-                let total_card_height = card_height + spacing;
-                let max_visible_cards = inner_area
-                    .height
-                    .checked_div(total_card_height)
-                    .map(usize::from)
-                    .unwrap_or(0);
-
-                // Compute scroll offset for the focused column
-                let scroll_offset = if is_col_focused {
-                    let row = app.extensions.kanban.selected_row;
-                    if max_visible_cards == 0 {
-                        0
-                    } else if row >= max_visible_cards {
-                        row - max_visible_cards + 1
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
-
-                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-                for (idx, item) in visible_items.enumerate() {
-                    let actual_idx = scroll_offset + idx;
-                    let card_y = inner_area.y + (idx as u16 * total_card_height);
-                    if card_y + card_height > inner_area.y + inner_area.height {
-                        break;
-                    }
-
-                    let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
-
-                    let is_card_selected =
-                        is_col_focused && app.extensions.kanban.selected_row == actual_idx;
-
-                    let mut has_active_terminal = false;
-                    if let Some(ref tid) = item.terminal_id {
-                        if app.kanban_pane_status(tid).exists {
-                            has_active_terminal = true;
-                        }
-                    }
-
-                    let card_border_color = if has_active_terminal {
-                        p.green
-                    } else {
-                        p.surface0
-                    };
-                    let card_bg = if is_card_selected {
-                        p.surface0
-                    } else {
-                        p.surface_dim
-                    };
-
-                    let border_type = if has_active_terminal {
-                        BorderType::Thick
-                    } else {
-                        BorderType::Plain
-                    };
-
-                    let card_block = Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(border_type)
-                        .border_style(Style::default().fg(card_border_color))
-                        .style(Style::default().bg(card_bg));
-
-                    let card_inner = card_block.inner(card_area);
-                    frame.render_widget(card_block, card_area);
-
-                    if card_inner.height > 0 {
-                        let mut card_title_style = Style::default().add_modifier(Modifier::BOLD);
-                        if has_active_terminal {
-                            card_title_style =
-                                card_title_style.fg(p.green).add_modifier(Modifier::ITALIC);
-                        } else {
-                            card_title_style = card_title_style.fg(p.text);
-                        }
-
-                        let formatted_title =
-                            format_kanban_title(item.title.as_str(), card_inner.width);
-                        frame.render_widget(
-                            Paragraph::new(formatted_title).style(card_title_style),
-                            card_inner,
-                        );
-                    }
-                }
-            } else {
-                // Portrait mode: horizontal cards inside status rows, spanning full width
-                let card_width = inner_area.width;
-                let max_visible_cards = 1;
-
-                // Compute scroll offset for the focused column (now row)
-                let scroll_offset = if is_col_focused {
-                    app.extensions.kanban.selected_row
-                } else {
-                    0
-                };
-
-                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-                for (idx, item) in visible_items.enumerate() {
-                    let actual_idx = scroll_offset + idx;
-                    let card_x = inner_area.x;
-
-                    let card_height = 4u16.min(inner_area.height);
-                    let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
-
-                    let is_card_selected =
-                        is_col_focused && app.extensions.kanban.selected_row == actual_idx;
-
-                    let mut has_active_terminal = false;
-                    if let Some(ref tid) = item.terminal_id {
-                        if app.kanban_pane_status(tid).exists {
-                            has_active_terminal = true;
-                        }
-                    }
-
-                    let card_border_color = if has_active_terminal {
-                        p.green
-                    } else {
-                        p.surface0
-                    };
-                    let card_bg = if is_card_selected {
-                        p.surface0
-                    } else {
-                        p.surface_dim
-                    };
-
-                    let border_type = if has_active_terminal {
-                        BorderType::Thick
-                    } else {
-                        BorderType::Plain
-                    };
-
-                    let card_block = Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(border_type)
-                        .border_style(Style::default().fg(card_border_color))
-                        .style(Style::default().bg(card_bg));
-
-                    let card_inner = card_block.inner(card_area);
-                    frame.render_widget(card_block, card_area);
-
-                    if card_inner.height > 0 {
-                        let mut card_title_style = Style::default().add_modifier(Modifier::BOLD);
-                        if has_active_terminal {
-                            card_title_style =
-                                card_title_style.fg(p.green).add_modifier(Modifier::ITALIC);
-                        } else {
-                            card_title_style = card_title_style.fg(p.text);
-                        }
-
-                        let formatted_title =
-                            format_kanban_title(item.title.as_str(), card_inner.width);
-                        frame.render_widget(
-                            Paragraph::new(formatted_title).style(card_title_style),
-                            card_inner,
-                        );
-                    }
-                }
-            }
+        if column.item_count > 0 {
+            render_kanban_cards(app, frame, &projection, col_idx);
         } else {
             // Draw empty message
             let empty_text = Paragraph::new("No items")
                 .style(Style::default().fg(p.overlay0))
                 .alignment(Alignment::Center);
             let empty_rect = Rect::new(
-                inner_area.x,
-                inner_area.y + inner_area.height / 2,
-                inner_area.width,
+                column.inner_area.x,
+                column.inner_area.y + column.inner_area.height / 2,
+                column.inner_area.width,
                 1,
             );
             frame.render_widget(empty_text, empty_rect);
@@ -259,6 +92,67 @@ pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
             .find(|it| it.uuid == *uuid)
         {
             render_kanban_detail_modal(app, frame, area, item);
+        }
+    }
+}
+
+fn render_kanban_cards(
+    app: &AppState,
+    frame: &mut Frame,
+    projection: &KanbanBoardProjection,
+    col_idx: usize,
+) {
+    let Some(column) = projection.columns.get(col_idx) else {
+        return;
+    };
+    let p = &app.palette;
+    for card in &column.cards {
+        let has_active_terminal = card
+            .item
+            .terminal_id
+            .as_deref()
+            .map(|tid| app.kanban_pane_status(tid).exists)
+            .unwrap_or(false);
+
+        let card_border_color = if has_active_terminal {
+            p.green
+        } else {
+            p.surface0
+        };
+        let card_bg = if card.is_selected {
+            p.surface0
+        } else {
+            p.surface_dim
+        };
+
+        let border_type = if has_active_terminal {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        };
+
+        let card_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(border_type)
+            .border_style(Style::default().fg(card_border_color))
+            .style(Style::default().bg(card_bg));
+
+        let card_inner = card_block.inner(card.area);
+        frame.render_widget(card_block, card.area);
+
+        if card_inner.height > 0 {
+            let mut card_title_style = Style::default().add_modifier(Modifier::BOLD);
+            if has_active_terminal {
+                card_title_style = card_title_style.fg(p.green).add_modifier(Modifier::ITALIC);
+            } else {
+                card_title_style = card_title_style.fg(p.text);
+            }
+
+            let formatted_title = format_kanban_title(card.item.title.as_str(), card_inner.width);
+            frame.render_widget(
+                Paragraph::new(formatted_title).style(card_title_style),
+                card_inner,
+            );
         }
     }
 }
@@ -615,126 +509,15 @@ pub fn kanban_item_at(
     col_x: u16,
     row_y: u16,
 ) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
-    let area = app.view.terminal_area;
-    let is_portrait = app.view.layout == crate::app::state::ViewLayout::Mobile;
-
-    if !is_portrait {
-        let cols = Layout::horizontal([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(area);
-
-        for col_idx in 0..4 {
-            let col_area = cols[col_idx];
-            let inner_area = Rect::new(
-                col_area.x.saturating_add(1),
-                col_area.y.saturating_add(1),
-                col_area.width.saturating_sub(2),
-                col_area.height.saturating_sub(2),
-            );
-
-            let items = app.extensions.kanban.items_in_column(col_idx);
-            let count = items.len();
-            if count == 0 {
-                continue;
-            }
-
-            let is_col_focused = app.extensions.kanban.selected_col == col_idx;
-            let card_height: u16 = 4;
-            let spacing: u16 = 1;
-            let total_card_height = card_height + spacing;
-
-            let max_visible_cards = inner_area
-                .height
-                .checked_div(total_card_height)
-                .map(usize::from)
-                .unwrap_or(0);
-
-            let scroll_offset = if is_col_focused {
-                let row = app.extensions.kanban.selected_row;
-                if max_visible_cards == 0 {
-                    0
-                } else if row >= max_visible_cards {
-                    row - max_visible_cards + 1
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-            for (idx, item) in visible_items.enumerate() {
-                let actual_idx = scroll_offset + idx;
-                let card_y = inner_area.y + (idx as u16 * total_card_height);
-                if card_y + card_height > inner_area.y + inner_area.height {
-                    break;
-                }
-
-                let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
-                if col_x >= card_area.x
-                    && col_x < card_area.x + card_area.width
-                    && row_y >= card_area.y
-                    && row_y < card_area.y + card_area.height
-                {
-                    return Some((col_idx, actual_idx, (*item).clone()));
-                }
-            }
-        }
-        None
-    } else {
-        let rows = Layout::vertical([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(area);
-
-        for col_idx in 0..4 {
-            let col_area = rows[col_idx];
-            let inner_area = Rect::new(
-                col_area.x.saturating_add(1),
-                col_area.y.saturating_add(1),
-                col_area.width.saturating_sub(2),
-                col_area.height.saturating_sub(2),
-            );
-
-            let items = app.extensions.kanban.items_in_column(col_idx);
-            let count = items.len();
-            if count == 0 {
-                continue;
-            }
-
-            let is_col_focused = app.extensions.kanban.selected_col == col_idx;
-            let card_width = inner_area.width;
-            let max_visible_cards = 1;
-
-            let scroll_offset = if is_col_focused {
-                app.extensions.kanban.selected_row
-            } else {
-                0
-            };
-
-            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-            for (idx, item) in visible_items.enumerate() {
-                let actual_idx = scroll_offset + idx;
-                let card_x = inner_area.x;
-
-                let card_height = 4u16.min(inner_area.height);
-                let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
-                if col_x >= card_area.x
-                    && col_x < card_area.x + card_area.width
-                    && row_y >= card_area.y
-                    && row_y < card_area.y + card_area.height
-                {
-                    return Some((col_idx, actual_idx, (*item).clone()));
-                }
-            }
-        }
-        None
-    }
+    app.extensions
+        .kanban
+        .board_projection(app.view.terminal_area, kanban_board_layout(app))
+        .card_at(col_x, row_y)
+        .map(|card| {
+            (
+                crate::kanban::column_index_for_status(card.item.status),
+                card.row_index,
+                card.item.clone(),
+            )
+        })
 }

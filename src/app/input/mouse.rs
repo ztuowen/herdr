@@ -230,97 +230,57 @@ impl AppState {
                 | MouseEventKind::Down(MouseButton::Right)
                     if !in_sidebar =>
                 {
-                    if let Some((col_idx, row_idx, item)) =
-                        crate::ui::kanban::kanban_item_at(self, mouse.column, mouse.row)
-                    {
-                        self.extensions.kanban.selected_col = col_idx;
-                        self.extensions.kanban.selected_row = row_idx;
-
-                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-                            self.extensions
-                                .kanban
-                                .set_detail_uuid(Some(item.uuid.clone()));
-                        } else {
-                            let mut navigated = false;
-                            if let Some(ref term_id_str) = item.terminal_id {
-                                if let Some((ws_idx, tab_idx, pane_id)) =
-                                    self.find_pane_by_terminal_id_str(term_id_str)
-                                {
-                                    self.focus_navigator_target(
-                                        crate::app::state::NavigatorTarget::Pane {
-                                            ws_idx,
-                                            tab_idx,
-                                            pane_id,
-                                        },
-                                    );
-                                    navigated = true;
-                                }
+                    let board_layout = crate::ui::kanban::kanban_board_layout(self);
+                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+                        self.extensions.kanban.open_card_at(
+                            self.view.terminal_area,
+                            board_layout,
+                            mouse.column,
+                            mouse.row,
+                        );
+                    } else if let crate::kanban::KanbanBoardAction::ActivateCard {
+                        uuid,
+                        terminal_id,
+                    } = self.extensions.kanban.activate_card_at(
+                        self.view.terminal_area,
+                        board_layout,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        let mut navigated = false;
+                        if let Some(ref term_id_str) = terminal_id {
+                            if let Some((ws_idx, tab_idx, pane_id)) =
+                                self.find_pane_by_terminal_id_str(term_id_str)
+                            {
+                                self.focus_navigator_target(
+                                    crate::app::state::NavigatorTarget::Pane {
+                                        ws_idx,
+                                        tab_idx,
+                                        pane_id,
+                                    },
+                                );
+                                navigated = true;
                             }
-                            if !navigated {
-                                self.extensions
-                                    .kanban
-                                    .set_detail_uuid(Some(item.uuid.clone()));
-                            }
+                        }
+                        if !navigated {
+                            self.extensions.kanban.set_detail_uuid(Some(uuid));
                         }
                     }
                     return None;
                 }
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if !in_sidebar => {
-                    let is_portrait = self.view.layout == ViewLayout::Mobile;
-                    let sections = if is_portrait {
-                        ratatui::layout::Layout::vertical([
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                        ])
-                        .split(self.view.terminal_area)
+                    let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                        -1
                     } else {
-                        ratatui::layout::Layout::horizontal([
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                            ratatui::layout::Constraint::Percentage(25),
-                        ])
-                        .split(self.view.terminal_area)
+                        1
                     };
-
-                    let mut hovered_col = None;
-                    for col_idx in 0..4 {
-                        let col_area = sections[col_idx];
-                        let inside = if is_portrait {
-                            mouse.row >= col_area.y && mouse.row < col_area.y + col_area.height
-                        } else {
-                            mouse.column >= col_area.x && mouse.column < col_area.x + col_area.width
-                        };
-                        if inside {
-                            hovered_col = Some(col_idx);
-                            break;
-                        }
-                    }
-
-                    if let Some(col_idx) = hovered_col {
-                        if self.extensions.kanban.selected_col != col_idx {
-                            self.extensions.kanban.selected_col = col_idx;
-                            self.extensions.kanban.selected_row = 0;
-                        }
-
-                        let items_count = self.extensions.kanban.items_in_column(col_idx).len();
-                        if items_count > 0 {
-                            match mouse.kind {
-                                MouseEventKind::ScrollUp => {
-                                    self.extensions.kanban.selected_row =
-                                        self.extensions.kanban.selected_row.saturating_sub(1);
-                                }
-                                MouseEventKind::ScrollDown => {
-                                    self.extensions.kanban.selected_row =
-                                        (self.extensions.kanban.selected_row + 1)
-                                            .min(items_count - 1);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    self.extensions.kanban.scroll_board_at(
+                        self.view.terminal_area,
+                        crate::ui::kanban::kanban_board_layout(self),
+                        mouse.column,
+                        mouse.row,
+                        delta,
+                    );
                     return None;
                 }
                 _ => {}

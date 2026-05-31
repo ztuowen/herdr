@@ -178,17 +178,7 @@ fn compute_view_internal(
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     if app.mode == Mode::Kanban {
-        app.extensions.kanban.selected_col = app.extensions.kanban.selected_col.min(3);
-        let items_len = app
-            .extensions
-            .kanban
-            .items_in_column(app.extensions.kanban.selected_col)
-            .len();
-        app.extensions.kanban.selected_row = app
-            .extensions
-            .kanban
-            .selected_row
-            .min(items_len.saturating_sub(1));
+        app.extensions.kanban.clamp_board_selection();
     }
 
     if is_mobile_width(area, app.mobile_width_threshold) {

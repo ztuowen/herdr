@@ -815,6 +815,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
     }
 
     let key_event = key.as_key_event();
+    let board_layout = crate::ui::kanban::kanban_board_layout(state);
     if state.extensions.kanban.detail_uuid.is_some() {
         match key_event.code {
             KeyCode::Esc => {
@@ -865,88 +866,119 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         return;
     }
 
-    let is_portrait = state.view.layout == crate::app::state::ViewLayout::Mobile;
-
     match key_event.code {
         KeyCode::Esc => {
             leave_modal(state);
         }
         KeyCode::Char('c') | KeyCode::Char('y') => {
-            let col = state.extensions.kanban.selected_col;
-            let items = state.extensions.kanban.items_in_column(col);
-            if let Some(item) = items.get(state.extensions.kanban.selected_row) {
-                state.request_clipboard_write = Some(item.uuid.clone().into_bytes());
+            if let crate::kanban::KanbanBoardAction::CopyUuid { uuid } =
+                state.extensions.kanban.copy_selected_uuid()
+            {
+                state.request_clipboard_write = Some(uuid.into_bytes());
             }
         }
-        KeyCode::Left if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
-            state.extensions.kanban.shift_item_left();
-            state.mark_session_dirty();
+        KeyCode::Left
+            if key_event.modifiers == KeyModifiers::SHIFT
+                && board_layout == crate::kanban::KanbanBoardLayout::Desktop =>
+        {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Left,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Char('H') if !is_portrait => {
-            state.extensions.kanban.shift_item_left();
-            state.mark_session_dirty();
+        KeyCode::Char('H') => {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Left,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Right if key_event.modifiers == KeyModifiers::SHIFT && !is_portrait => {
-            state.extensions.kanban.shift_item_right();
-            state.mark_session_dirty();
+        KeyCode::Right
+            if key_event.modifiers == KeyModifiers::SHIFT
+                && board_layout == crate::kanban::KanbanBoardLayout::Desktop =>
+        {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Right,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Char('L') if !is_portrait => {
-            state.extensions.kanban.shift_item_right();
-            state.mark_session_dirty();
+        KeyCode::Char('L') => {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Right,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Up if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
-            state.extensions.kanban.shift_item_left();
-            state.mark_session_dirty();
+        KeyCode::Up
+            if key_event.modifiers == KeyModifiers::SHIFT
+                && board_layout == crate::kanban::KanbanBoardLayout::Mobile =>
+        {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Up,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Char('K') if is_portrait => {
-            state.extensions.kanban.shift_item_left();
-            state.mark_session_dirty();
+        KeyCode::Char('K') => {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Up,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Down if key_event.modifiers == KeyModifiers::SHIFT && is_portrait => {
-            state.extensions.kanban.shift_item_right();
-            state.mark_session_dirty();
+        KeyCode::Down
+            if key_event.modifiers == KeyModifiers::SHIFT
+                && board_layout == crate::kanban::KanbanBoardLayout::Mobile =>
+        {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Down,
+            ) {
+                state.mark_session_dirty();
+            }
         }
-        KeyCode::Char('J') if is_portrait => {
-            state.extensions.kanban.shift_item_right();
-            state.mark_session_dirty();
+        KeyCode::Char('J') => {
+            if state.extensions.kanban.shift_selected_item_for_layout(
+                board_layout,
+                crate::kanban::KanbanBoardDirection::Down,
+            ) {
+                state.mark_session_dirty();
+            }
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if is_portrait {
-                state.extensions.kanban.move_row_up();
-            } else {
-                state.extensions.kanban.move_col_left();
-            }
+            state
+                .extensions
+                .kanban
+                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Left);
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if is_portrait {
-                state.extensions.kanban.move_row_down();
-            } else {
-                state.extensions.kanban.move_col_right();
-            }
+            state
+                .extensions
+                .kanban
+                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Right);
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if is_portrait {
-                state.extensions.kanban.move_col_left();
-            } else {
-                state.extensions.kanban.move_row_up();
-            }
+            state
+                .extensions
+                .kanban
+                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Up);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if is_portrait {
-                state.extensions.kanban.move_col_right();
-            } else {
-                state.extensions.kanban.move_row_down();
-            }
+            state
+                .extensions
+                .kanban
+                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Down);
         }
         KeyCode::Char(' ') | KeyCode::Enter => {
-            let col = state.extensions.kanban.selected_col;
-            let items = state.extensions.kanban.items_in_column(col);
-            if let Some(item) = items.get(state.extensions.kanban.selected_row) {
-                state
-                    .extensions
-                    .kanban
-                    .set_detail_uuid(Some(item.uuid.clone()));
-            }
+            state.extensions.kanban.open_selected_detail();
         }
         KeyCode::Char('d') | KeyCode::Delete => {
             state.extensions.kanban.delete_selected();

@@ -487,8 +487,6 @@ enum ClientLoopEvent {
     ServerDisconnected,
     /// Timer tick.
     Timer,
-    /// Audio stream started.
-    RecordingStarted(crate::speech::SendStream),
     /// Background client message to send to server.
     ClientMessageToSend(ClientMessage),
 }
@@ -991,14 +989,7 @@ async fn run_client_loop(
                     state.recording_active = Some(recording_active.clone());
                     state.recording_aborted = Some(recording_aborted.clone());
                     state.recording_buffer = Some(audio.buffer.clone());
-
-                    if event_tx
-                        .blocking_send(ClientLoopEvent::RecordingStarted(audio.stream))
-                        .is_err()
-                    {
-                        tracing::error!("Speech to Text client: failed to send RecordingStarted event to client loop");
-                        continue;
-                    }
+                    state.recording_stream = Some(audio.stream);
 
                     let event_tx_clone = event_tx.clone();
                     let api_key_clone = api_key.clone();
@@ -1084,9 +1075,6 @@ async fn run_client_loop(
             }
             ClientLoopEvent::Timer => {
                 // Check if we should quit.
-            }
-            ClientLoopEvent::RecordingStarted(stream) => {
-                state.recording_stream = Some(stream);
             }
             ClientLoopEvent::ClientMessageToSend(msg) => {
                 if let Err(e) = write_to_server(&mut write_stream, &msg) {

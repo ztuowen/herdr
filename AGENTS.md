@@ -27,7 +27,7 @@ Do all code edits, tests, and validation inside the task worktree.
 
 Commit on the task branch in that worktree.
 
-When the change is ready, fast-forward the shared checkout at `../herdr` to the task branch commit, then push `origin/master` from `../herdr`. Do not treat the task branch as the final landing branch.
+When the change is ready, fast-forward the shared checkout at `../herdr` to the task branch commit, then push `origin/main` from `../herdr`. Do not treat the task branch as the final landing branch.
 
 If the current session is already inside an isolated task worktree, keep using it. Do not create nested worktrees.
 
@@ -56,14 +56,14 @@ Unit tests live next to the code (`#[cfg(test)] mod tests`). If you add behavior
 - Treat `docs/next/README.md` and `docs/next/CHANGELOG.md` as next-release staging for the root README and changelog. Treat `docs/next/website/src/content/docs/` as a full next-release mirror of `website/src/content/docs/`; these staged MDX files are the source for the next herdr.dev docs.
 - During normal work, update `docs/next/website/src/content/docs/` for unreleased website doc changes, not `website/src/content/docs/`. Before release, copy the approved mirror back to `website/src/content/docs/`. `just release-docs-check` verifies README/changelog sync, the website docs mirror is 1:1 with released website docs, and the removed root docs stay removed.
 - Put local PRDs, planning notes, and exploratory specs under `.local/prd/`; `.local/` is ignored and locally controlled.
-- Integration asset versions (`HERDR_INTEGRATION_VERSION` markers and matching `*_INTEGRATION_VERSION` constants) are migration versions relative to the latest released tag, not per-commit counters on `master`. If an integration asset changes multiple times between releases, bump it once from the version in the latest release. Before changing one, compare against the latest release tag and keep the asset marker and Rust expected constant aligned.
+- Integration asset versions (`HERDR_INTEGRATION_VERSION` markers and matching `*_INTEGRATION_VERSION` constants) are migration versions relative to the latest released tag, not per-commit counters on `main`. If an integration asset changes multiple times between releases, bump it once from the version in the latest release. Before changing one, compare against the latest release tag and keep the asset marker and Rust expected constant aligned.
 - When a normal feature or fix commit relates to a GitHub issue, add a commit body line `refs #<issue-number>` after the subject. Use this shape:
   ```text
   fix: handle pane focus
 
   refs #82
   ```
-  Do not use GitHub closing keywords like `fixes #<issue-number>`, `closes #<issue-number>`, or `resolves #<issue-number>` in normal commits, because `master` contains unreleased work and those keywords close issues before release. Release CI scans `refs #<issue-number>` body lines between release tags and closes the referenced issues after the GitHub Release is created.
+  Do not use GitHub closing keywords like `fixes #<issue-number>`, `closes #<issue-number>`, or `resolves #<issue-number>` in normal commits, because `main` contains unreleased work and those keywords close issues before release. Release CI scans `refs #<issue-number>` body lines between release tags and closes the referenced issues after the GitHub Release is created.
 - Rust: no `unwrap()` in production code. `tracing` for logging. `#[allow]` only with a comment explaining why.
 - Don't bypass checks. If tests fail, fix them before committing.
 - Don't add dependencies without a reason. Check if the existing deps cover it first.
@@ -80,7 +80,7 @@ just release-prepare 0.x.y
 just release-publish 0.x.y
 ```
 
-`just release-prepare 0.x.y` prepares the changelog entry, bumps `Cargo.toml`, updates `Cargo.lock`, refreshes `nix/package.nix` `cargoHash`, runs tests, and commits the release. `just release-publish 0.x.y` verifies the prepared clean tree, rechecks the committed `cargoHash` without patching, pushes the release commit to `origin/master` if needed, then tags and pushes the tag. `just release 0.x.y` runs both steps. GitHub Actions builds the binaries after the tag is pushed, creates the GitHub release, uploads all four binary assets, then updates `website/latest.json` on `master` automatically.
+`just release-prepare 0.x.y` prepares the changelog entry, bumps `Cargo.toml`, updates `Cargo.lock`, refreshes `nix/package.nix` `cargoHash`, runs tests, and commits the release. `just release-publish 0.x.y` verifies the prepared clean tree, rechecks the committed `cargoHash` without patching, pushes the release commit to `origin/main` if needed, then tags and pushes the tag. `just release 0.x.y` runs both steps. GitHub Actions builds the binaries after the tag is pushed, creates the GitHub release, uploads all four binary assets, then updates `website/latest.json` on `main` automatically.
 
 If the release will change `Cargo.lock` or the package version, refresh `nix/package.nix` after the release version bump and before tagging. `just release-prepare` runs `just refresh-nix-cargo-hash`, which forces `cargoHash = lib.fakeHash`, captures the `got:` hash from Nix, writes it back to `nix/package.nix`, and reruns the Nix flake checks. A stale hash fails both the `Nix` workflow and the release workflow's `flake-check` job with a fixed-output derivation mismatch.
 
@@ -110,7 +110,7 @@ The app update check and the in-app **What's New** flow both depend on that exac
 
 Do not edit `website/latest.json` during normal feature, fix, or test work. It describes the latest published release binaries, not the current unreleased source tree. The release workflow updates it after release assets are published.
 
-When changing the server/client wire protocol, compare `src/protocol/wire.rs::PROTOCOL_VERSION` against the latest released tag. Bump it only if the current source protocol is not already greater than the latest released protocol. Multiple unreleased wire changes in the same release cycle must share the same single protocol bump; Herdr supports tagged releases, not arbitrary `master` client/server compatibility. When a bump is required, update all hardcoded protocol expectations and manual protocol fixtures in tests. Keep protocol test expectations intentionally explicit so compatibility changes are reviewed instead of silently following the constant.
+When changing the server/client wire protocol, compare `src/protocol/wire.rs::PROTOCOL_VERSION` against the latest released tag. Bump it only if the current source protocol is not already greater than the latest released protocol. Multiple unreleased wire changes in the same release cycle must share the same single protocol bump; Herdr supports tagged releases, not arbitrary `main` client/server compatibility. When a bump is required, update all hardcoded protocol expectations and manual protocol fixtures in tests. Keep protocol test expectations intentionally explicit so compatibility changes are reviewed instead of silently following the constant.
 
 ## External contributor guardrail
 

@@ -13,6 +13,7 @@ commands=(
   herdr-kanban-run
   herdr-kanban-sweep
   herdr-kanban-install
+  herdr-kanban-lib
 )
 
 mkdir -p "$install_dir"

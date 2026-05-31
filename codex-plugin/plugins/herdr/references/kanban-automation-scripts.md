@@ -49,6 +49,7 @@ bin/herdr-kanban-install
 ```
 
 The installer refuses to replace non-symlink files unless `HERDR_KANBAN_INSTALL_FORCE=1` is set.
+It also links the internal `herdr-kanban-lib` helper beside the runnable commands so installed symlinks can source their shared shell functions.
 
 Spawned Codex panes run in YOLO mode:
 

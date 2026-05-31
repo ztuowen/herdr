@@ -22,12 +22,12 @@ Run on:
 
 ## Checks
 
-- `in-progress` cards have attached panes.
+- `ongoing` cards have attached panes.
 - attached panes still exist.
-- `need-review` cards contain validation evidence.
+- `reviewing` cards contain validation evidence and are ready for or already owned by a review agent.
 - `done` cards contain review or human acceptance evidence.
-- `human-review:` cards stay in `need-review` and are not dispatched to workers.
-- `blocked:` and `clarify:` cards are not repeatedly assigned.
+- `blocked` cards require human input, human review, or other manual intervention and are not dispatched to workers.
+- `clarify:` cards are not repeatedly assigned.
 - duplicate cards or conflicting ownership are flagged.
 
 ## Actions

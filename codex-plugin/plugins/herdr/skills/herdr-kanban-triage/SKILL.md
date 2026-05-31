@@ -14,7 +14,7 @@ Triage is the only phase that should clarify with the human or perform open-ende
 1. Clarify the user request until routine execution would be safe.
 2. Research local repo context, linked issues, docs, errors, or prior work as needed.
 3. Split the work into independently reviewable cards.
-4. Create only ready cards, or explicitly mark unresolved work as `clarify:` / `blocked:`.
+4. Create only ready cards, or explicitly mark unresolved work as `clarify:` or move it to `blocked` when human or manual intervention is required.
 5. Put the full handoff contract in each card description.
 
 Use:
@@ -41,8 +41,9 @@ Do not create vague cards. If the task cannot be made routine, keep ownership in
 ## Status Rules
 
 - `todo`: ready for dispatcher and worker automation.
-- `in-progress`: only after a worker has attached a pane.
-- `need-review`: only after implementation and validation evidence are recorded.
+- `ongoing`: only after a worker has attached a pane.
+- `blocked`: waiting on human input, human review, or other manual intervention.
+- `reviewing`: ready for or already owned by a review agent after implementation and validation evidence are recorded.
 - `done`: only after reviewer acceptance or explicit human acceptance.
 
-For UI/interface work, include the expected human review path when final presentation cannot be judged automatically.
+For UI/interface work, include the expected human review path when final presentation cannot be judged automatically. Use `blocked` with `review_state: human-review-required` when the code review passed but the next action is human presentation review.

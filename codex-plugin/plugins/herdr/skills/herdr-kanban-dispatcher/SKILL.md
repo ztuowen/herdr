@@ -25,10 +25,10 @@ React to these Herdr-native events when available, and use a periodic tick as fa
 ## Routing
 
 1. Run `herdr kanban list`.
-2. Route `need-review` cards to reviewer agents first.
+2. Route `reviewing` cards to reviewer agents first.
 3. Route ready `todo` cards to idle worker agents.
-4. Leave `human-review:` cards in `need-review` and surface them to the human.
-5. Do not assign `blocked:` or `clarify:` cards to workers.
+4. Surface `blocked` cards with `review_state: human-review-required` to the human.
+5. Do not assign `blocked` or `clarify:` cards to workers.
 6. Enforce one active card per agent.
 
 Send the selected card UUID to the target agent and instruct it to use the matching role skill. The assigned agent must attach its own pane with `herdr kanban attach <uuid>`.

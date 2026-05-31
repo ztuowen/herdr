@@ -301,6 +301,9 @@ pub const THEME_NAMES: &[&str] = &[
 ];
 
 mod kitty_graphics {
+    use std::fmt::Write as FmtWrite;
+    use std::io::Write;
+
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct HostCellSize {
         pub width_px: u32,
@@ -324,18 +327,340 @@ mod kitty_graphics {
             self.width_px > 0 && self.height_px > 0
         }
     }
-}
 
-pub mod math_compiler {
-    pub fn lookup_math_cache(
-        _formula: &str,
-        _text_color_hex: &str,
-    ) -> Option<(Vec<u8>, u32, u32, bool)> {
-        None
+    #[derive(Debug, Default)]
+    pub struct HostGraphicsCache {
+        // image_id -> (formula, text_color_hex, width_px, height_px)
+        pub uploaded: std::collections::HashMap<u32, (String, String, u32, u32)>,
+        // (image_id, placement_id) -> (cols, rows, x, y)
+        pub placements: std::collections::HashMap<(u32, u32), (u32, u32, u16, u16)>,
     }
 
-    pub fn enqueue_compile_job(_formula: String, _text_color_hex: String) {}
+    pub struct ClippedPlacement {
+        pub x: u16,
+        pub y: u16,
+        pub cols: u32,
+        pub rows: u32,
+        pub source_x: u32,
+        pub source_y: u32,
+        pub source_width: u32,
+        pub source_height: u32,
+    }
+
+    fn clip_static_placement(
+        sp: &crate::app::state::StaticImagePlacement,
+        cell_size: HostCellSize,
+        image_width: u32,
+        image_height: u32,
+    ) -> Option<ClippedPlacement> {
+        let area = sp.area;
+        if area.width == 0 || area.height == 0 || sp.grid_cols == 0 || sp.grid_rows == 0 {
+            return None;
+        }
+
+        let left_clip_cells = if sp.viewport_col < 0 {
+            sp.viewport_col.saturating_neg() as u32
+        } else {
+            0
+        };
+        let top_clip_cells = if sp.viewport_row < 0 {
+            sp.viewport_row.saturating_neg() as u32
+        } else {
+            0
+        };
+
+        let viewport_col = sp.viewport_col.max(0) as u32;
+        let viewport_row = sp.viewport_row.max(0) as u32;
+
+        if viewport_col >= area.width as u32 || viewport_row >= area.height as u32 {
+            return None;
+        }
+
+        let visible_cols = sp
+            .grid_cols
+            .saturating_sub(left_clip_cells)
+            .min(area.width as u32 - viewport_col);
+        let visible_rows = sp
+            .grid_rows
+            .saturating_sub(top_clip_cells)
+            .min(area.height as u32 - viewport_row);
+
+        if visible_cols == 0 || visible_rows == 0 {
+            return None;
+        }
+
+        let source_width = image_width;
+        let source_height = image_height;
+        let pixel_width = sp.grid_cols * cell_size.width_px;
+        let pixel_height = sp.grid_rows * cell_size.height_px;
+
+        let crop_left_px = left_clip_cells * cell_size.width_px;
+        let crop_top_px = top_clip_cells * cell_size.height_px;
+        let visible_width_px = visible_cols * cell_size.width_px;
+        let visible_height_px = visible_rows * cell_size.height_px;
+
+        let scale_pixels = |value: u32, source: u32, dest: u32| -> u32 {
+            ((value as u64 * source as u64) / dest.max(1) as u64).min(u32::MAX as u64) as u32
+        };
+
+        let source_x = scale_pixels(crop_left_px, source_width, pixel_width);
+        let source_y = scale_pixels(crop_top_px, source_height, pixel_height);
+        let source_width = scale_pixels(visible_width_px, source_width, pixel_width)
+            .max(1)
+            .min(image_width.saturating_sub(source_x));
+        let source_height = scale_pixels(visible_height_px, source_height, pixel_height)
+            .max(1)
+            .min(image_height.saturating_sub(source_y));
+
+        if source_width == 0 || source_height == 0 {
+            return None;
+        }
+
+        Some(ClippedPlacement {
+            x: area.x + viewport_col as u16,
+            y: area.y + viewport_row as u16,
+            cols: visible_cols,
+            rows: visible_rows,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+        })
+    }
+
+    const KITTY_CHUNK_BYTES: usize = 3072;
+
+    fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
+        use base64::Engine;
+        let mut chunks = data.chunks(KITTY_CHUNK_BYTES).peekable();
+        let Some(first) = chunks.next() else {
+            return;
+        };
+        let more = if chunks.peek().is_some() { 1 } else { 0 };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(first);
+        let _ = write!(out, "\x1b_G{control},m={more};{encoded}\x1b\\");
+
+        while let Some(chunk) = chunks.next() {
+            let more = if chunks.peek().is_some() { 1 } else { 0 };
+            let encoded = base64::engine::general_purpose::STANDARD.encode(chunk);
+            let _ = write!(out, "\x1b_Gm={more};{encoded}\x1b\\");
+        }
+    }
+
+    pub fn paint_math_placements(
+        placements: &[crate::app::state::StaticImagePlacement],
+        cell_size: HostCellSize,
+        cache: &mut HostGraphicsCache,
+    ) -> std::io::Result<()> {
+        if !cell_size.is_known() || placements.is_empty() {
+            return clear_all_placements(cache);
+        }
+
+        let mut out = Vec::new();
+        let mut current_placements = std::collections::HashSet::new();
+
+        for sp in placements {
+            if let Some((png_bytes, w_px, h_px, failed)) =
+                crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)
+            {
+                if failed {
+                    continue;
+                }
+
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(&sp.formula, &mut hasher);
+                let formula_hash = std::hash::Hasher::finish(&hasher) as u32;
+
+                let image_id = 900_000 + (formula_hash % 99_999);
+                let placement_id = 900_000 + (formula_hash % 99_999);
+                let placement_key = (image_id, placement_id);
+                current_placements.insert(placement_key);
+
+                let mut uploaded_width = 0;
+                let mut uploaded_height = 0;
+
+                let needs_upload = match cache.uploaded.get(&image_id) {
+                    Some(&(ref f, ref c, w, h)) => {
+                        uploaded_width = w;
+                        uploaded_height = h;
+                        f != &sp.formula || c != &sp.text_color_hex
+                    }
+                    None => true,
+                };
+
+                if needs_upload {
+                    let grid_width_px = sp.grid_cols * cell_size.width_px;
+                    let grid_height_px = sp.grid_rows * cell_size.height_px;
+
+                    let (final_bytes, final_w, final_h) = if let Some(padded_bytes) =
+                        crate::math_compiler::scale_and_pad_math_image(
+                            &png_bytes,
+                            w_px,
+                            h_px,
+                            grid_width_px,
+                            grid_height_px,
+                        ) {
+                        (padded_bytes, grid_width_px, grid_height_px)
+                    } else {
+                        (png_bytes.clone(), w_px, h_px)
+                    };
+
+                    uploaded_width = final_w;
+                    uploaded_height = final_h;
+
+                    if !final_bytes.is_empty() {
+                        if cache.uploaded.contains_key(&image_id) {
+                            let _ = write!(&mut out, "\x1b_Ga=d,d=I,i={image_id},q=2;\x1b\\");
+                        }
+
+                        let control =
+                            format!("a=t,t=d,f=100,s={},v={},i={image_id},q=2", final_w, final_h);
+                        encode_kitty_data(&mut out, &control, &final_bytes);
+                        cache.uploaded.insert(
+                            image_id,
+                            (
+                                sp.formula.clone(),
+                                sp.text_color_hex.clone(),
+                                final_w,
+                                final_h,
+                            ),
+                        );
+                    }
+                }
+
+                if let Some(clipped) =
+                    clip_static_placement(sp, cell_size, uploaded_width, uploaded_height)
+                {
+                    let placement_val = (clipped.cols, clipped.rows, clipped.x, clipped.y);
+                    let needs_display = match cache.placements.get(&placement_key) {
+                        Some(&existing) => existing != placement_val,
+                        None => true,
+                    };
+
+                    if needs_display {
+                        let z = 10;
+                        let _ = write!(&mut out, "\x1b[{};{}H", clipped.y + 1, clipped.x + 1);
+                        let mut control = format!(
+                            "a=p,i={image_id},p={placement_id},c={},r={},z={z},C=1,q=2",
+                            clipped.cols, clipped.rows,
+                        );
+                        if clipped.source_x > 0 {
+                            let _ = write!(control, ",x={}", clipped.source_x);
+                        }
+                        if clipped.source_y > 0 {
+                            let _ = write!(control, ",y={}", clipped.source_y);
+                        }
+                        if clipped.source_width > 0 {
+                            let _ = write!(control, ",w={}", clipped.source_width);
+                        }
+                        if clipped.source_height > 0 {
+                            let _ = write!(control, ",h={}", clipped.source_height);
+                        }
+                        let _ = write!(&mut out, "\x1b_G{control};\x1b\\");
+
+                        cache.placements.insert(placement_key, placement_val);
+                    }
+                }
+            } else {
+                crate::math_compiler::enqueue_compile_job(
+                    sp.formula.clone(),
+                    sp.text_color_hex.clone(),
+                );
+            }
+        }
+
+        let mut stale_placements = Vec::new();
+        for &key in cache.placements.keys() {
+            if !current_placements.contains(&key) {
+                stale_placements.push(key);
+            }
+        }
+        for (img_id, plc_id) in stale_placements {
+            let _ = write!(&mut out, "\x1b_Ga=d,d=i,i={img_id},p={plc_id},q=2;\x1b\\");
+            cache.placements.remove(&(img_id, plc_id));
+        }
+
+        if !out.is_empty() {
+            let mut framed = Vec::with_capacity(out.len() + 8);
+            framed.extend_from_slice(b"\x1b7");
+            framed.extend_from_slice(&out);
+            framed.extend_from_slice(b"\x1b8");
+
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(&framed)?;
+            stdout.flush()?;
+        }
+
+        Ok(())
+    }
+
+    pub fn clear_all_placements(cache: &mut HostGraphicsCache) -> std::io::Result<()> {
+        let mut out = Vec::new();
+        for &id in cache.uploaded.keys() {
+            let _ = write!(&mut out, "\x1b_Ga=d,d=I,i={id},q=2;\x1b\\");
+        }
+        cache.uploaded.clear();
+        cache.placements.clear();
+
+        if !out.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(&out)?;
+            stdout.flush()?;
+        }
+        Ok(())
+    }
+
+    pub fn detect_support() -> bool {
+        let Ok(size) = crossterm::terminal::window_size() else {
+            return false;
+        };
+        if size.columns == 0 || size.rows == 0 || size.width == 0 || size.height == 0 {
+            return false;
+        }
+
+        let term_program = std::env::var("TERM_PROGRAM").ok();
+        let term_program = term_program.as_deref();
+        let term = std::env::var("TERM").ok();
+        let term = term.as_deref();
+
+        if term_program == Some("ghostty") || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some() {
+            return true;
+        }
+        if term_program == Some("WezTerm") || std::env::var_os("WEZTERM_PANE").is_some() {
+            return true;
+        }
+        if term_program == Some("kitty") || term == Some("xterm-kitty") {
+            return true;
+        }
+        if term_program == Some("Konsole") || std::env::var_os("KONSOLE_VERSION").is_some() {
+            return true;
+        }
+        if term_program == Some("foot") || term == Some("foot") {
+            return true;
+        }
+        if term_program == Some("rio") {
+            return true;
+        }
+        if std::env::var_os("TMUX").is_some() {
+            return true;
+        }
+
+        if term_program == Some("Apple_Terminal") || term_program == Some("vscode") {
+            return false;
+        }
+        if std::env::var_os("GNOME_TERMINAL_SCREEN").is_some()
+            || std::env::var_os("GNOME_TERMINAL_SERVICE").is_some()
+        {
+            return false;
+        }
+
+        false
+    }
 }
+
+#[path = "../math_compiler.rs"]
+#[allow(dead_code)]
+pub mod math_compiler;
 
 #[path = "../ui/markdown.rs"]
 pub mod markdown;
@@ -573,6 +898,9 @@ fn main() -> std::io::Result<()> {
     let mut scroll_x: u16 = 0;
     let mut status_message: Option<(String, std::time::Instant)> = None;
 
+    let mut graphics_cache = kitty_graphics::HostGraphicsCache::default();
+    let kitty_graphics_enabled = kitty_graphics::detect_support();
+
     let mut doc = markdown::MarkdownDocument::new();
     doc.append_markdown(&content, &palette);
 
@@ -592,6 +920,12 @@ fn main() -> std::io::Result<()> {
             continue;
         }
 
+        let cell_size = if kitty_graphics_enabled {
+            kitty_graphics::HostCellSize::from_terminal()
+        } else {
+            kitty_graphics::HostCellSize::default()
+        };
+
         // Split layout: content and status bar
         let chunks = ratatui::layout::Layout::vertical([
             ratatui::layout::Constraint::Min(0),
@@ -605,12 +939,7 @@ fn main() -> std::io::Result<()> {
         let text_width = content_area.width.saturating_sub(2) as usize; // padding + scrollbar space
 
         // Wrap the markdown document to compute width/scrollbar first
-        let wrapped_temp = doc.wrap(
-            text_width,
-            scroll_x as usize,
-            kitty_graphics::HostCellSize::default(),
-            palette.text,
-        );
+        let wrapped_temp = doc.wrap(text_width, scroll_x as usize, cell_size, palette.text);
         let max_x = wrapped_temp.max_scroll_x(content_area.width.saturating_sub(2));
 
         let has_h_scrollbar = max_x > 0;
@@ -627,12 +956,7 @@ fn main() -> std::io::Result<()> {
             text_height,
         );
 
-        let wrapped = doc.wrap(
-            text_width,
-            scroll_x as usize,
-            kitty_graphics::HostCellSize::default(),
-            palette.text,
-        );
+        let wrapped = doc.wrap(text_width, scroll_x as usize, cell_size, palette.text);
 
         let max_y = wrapped.max_scroll_y(text_area.height);
 
@@ -772,6 +1096,16 @@ fn main() -> std::io::Result<()> {
             break;
         }
 
+        if kitty_graphics_enabled && cell_size.is_known() {
+            let mut static_placements = Vec::new();
+            wrapped.push_image_placements(&mut static_placements, text_area, scroll_y);
+            let _ = kitty_graphics::paint_math_placements(
+                &static_placements,
+                cell_size,
+                &mut graphics_cache,
+            );
+        }
+
         // Read event
         match crossterm::event::poll(std::time::Duration::from_millis(100)) {
             Ok(true) => {
@@ -886,6 +1220,9 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    if kitty_graphics_enabled {
+        let _ = kitty_graphics::clear_all_placements(&mut graphics_cache);
+    }
     crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)?;
     ratatui::restore();
 

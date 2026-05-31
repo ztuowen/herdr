@@ -3301,5 +3301,14 @@ This is paragraph line 2.
         });
         assert!(has_separator);
         assert!(has_formula_line);
+
+        // 5. Test wrapping with a known cell size
+        let cell_size_known = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        let wrapped_known =
+            wrap_markdown(&parsed_block_lines, 80, 0, cell_size_known, palette.text);
+        assert!(!wrapped_known.lines.is_empty());
     }
 }

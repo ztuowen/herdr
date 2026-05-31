@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use ratatui::{
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
 };
@@ -2383,6 +2384,174 @@ impl WrappedMarkdownDocument {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MarkdownPreviewScrollbars {
+    pub vertical: bool,
+    pub horizontal: bool,
+}
+
+impl MarkdownPreviewScrollbars {
+    pub(crate) const BOTH: Self = Self {
+        vertical: true,
+        horizontal: true,
+    };
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MarkdownPreviewRequest<'a> {
+    pub document: &'a MarkdownDocument,
+    pub area: Rect,
+    pub scroll_y: u16,
+    pub scroll_x: u16,
+    pub cell_size: crate::kitty_graphics::HostCellSize,
+    pub text_color: ratatui::style::Color,
+    pub scrollbars: MarkdownPreviewScrollbars,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MarkdownPreviewVerticalScrollbar {
+    pub track: Rect,
+    pub metrics: crate::pane::ScrollMetrics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MarkdownPreviewHorizontalScrollbar {
+    pub track: Rect,
+    pub scroll_x: u16,
+    pub max_scroll_x: u16,
+    pub content_width: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MarkdownPreview {
+    wrapped: WrappedMarkdownDocument,
+    pub text_area: Rect,
+    pub scroll_y: u16,
+    pub scroll_x: u16,
+    pub max_scroll_y: u16,
+    pub max_scroll_x: u16,
+    pub vertical_scrollbar: Option<MarkdownPreviewVerticalScrollbar>,
+    pub horizontal_scrollbar: Option<MarkdownPreviewHorizontalScrollbar>,
+}
+
+impl MarkdownPreview {
+    pub(crate) fn build(request: MarkdownPreviewRequest<'_>) -> Self {
+        let mut show_vertical = false;
+        let mut show_horizontal = false;
+        let mut wrapped = request.document.wrap(
+            request.area.width as usize,
+            request.scroll_x as usize,
+            request.cell_size,
+            request.text_color,
+        );
+        let mut max_scroll_y = 0;
+        let mut max_scroll_x = 0;
+        let mut text_area = request.area;
+
+        for _ in 0..4 {
+            text_area = preview_text_area(request.area, show_vertical, show_horizontal);
+            wrapped = request.document.wrap(
+                text_area.width as usize,
+                request.scroll_x as usize,
+                request.cell_size,
+                request.text_color,
+            );
+            max_scroll_y = wrapped.max_scroll_y(text_area.height);
+            max_scroll_x = wrapped.max_scroll_x(text_area.width);
+
+            let next_show_vertical = request.scrollbars.vertical
+                && max_scroll_y > 0
+                && request.area.width > 1
+                && request.area.height > 0;
+            let next_show_horizontal = request.scrollbars.horizontal
+                && max_scroll_x > 0
+                && request.area.width > 0
+                && request.area.height > 1;
+            if next_show_vertical == show_vertical && next_show_horizontal == show_horizontal {
+                break;
+            }
+            show_vertical = next_show_vertical;
+            show_horizontal = next_show_horizontal;
+        }
+
+        let scroll_y = request.scroll_y.min(max_scroll_y);
+        let scroll_x = request.scroll_x.min(max_scroll_x);
+        if scroll_x != request.scroll_x {
+            wrapped = request.document.wrap(
+                text_area.width as usize,
+                scroll_x as usize,
+                request.cell_size,
+                request.text_color,
+            );
+            max_scroll_y = wrapped.max_scroll_y(text_area.height);
+            max_scroll_x = wrapped.max_scroll_x(text_area.width);
+        }
+
+        let vertical_scrollbar = show_vertical.then(|| {
+            let track = Rect::new(
+                request.area.x + request.area.width.saturating_sub(1),
+                request.area.y,
+                1,
+                text_area.height,
+            );
+            MarkdownPreviewVerticalScrollbar {
+                track,
+                metrics: crate::pane::ScrollMetrics {
+                    offset_from_bottom: max_scroll_y.saturating_sub(scroll_y) as usize,
+                    max_offset_from_bottom: max_scroll_y as usize,
+                    viewport_rows: text_area.height.max(1) as usize,
+                },
+            }
+        });
+
+        let horizontal_scrollbar = show_horizontal.then(|| MarkdownPreviewHorizontalScrollbar {
+            track: Rect::new(
+                request.area.x,
+                request.area.y + request.area.height.saturating_sub(1),
+                text_area.width,
+                1,
+            ),
+            scroll_x,
+            max_scroll_x,
+            content_width: wrapped.wrapped.max_original_width,
+        });
+
+        Self {
+            wrapped,
+            text_area,
+            scroll_y,
+            scroll_x,
+            max_scroll_y,
+            max_scroll_x,
+            vertical_scrollbar,
+            horizontal_scrollbar,
+        }
+    }
+
+    pub(crate) fn lines(&self) -> &[Line<'static>] {
+        self.wrapped.lines()
+    }
+
+    pub(crate) fn active_hyperlinks(&self) -> Vec<((u16, u16), String, String)> {
+        self.wrapped
+            .active_hyperlinks(self.text_area, self.scroll_y)
+    }
+
+    pub(crate) fn push_image_placements(
+        &self,
+        placements: &mut Vec<crate::app::state::StaticImagePlacement>,
+    ) {
+        self.wrapped
+            .push_image_placements(placements, self.text_area, self.scroll_y);
+    }
+}
+
+fn preview_text_area(area: Rect, show_vertical: bool, show_horizontal: bool) -> Rect {
+    let width = area.width.saturating_sub(u16::from(show_vertical));
+    let height = area.height.saturating_sub(u16::from(show_horizontal));
+    Rect::new(area.x, area.y, width, height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2407,6 +2576,70 @@ mod tests {
             teal: Color::Cyan,
             peach: Color::Yellow,
         }
+    }
+
+    #[test]
+    fn test_markdown_preview_allocates_scrollbar_geometry() {
+        let mut doc = MarkdownDocument::new();
+        for _ in 0..6 {
+            doc.lines.push(MarkdownLine {
+                spans: vec![MarkdownSpan::Text(Span::raw("superlongword"))],
+                is_code_block: false,
+                is_blockquote: false,
+                is_table_row: true,
+            });
+        }
+
+        let preview = MarkdownPreview::build(MarkdownPreviewRequest {
+            document: &doc,
+            area: Rect::new(2, 3, 10, 4),
+            scroll_y: 99,
+            scroll_x: 99,
+            cell_size: crate::kitty_graphics::HostCellSize::default(),
+            text_color: Color::White,
+            scrollbars: MarkdownPreviewScrollbars::BOTH,
+        });
+
+        assert_eq!(preview.text_area, Rect::new(2, 3, 9, 3));
+        assert!(preview.max_scroll_y > 0);
+        assert!(preview.max_scroll_x > 0);
+        assert_eq!(preview.scroll_y, preview.max_scroll_y);
+        assert_eq!(preview.scroll_x, preview.max_scroll_x);
+        assert_eq!(
+            preview.vertical_scrollbar.unwrap().track,
+            Rect::new(11, 3, 1, 3)
+        );
+        assert_eq!(
+            preview.horizontal_scrollbar.unwrap().track,
+            Rect::new(2, 6, 9, 1)
+        );
+    }
+
+    #[test]
+    fn test_markdown_preview_reports_active_links_in_screen_coordinates() {
+        let palette = test_palette();
+        let mut doc = MarkdownDocument::new();
+        doc.append_link_line(
+            "open",
+            "https://example.com",
+            Style::default().fg(palette.blue),
+        );
+
+        let preview = MarkdownPreview::build(MarkdownPreviewRequest {
+            document: &doc,
+            area: Rect::new(5, 7, 20, 3),
+            scroll_y: 0,
+            scroll_x: 0,
+            cell_size: crate::kitty_graphics::HostCellSize::default(),
+            text_color: palette.text,
+            scrollbars: MarkdownPreviewScrollbars::BOTH,
+        });
+
+        let links = preview.active_hyperlinks();
+        assert_eq!(links.len(), 4);
+        assert_eq!(links[0].0, (5, 7));
+        assert_eq!(links[3].0, (8, 7));
+        assert!(links.iter().all(|(_, _, url)| url == "https://example.com"));
     }
 
     #[test]

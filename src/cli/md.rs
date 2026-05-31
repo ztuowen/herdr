@@ -6,7 +6,9 @@ use crate::kitty_graphics::{
     HostGraphicsCache,
 };
 use crate::platform::{open_url, write_clipboard};
-use crate::ui::MarkdownDocument;
+use crate::ui::{
+    MarkdownDocument, MarkdownPreview, MarkdownPreviewRequest, MarkdownPreviewScrollbars,
+};
 
 pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
     let mut theme_name = "catppuccin".to_string();
@@ -155,33 +157,26 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
         let content_area = chunks[0];
         let status_area = chunks[1];
 
-        let text_width = content_area.width.saturating_sub(2) as usize; // padding + scrollbar space
-
-        // Wrap the markdown document to compute width/scrollbar first
-        let wrapped_temp = doc.wrap(text_width, scroll_x as usize, cell_size, palette.text);
-        let max_x = wrapped_temp.max_scroll_x(content_area.width.saturating_sub(2));
-
-        let has_h_scrollbar = max_x > 0;
-        let text_height = if has_h_scrollbar {
-            content_area.height.saturating_sub(1)
-        } else {
-            content_area.height
-        };
-
-        let text_area = ratatui::layout::Rect::new(
+        let preview_area = ratatui::layout::Rect::new(
             content_area.x + 1,
             content_area.y,
-            content_area.width.saturating_sub(2),
-            text_height,
+            content_area.width.saturating_sub(1),
+            content_area.height,
         );
 
-        let wrapped = doc.wrap(text_width, scroll_x as usize, cell_size, palette.text);
-
-        let max_y = wrapped.max_scroll_y(text_area.height);
+        let preview = MarkdownPreview::build(MarkdownPreviewRequest {
+            document: &doc,
+            area: preview_area,
+            scroll_y,
+            scroll_x,
+            cell_size,
+            text_color: palette.text,
+            scrollbars: MarkdownPreviewScrollbars::BOTH,
+        });
 
         // Keep scroll within bounds
-        scroll_y = scroll_y.min(max_y);
-        scroll_x = scroll_x.min(max_x);
+        scroll_y = preview.scroll_y;
+        scroll_x = preview.scroll_x;
 
         // Render
         let draw_res = terminal.draw(|f| {
@@ -193,22 +188,23 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
             );
 
             // Render Markdown text
-            let lines = wrapped.lines();
+            let lines = preview.lines();
             let paragraph = ratatui::widgets::Paragraph::new(lines.to_vec())
                 .scroll((scroll_y, 0))
                 .style(ratatui::style::Style::default().fg(palette.text));
-            f.render_widget(paragraph, text_area);
+            f.render_widget(paragraph, preview.text_area);
 
             // Vertical scrollbar rendering
-            if max_y > 0 {
-                let track_height = text_area.height;
+            if let Some(scrollbar) = preview.vertical_scrollbar {
+                let track_height = scrollbar.track.height;
                 let total_lines = lines.len();
                 let thumb_height = (((track_height as f32) * (track_height as f32))
                     / (total_lines as f32))
                     .clamp(1.0, track_height as f32) as u16;
                 let scrollable_height = track_height.saturating_sub(thumb_height);
-                let thumb_y = if max_y > 0 {
-                    ((scroll_y as f32 / max_y as f32) * (scrollable_height as f32)) as u16
+                let thumb_y = if preview.max_scroll_y > 0 {
+                    ((scroll_y as f32 / preview.max_scroll_y as f32) * (scrollable_height as f32))
+                        as u16
                 } else {
                     0
                 };
@@ -220,12 +216,8 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
                     } else {
                         ratatui::style::Style::default().fg(palette.surface1)
                     };
-                    let cell_area = ratatui::layout::Rect::new(
-                        content_area.x + content_area.width - 1,
-                        content_area.y + y,
-                        1,
-                        1,
-                    );
+                    let cell_area =
+                        ratatui::layout::Rect::new(scrollbar.track.x, scrollbar.track.y + y, 1, 1);
                     f.render_widget(
                         ratatui::widgets::Paragraph::new(char_to_draw).style(style),
                         cell_area,
@@ -234,15 +226,16 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
             }
 
             // Horizontal scrollbar rendering
-            if max_x > 0 {
-                let track_width = content_area.width.saturating_sub(2);
-                let max_width = wrapped.lines().iter().map(|l| l.width()).max().unwrap_or(0);
+            if let Some(scrollbar) = preview.horizontal_scrollbar {
+                let track_width = scrollbar.track.width;
+                let max_width = scrollbar.content_width;
                 let thumb_width = (((track_width as f32) * (track_width as f32))
                     / (max_width as f32))
                     .clamp(1.0, track_width as f32) as u16;
                 let scrollable_width = track_width.saturating_sub(thumb_width);
-                let thumb_x = if max_x > 0 {
-                    ((scroll_x as f32 / max_x as f32) * (scrollable_width as f32)) as u16
+                let thumb_x = if scrollbar.max_scroll_x > 0 {
+                    ((scrollbar.scroll_x as f32 / scrollbar.max_scroll_x as f32)
+                        * (scrollable_width as f32)) as u16
                 } else {
                     0
                 };
@@ -254,12 +247,8 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
                     } else {
                         ratatui::style::Style::default().fg(palette.surface1)
                     };
-                    let cell_area = ratatui::layout::Rect::new(
-                        content_area.x + x + 1,
-                        content_area.y + content_area.height - 1,
-                        1,
-                        1,
-                    );
+                    let cell_area =
+                        ratatui::layout::Rect::new(scrollbar.track.x + x, scrollbar.track.y, 1, 1);
                     f.render_widget(
                         ratatui::widgets::Paragraph::new(char_to_draw).style(style),
                         cell_area,
@@ -268,8 +257,8 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
             }
 
             // Status Bar
-            let percent = if max_y > 0 {
-                (scroll_y as f32 / max_y as f32 * 100.0) as u32
+            let percent = if preview.max_scroll_y > 0 {
+                (scroll_y as f32 / preview.max_scroll_y as f32 * 100.0) as u32
             } else {
                 100
             };
@@ -316,7 +305,7 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
 
         if kitty_graphics_enabled && cell_size.is_known() {
             let mut static_placements = Vec::new();
-            wrapped.push_image_placements(&mut static_placements, text_area, scroll_y);
+            preview.push_image_placements(&mut static_placements);
             let _ = paint_static_placements_standalone(
                 &static_placements,
                 cell_size,
@@ -393,7 +382,7 @@ pub fn run_md_command(args: &[String]) -> std::io::Result<i32> {
                             }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
-                            let active_links = wrapped.active_hyperlinks(text_area, scroll_y);
+                            let active_links = preview.active_hyperlinks();
                             if let Some((_, _, url)) = active_links
                                 .iter()
                                 .find(|((x, y), _, _)| *x == mouse.column && *y == mouse.row)

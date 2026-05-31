@@ -375,24 +375,6 @@ fn render_kanban_detail_modal(
     };
     frame.render_widget(Paragraph::new(terminal_line), rows[5]);
 
-    let max_scroll = kanban_detail_max_scroll(app);
-    let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
-        max_offset_from_bottom: max_scroll as usize,
-        viewport_rows: rows[6].height.max(1) as usize,
-    };
-    let track = super::release_notes_scrollbar_rect(rows[6], metrics);
-    let desc_area = track
-        .map(|_| {
-            Rect::new(
-                rows[6].x,
-                rows[6].y,
-                rows[6].width.saturating_sub(1),
-                rows[6].height,
-            )
-        })
-        .unwrap_or(rows[6]);
-
     let doc = build_kanban_description_doc(item, p);
     let cell_size = if app.kitty_graphics_enabled {
         crate::kitty_graphics::HostCellSize::from_terminal(area)
@@ -400,29 +382,60 @@ fn render_kanban_detail_modal(
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let wrapped = doc.wrap(
-        desc_area.width as usize,
-        app.extensions.kanban.detail_horizontal_scroll as usize,
+    let preview = super::MarkdownPreview::build(super::MarkdownPreviewRequest {
+        document: &doc,
+        area: rows[6],
+        scroll_y: app.extensions.kanban.detail_scroll,
+        scroll_x: app.extensions.kanban.detail_horizontal_scroll,
         cell_size,
-        app.palette.text,
-    );
+        text_color: app.palette.text,
+        scrollbars: super::MarkdownPreviewScrollbars::BOTH,
+    });
 
-    let desc_text =
-        Paragraph::new(wrapped.lines().to_vec()).scroll((app.extensions.kanban.detail_scroll, 0));
-    frame.render_widget(desc_text, desc_area);
+    let desc_text = Paragraph::new(preview.lines().to_vec()).scroll((preview.scroll_y, 0));
+    frame.render_widget(desc_text, preview.text_area);
 
     if app.kitty_graphics_enabled && cell_size.is_known() {
         if let Ok(mut placements) = app.extensions.static_image_placements.lock() {
-            wrapped.push_image_placements(
-                &mut placements,
-                desc_area,
-                app.extensions.kanban.detail_scroll,
-            );
+            preview.push_image_placements(&mut placements);
         }
     }
 
-    if let Some(track) = track {
-        super::render_scrollbar(frame, metrics, track, p.overlay0, p.overlay1, "▐");
+    if let Some(scrollbar) = preview.vertical_scrollbar {
+        super::render_scrollbar(
+            frame,
+            scrollbar.metrics,
+            scrollbar.track,
+            p.overlay0,
+            p.overlay1,
+            "▐",
+        );
+    }
+    if let Some(scrollbar) = preview.horizontal_scrollbar {
+        let track_width = scrollbar.track.width;
+        let thumb_width = (((track_width as f32) * (track_width as f32))
+            / (scrollbar.content_width as f32))
+            .clamp(1.0, track_width as f32) as u16;
+        let scrollable_width = track_width.saturating_sub(thumb_width);
+        let thumb_x = if scrollbar.max_scroll_x > 0 {
+            ((scrollbar.scroll_x as f32 / scrollbar.max_scroll_x as f32)
+                * (scrollable_width as f32)) as u16
+        } else {
+            0
+        };
+        for x in 0..track_width {
+            let is_thumb = x >= thumb_x && x < thumb_x + thumb_width;
+            let symbol = if is_thumb { "━" } else { "─" };
+            let style = if is_thumb {
+                Style::default().fg(p.overlay1)
+            } else {
+                Style::default().fg(p.overlay0)
+            };
+            frame.render_widget(
+                Paragraph::new(symbol).style(style),
+                Rect::new(scrollbar.track.x + x, scrollbar.track.y, 1, 1),
+            );
+        }
     }
 
     // Footer hint
@@ -529,138 +542,59 @@ pub fn kanban_detail_modal_size(area: Rect) -> (u16, u16) {
 }
 
 pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
-    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
-        return 0;
-    };
-    let Some(item) = app
-        .extensions
-        .kanban
-        .items
-        .iter()
-        .find(|it| it.uuid == *uuid)
-    else {
-        return 0;
-    };
-    let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
-    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
-        return 0;
-    };
-    let inner = Block::default().borders(Borders::ALL).inner(popup);
-    if inner.height < 7 || inner.width < 4 {
-        return 0;
-    }
-    let rows = Layout::vertical([
-        Constraint::Length(1), // Header title
-        Constraint::Length(1), // Divider
-        Constraint::Length(1), // Card Title
-        Constraint::Length(1), // Status Badge
-        Constraint::Length(1), // UUID
-        Constraint::Length(1), // Associated Terminal
-        Constraint::Min(1),    // Description
-        Constraint::Length(1), // Footer hint
-    ])
-    .split(inner);
-    let desc_area = rows[6];
-
-    let doc = build_kanban_description_doc(item, &app.palette);
-    let cell_size = if app.kitty_graphics_enabled {
-        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
-    } else {
-        crate::kitty_graphics::HostCellSize::default()
-    };
-
-    let wrapped = doc.wrap(
-        desc_area.width as usize,
-        app.extensions.kanban.detail_horizontal_scroll as usize,
-        cell_size,
-        app.palette.text,
-    );
-    wrapped.max_scroll_y(desc_area.height)
+    kanban_detail_preview(app)
+        .map(|preview| preview.max_scroll_y)
+        .unwrap_or(0)
 }
 
 pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
-    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
-        return 0;
-    };
-    let Some(item) = app
-        .extensions
-        .kanban
-        .items
-        .iter()
-        .find(|it| it.uuid == *uuid)
-    else {
-        return 0;
-    };
-    let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
-    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
-        return 0;
-    };
-    let inner = Block::default().borders(Borders::ALL).inner(popup);
-    if inner.height < 7 || inner.width < 4 {
-        return 0;
-    }
-    let rows = Layout::vertical([
-        Constraint::Length(1), // Header title
-        Constraint::Length(1), // Divider
-        Constraint::Length(1), // Card Title
-        Constraint::Length(1), // Status Badge
-        Constraint::Length(1), // UUID
-        Constraint::Length(1), // Associated Terminal
-        Constraint::Min(1),    // Description
-        Constraint::Length(1), // Footer hint
-    ])
-    .split(inner);
-    let desc_area = rows[6];
-
-    let max_scroll = kanban_detail_max_scroll(app);
-    let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
-        max_offset_from_bottom: max_scroll as usize,
-        viewport_rows: desc_area.height.max(1) as usize,
-    };
-    let has_scrollbar = super::release_notes_scrollbar_rect(desc_area, metrics).is_some();
-    let text_area = if has_scrollbar {
-        Rect::new(
-            desc_area.x,
-            desc_area.y,
-            desc_area.width.saturating_sub(1),
-            desc_area.height,
-        )
-    } else {
-        desc_area
-    };
-
-    let doc = build_kanban_description_doc(item, &app.palette);
-    let cell_size = if app.kitty_graphics_enabled {
-        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
-    } else {
-        crate::kitty_graphics::HostCellSize::default()
-    };
-
-    let wrapped = doc.wrap(text_area.width as usize, 0, cell_size, app.palette.text);
-    wrapped.max_scroll_x(text_area.width)
+    kanban_detail_preview(app)
+        .map(|preview| preview.max_scroll_x)
+        .unwrap_or(0)
 }
 
 pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), String, String)> {
-    let Some(ref uuid) = app.extensions.kanban.detail_uuid else {
-        return Vec::new();
-    };
-    let Some(item) = app
+    kanban_detail_preview(app)
+        .map(|preview| preview.active_hyperlinks())
+        .unwrap_or_default()
+}
+
+fn kanban_detail_preview(app: &AppState) -> Option<super::MarkdownPreview> {
+    let uuid = app.extensions.kanban.detail_uuid.as_ref()?;
+    let item = app
         .extensions
         .kanban
         .items
         .iter()
-        .find(|it| it.uuid == *uuid)
-    else {
-        return Vec::new();
+        .find(|it| it.uuid == *uuid)?;
+    let desc_area = kanban_detail_description_area(app)?;
+
+    let doc = build_kanban_description_doc(item, &app.palette);
+    let cell_size = if app.kitty_graphics_enabled {
+        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
+    } else {
+        crate::kitty_graphics::HostCellSize::default()
     };
+
+    Some(super::MarkdownPreview::build(
+        super::MarkdownPreviewRequest {
+            document: &doc,
+            area: desc_area,
+            scroll_y: app.extensions.kanban.detail_scroll,
+            scroll_x: app.extensions.kanban.detail_horizontal_scroll,
+            cell_size,
+            text_color: app.palette.text,
+            scrollbars: super::MarkdownPreviewScrollbars::BOTH,
+        },
+    ))
+}
+
+fn kanban_detail_description_area(app: &AppState) -> Option<Rect> {
     let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
-    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
-        return Vec::new();
-    };
+    let popup = centered_popup_rect(app.view.terminal_area, width, height)?;
     let inner = Block::default().borders(Borders::ALL).inner(popup);
     if inner.height < 7 || inner.width < 4 {
-        return Vec::new();
+        return None;
     }
     let rows = Layout::vertical([
         Constraint::Length(1), // Header title
@@ -673,41 +607,7 @@ pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), Strin
         Constraint::Length(1), // Footer hint
     ])
     .split(inner);
-    let desc_area = rows[6];
-
-    let max_scroll = kanban_detail_max_scroll(app);
-    let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.extensions.kanban.detail_scroll) as usize,
-        max_offset_from_bottom: max_scroll as usize,
-        viewport_rows: desc_area.height.max(1) as usize,
-    };
-    let has_scrollbar = super::release_notes_scrollbar_rect(desc_area, metrics).is_some();
-    let text_area = if has_scrollbar {
-        Rect::new(
-            desc_area.x,
-            desc_area.y,
-            desc_area.width.saturating_sub(1),
-            desc_area.height,
-        )
-    } else {
-        desc_area
-    };
-
-    let doc = build_kanban_description_doc(item, &app.palette);
-    let cell_size = if app.kitty_graphics_enabled {
-        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
-    } else {
-        crate::kitty_graphics::HostCellSize::default()
-    };
-
-    let wrapped = doc.wrap(
-        text_area.width as usize,
-        app.extensions.kanban.detail_horizontal_scroll as usize,
-        cell_size,
-        app.palette.text,
-    );
-
-    wrapped.active_hyperlinks(text_area, app.extensions.kanban.detail_scroll)
+    Some(rows[6])
 }
 
 pub fn kanban_item_at(

@@ -265,6 +265,19 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
             app.render_notify.notify_one();
             true
         }
+        AppEvent::AudioSummaryError(err) => {
+            app.extensions.tab_summarizer = None;
+            app.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Audio Summary Error".into(),
+                context: err.clone(),
+                target: None,
+            });
+            app.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            app.render_notify.notify_one();
+            true
+        }
         _ => false,
     }
 }

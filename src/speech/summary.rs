@@ -187,11 +187,10 @@ async fn run_websocket_summary(
         Err(e) => {
             error!("Audio Summary: failed to connect to Gemini Live: {}", e);
             let _ = app_event_tx
-                .send(AppEvent::SpeechTranscribed {
-                    workspace_id: "".to_string(),
-                    pane_id: None,
-                    result: Err(format!("WebSocket connection failed: {}", e)),
-                })
+                .send(AppEvent::AudioSummaryError(format!(
+                    "WebSocket connection failed: {}",
+                    e
+                )))
                 .await;
             active.store(false, Ordering::Release);
             return;
@@ -230,6 +229,12 @@ async fn run_websocket_summary(
         .await
     {
         error!("Audio Summary: failed to send setup message: {}", e);
+        let _ = app_event_tx
+            .send(AppEvent::AudioSummaryError(format!(
+                "Failed to send setup message: {}",
+                e
+            )))
+            .await;
         active.store(false, Ordering::Release);
         return;
     }
@@ -258,21 +263,45 @@ async fn run_websocket_summary(
         .await
     {
         error!("Audio Summary: failed to send content message: {}", e);
+        let _ = app_event_tx
+            .send(AppEvent::AudioSummaryError(format!(
+                "Failed to send content message: {}",
+                e
+            )))
+            .await;
         active.store(false, Ordering::Release);
         return;
     }
 
     info!("Audio Summary: setup complete, waiting for audio response stream...");
 
+    let has_audio = Arc::new(AtomicBool::new(false));
+    let mut server_error_message = None;
+
     while active.load(Ordering::Acquire) {
         let msg = match read.next().await {
             Some(Ok(m)) => m,
             Some(Err(e)) => {
                 error!("Audio Summary: WebSocket read error: {}", e);
+                server_error_message = Some(format!("WebSocket read error: {}", e));
                 break;
             }
-            None => break,
+            None => {
+                info!("Audio Summary: WebSocket read returned None");
+                break;
+            }
         };
+
+        if let tokio_tungstenite::tungstenite::Message::Close(cf) = &msg {
+            info!("Audio Summary: WebSocket Close frame received: {:?}", cf);
+            if let Some(frame) = cf {
+                if !frame.reason.is_empty() {
+                    server_error_message = Some(frame.reason.to_string());
+                }
+            }
+        } else {
+            info!("Audio Summary: WebSocket message received: {:?}", msg);
+        }
 
         let text_opt = match &msg {
             tokio_tungstenite::tungstenite::Message::Text(text) => Some(text.clone()),
@@ -291,6 +320,7 @@ async fn run_websocket_summary(
                     .and_then(|m| m.as_str())
                 {
                     error!("Audio Summary: server returned error: {}", err);
+                    server_error_message = Some(err.to_string());
                     break;
                 }
 
@@ -322,6 +352,7 @@ async fn run_websocket_summary(
                                                     base64::prelude::BASE64_STANDARD
                                                         .decode(base64_data)
                                                 {
+                                                    has_audio.store(true, Ordering::Release);
                                                     // Gemini Live outputs 24kHz, 1-channel, 16-bit PCM little-endian.
                                                     let mut raw_samples = Vec::new();
                                                     for chunk in raw_bytes.chunks_exact(2) {
@@ -371,23 +402,37 @@ async fn run_websocket_summary(
         }
     }
 
-    // Wait until audio buffer is fully drained, up to a timeout, before closing stream
-    let start = std::time::Instant::now();
-    while active.load(Ordering::Acquire) && start.elapsed() < std::time::Duration::from_secs(30) {
-        let empty = {
-            if let Ok(buf) = audio_buffer.lock() {
-                buf.is_empty()
-            } else {
-                true
-            }
-        };
-        if empty {
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    }
-
+    let was_cancelled = !active.load(Ordering::Acquire);
     active.store(false, Ordering::Release);
-    // Send event indicating summary is complete to remove toast
-    let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
+
+    if !was_cancelled {
+        if let Some(err) = server_error_message {
+            let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
+        } else if !has_audio.load(Ordering::Acquire) {
+            let _ = app_event_tx
+                .send(AppEvent::AudioSummaryError(
+                    "WebSocket connection closed by server before audio was received.".to_string(),
+                ))
+                .await;
+        } else {
+            // Wait until audio buffer is fully drained, up to a timeout, before closing stream
+            let start = std::time::Instant::now();
+            while active.load(Ordering::Acquire)
+                && start.elapsed() < std::time::Duration::from_secs(30)
+            {
+                let empty = {
+                    if let Ok(buf) = audio_buffer.lock() {
+                        buf.is_empty()
+                    } else {
+                        true
+                    }
+                };
+                if empty {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+            let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
+        }
+    }
 }

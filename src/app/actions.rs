@@ -2058,6 +2058,7 @@ impl AppState {
             AppEvent::SpeechStartRecording { .. } => Vec::new(),
             AppEvent::SpeechStopRecording { .. } => Vec::new(),
             AppEvent::AudioSummaryFinished => Vec::new(),
+            AppEvent::AudioSummaryError(_) => Vec::new(),
         }
     }
 

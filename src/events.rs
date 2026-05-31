@@ -118,4 +118,6 @@ pub enum AppEvent {
     SpeechStopRecording { abort: bool },
     /// Signal that the audio summary playback is finished.
     AudioSummaryFinished,
+    /// Signal that the audio summary playback encountered an error.
+    AudioSummaryError(String),
 }

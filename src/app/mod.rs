@@ -98,6 +98,8 @@ pub struct App {
     pub(crate) copy_feedback_deadline: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
+    pub(crate) git_refresh_due_after_in_flight: bool,
+    pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
     pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) last_agent_click: Option<(usize, usize, crate::layout::PaneId, std::time::Instant)>,
@@ -580,6 +582,8 @@ impl App {
             event_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             git_refresh_in_flight: false,
+            git_refresh_due_after_in_flight: false,
+            git_status_cache: HashMap::new(),
             last_sidebar_divider_click: None,
             last_pane_click: None,
             last_agent_click: None,
@@ -1718,6 +1722,7 @@ pub(crate) mod tests {
 
         app.handle_internal_event(AppEvent::GitStatusRefreshed {
             results: Vec::new(),
+            cache_updates: Vec::new(),
         });
 
         assert!(!app.git_refresh_in_flight);
@@ -1740,6 +1745,7 @@ pub(crate) mod tests {
                 ahead_behind: Some((1, 0)),
                 space: None,
             }],
+            cache_updates: Vec::new(),
         });
 
         assert!(app.render_dirty.load(Ordering::Acquire));
@@ -2959,9 +2965,11 @@ pub(crate) mod tests {
 
         assert_eq!(response["result"]["type"], "pane_info");
         assert_eq!(response["result"]["pane"]["tab_id"], target_tab_id);
+        let response_cwd =
+            std::path::PathBuf::from(response["result"]["pane"]["cwd"].as_str().unwrap());
         assert_eq!(
-            response["result"]["pane"]["cwd"],
-            split_cwd.display().to_string()
+            crate::worktree::canonical_or_original(&response_cwd),
+            crate::worktree::canonical_or_original(&split_cwd)
         );
         assert_eq!(response["result"]["pane"]["focused"], false);
         assert_eq!(app.state.active, Some(0));
@@ -3140,6 +3148,47 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn pane_close_request_requires_confirmation_before_closing_parent_worktree_group() {
+        let mut app = test_app();
+        let mut parent = Workspace::test_new("api-pane-close-parent");
+        parent.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr".into(),
+            is_linked_worktree: false,
+        });
+        let mut child = Workspace::test_new("api-pane-close-child");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr-child".into(),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces = vec![parent, child];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 1;
+
+        let target_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let target_pane_id = app.pane_info(0, target_pane).unwrap().pane_id;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_close_parent_group".into(),
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneTarget {
+                pane_id: target_pane_id,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["error"]["code"], "confirmation_required");
+        assert_eq!(app.state.mode, Mode::ConfirmClose);
+        assert_eq!(app.state.selected, 0);
+        assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    #[test]
     fn session_dirty_flag_schedules_debounced_save() {
         let mut app = test_app();
         app.no_session = false;
@@ -3174,7 +3223,7 @@ pub(crate) mod tests {
         app.next_auto_update_check = Some(now + Duration::from_secs(6));
 
         assert_eq!(
-            app.next_headless_loop_deadline(now, false),
+            app.next_headless_loop_deadline_with_git_refresh(now, false, true),
             app.session_save_deadline
         );
     }
@@ -3191,7 +3240,10 @@ pub(crate) mod tests {
         app.session_save_deadline = None;
         app.state.workspaces.clear();
 
-        assert_eq!(app.next_headless_loop_deadline(now, false), None);
+        assert_eq!(
+            app.next_headless_loop_deadline_with_git_refresh(now, false, true),
+            None
+        );
     }
 
     #[test]

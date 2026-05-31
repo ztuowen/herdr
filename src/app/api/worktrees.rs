@@ -1242,7 +1242,9 @@ mod tests {
             }),
         });
 
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap_or_else(|err| {
+            panic!("expected success response, got {response}: {err}");
+        });
         let ResponseResult::WorktreeOpened {
             workspace,
             already_open,

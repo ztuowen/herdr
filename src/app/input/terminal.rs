@@ -816,6 +816,7 @@ mod tests {
             label: "ctrl+alt+g".into(),
             command,
             action: crate::config::CustomCommandAction::Shell,
+            description: None,
         }];
 
         app.handle_terminal_key(TerminalKey::new(
@@ -864,6 +865,7 @@ mod tests {
             label: "ctrl+alt+g".into(),
             command: "printf direct-pane".into(),
             action: crate::config::CustomCommandAction::Pane,
+            description: None,
         }];
 
         app.handle_terminal_key(TerminalKey::new(

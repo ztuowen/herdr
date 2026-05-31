@@ -114,6 +114,10 @@ impl App {
     }
 
     pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
+        if key.kind == crossterm::event::KeyEventKind::Release {
+            self.release_events_supported = true;
+        }
+
         if self.no_session
             && self
                 .state

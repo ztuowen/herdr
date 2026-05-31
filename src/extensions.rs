@@ -121,15 +121,11 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                 });
 
                                 let event_tx = app.event_tx.clone();
-                                let api_key = match &app
-                                    .state
-                                    .extensions
-                                    .speech_to_text
-                                    .gemini_api_key
-                                {
-                                    Some(k) if !k.trim().is_empty() => k.clone(),
-                                    _ => {
-                                        let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
+                                let api_key =
+                                    match &app.state.extensions.speech_to_text.gemini_api_key {
+                                        Some(k) if !k.trim().is_empty() => k.clone(),
+                                        _ => {
+                                            let _ = event_tx.try_send(AppEvent::SpeechTranscribed {
                                             workspace_id: workspace_id.clone(),
                                             pane_id: Some(pane_id),
                                             result: Err(
@@ -137,25 +133,23 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                                     .to_string(),
                                             ),
                                         });
-                                        return true;
-                                    }
-                                };
+                                            return true;
+                                        }
+                                    };
 
                                 let workspace_id_clone = workspace_id.clone();
                                 let raw_text_clone = raw_text.clone();
                                 std::thread::spawn(move || {
-                                    let postprocess_result =
-                                        crate::speech::run_gemini_postprocess(
-                                            api_key,
-                                            raw_text_clone,
-                                            system_instruction,
-                                        );
-                                    let _ =
-                                        event_tx.blocking_send(AppEvent::SpeechTranscribed {
-                                            workspace_id: workspace_id_clone,
-                                            pane_id: Some(pane_id),
-                                            result: postprocess_result,
-                                        });
+                                    let postprocess_result = crate::speech::run_gemini_postprocess(
+                                        api_key,
+                                        raw_text_clone,
+                                        system_instruction,
+                                    );
+                                    let _ = event_tx.blocking_send(AppEvent::SpeechTranscribed {
+                                        workspace_id: workspace_id_clone,
+                                        pane_id: Some(pane_id),
+                                        result: postprocess_result,
+                                    });
                                 });
                             }
                         }

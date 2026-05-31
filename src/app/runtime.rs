@@ -87,6 +87,7 @@ impl App {
                         }
                     }
                     crossterm::event::KeyEventKind::Release => {
+                        self.release_events_supported = true;
                         self.suppressed_repeat_keys.remove(&key_id);
                         self.handle_speech_to_text_key(key)
                     }

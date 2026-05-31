@@ -1251,6 +1251,9 @@ impl App {
         for event in events {
             match event {
                 crate::raw_input::RawInputEvent::Key(key) => {
+                    if key.kind == crossterm::event::KeyEventKind::Release {
+                        self.release_events_supported = true;
+                    }
                     if self.handle_speech_to_text_key(key) {
                         continue;
                     }
@@ -1450,13 +1453,13 @@ impl App {
                 target: None,
             });
 
-            if let Err(e) =
-                self.event_tx
-                    .try_send(crate::events::AppEvent::SpeechStartRecording {
-                        workspace_id,
-                        pane_id,
-                        is_agent,
-                    })
+            if let Err(e) = self
+                .event_tx
+                .try_send(crate::events::AppEvent::SpeechStartRecording {
+                    workspace_id,
+                    pane_id,
+                    is_agent,
+                })
             {
                 tracing::error!("failed to send SpeechStartRecording: {:?}", e);
             }
@@ -1505,7 +1508,16 @@ impl App {
     }
 
     pub(crate) fn stop_recording(&mut self, abort: bool) {
+        let was_recording = self.extensions.speech_recorder.is_recording();
         let active = self.extensions.speech_recorder.stop();
+
+        if !was_recording && !abort {
+            return;
+        }
+
+        if let Some(active_flag) = &active {
+            active_flag.store(false, std::sync::atomic::Ordering::Release);
+        }
 
         if !abort && active.is_some() {
             let previous_toast = self.state.toast.clone();

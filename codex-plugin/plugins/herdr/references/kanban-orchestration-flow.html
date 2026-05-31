@@ -337,14 +337,14 @@
         <div class="stack">
           <article class="node">
             <h3>Worker Agent</h3>
-            <p>Uses <code>herdr-kanban-worker</code>, attaches the pane, implements scoped work, records validation evidence, then moves the card forward.</p>
-            <div class="command"><code>todo -> ongoing -> reviewing</code></div>
+            <p>Uses <code>herdr-kanban-worker</code>, attaches the pane, implements scoped work, records validation evidence, commits and pushes a task branch, then moves the card forward.</p>
+            <div class="command"><code>todo -> ongoing -> branch pushed -> reviewing</code></div>
           </article>
 
           <article class="node done">
             <h3>Reviewer Agent</h3>
-            <p>Uses <code>herdr-kanban-reviewer</code>, checks acceptance and validation evidence, then accepts or returns the card.</p>
-            <div class="command"><code>reviewing -> done | todo | blocked</code></div>
+            <p>Uses <code>herdr-kanban-reviewer</code>, checks the pushed branch, acceptance, and validation evidence, then merges accepted work or returns the card.</p>
+            <div class="command"><code>reviewing -> merge -> done | todo | blocked</code></div>
           </article>
 
           <article class="node human">
@@ -371,7 +371,7 @@
       </article>
       <article class="node">
         <h3>Default Safety</h3>
-        <p>YOLO applies only inside spawned Codex panes. The runner itself should still avoid push, release, delete-worktree, and external publication unless explicitly enabled.</p>
+        <p>YOLO applies only inside spawned Codex panes. Workers may push task branches for review; reviewers own merges and integration pushes when repo rules allow them.</p>
       </article>
       <article class="node">
         <h3>Plugin Boundary</h3>

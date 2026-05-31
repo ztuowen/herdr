@@ -80,7 +80,7 @@ HERDR_KANBAN_WORKSPACE_PREFIX=kanban
 1. Lists `todo` cards.
 2. Skips `clarify:` cards, invalid cards, and cards with an existing `assigned_pane`.
 3. Creates a disposable workspace for each selected card.
-4. Runs Codex in that workspace's root pane with `herdr pane run`.
+4. Runs `codex exec` in that workspace's root pane with `herdr pane run`.
 5. Records `owner_role`, `assigned_pane`, `assigned_workspace`, and `last_actor` in the card description frontmatter.
 
 The worker prompt instructs the spawned agent to attach its own pane:
@@ -91,6 +91,7 @@ herdr kanban update <uuid> --status ongoing
 ```
 
 The prompt also includes the card description file path so the worker can update the handoff document directly.
+Worker handoff to review requires a committed and pushed task branch. The worker records `branch_name` and `commit_sha` in front matter before moving the card to `reviewing`.
 
 ## Review Flow
 
@@ -100,9 +101,11 @@ The prompt also includes the card description file path so the worker can update
 2. Skips cards already assigned to a reviewer.
 3. Requires a `## Validation Evidence` section.
 4. Creates a disposable reviewer workspace.
-5. Runs Codex in that workspace's root pane in YOLO mode with the reviewer skill prompt.
+5. Runs `codex exec` in that workspace's root pane in YOLO mode with the reviewer skill prompt.
 
 The reviewer prompt includes the card description file path so review notes and routing decisions can be recorded directly in the handoff document.
+Reviewer acceptance owns the merge gate: the reviewer inspects the pushed branch, merges or fast-forwards according to repo rules, pushes the integration branch when allowed, then moves the card to `done`.
+Rejected review writes findings, clears assignment metadata, and moves the card back to `todo` so the dispatcher can assign a fresh worker.
 When review needs human input, reviewers write the next ask into `## Human Review Request`, set `review_state` to `human-review-required` or `triage-question-required`, set `blocked_reason`, and move the card to `blocked`; triage or the coordinator surfaces the ask.
 
 ## Sweep Flow

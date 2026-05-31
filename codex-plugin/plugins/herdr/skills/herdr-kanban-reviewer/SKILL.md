@@ -12,7 +12,7 @@ Review against the card contract. If the card is underspecified or wrong, send i
 ## Workflow
 
 1. List `reviewing` cards, which are ready for or already owned by a review agent.
-2. Inspect the card, attached pane, implementation diff, and validation evidence.
+2. Inspect the card, attached pane, pushed branch, implementation diff, and validation evidence.
 3. Compare results to acceptance criteria.
 4. Update the card with review notes.
 5. Route the card.
@@ -22,14 +22,23 @@ Review against the card contract. If the card is underspecified or wrong, send i
 Accepted:
 
 ```bash
+# Merge or fast-forward the reviewed branch according to repo rules first.
 herdr kanban update <uuid> --status done
 ```
 
+The reviewer is the merge gate. Do not mark accepted work `done` until the reviewed branch has been merged or fast-forwarded into the repo's integration branch and pushed when repo rules allow it.
+
 Rejected:
 
-- record findings in the card
-- move to `todo` when worker reassignment is enough
-- keep or return to `ongoing` only when the same worker should continue
+- record concrete findings in `## Review Notes`
+- clear `owner_role`, `assigned_pane`, and `assigned_workspace` metadata if present
+- move to `todo` for a fresh worker assignment
+- do not move rejected work to `ongoing`
+
+Invalid handoff:
+
+- if `branch_name`, `commit_sha`, validation evidence, or a clean pushed branch is missing, record the missing handoff item in `## Review Notes`
+- clear worker assignment metadata and move to `todo`
 
 Invalid card:
 
@@ -55,3 +64,5 @@ If review needs human input, do not ask the human directly. Update the card desc
 - move the card to `blocked`
 
 Triage or the coordinator owns surfacing that ask to the human and making the card routable again.
+
+After moving the card to `done`, `todo`, or `blocked`, exit the Codex session. The dispatcher and sweeper own the next pane lifecycle step.

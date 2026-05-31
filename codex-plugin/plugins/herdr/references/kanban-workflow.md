@@ -72,6 +72,8 @@ Because the current Herdr Kanban status set has no dedicated `human-review` colu
 workflow_state: ready
 owner_role:
 assigned_pane:
+branch_name:
+commit_sha:
 review_state:
 blocked_reason:
 last_actor: triage
@@ -109,7 +111,7 @@ last_actor: triage
 ## Handoff Rules
 - Update this card before changing status.
 - Attach the active Herdr pane before work starts.
-- Move to reviewing only after validation evidence is recorded.
+- Move to reviewing only after validation evidence is recorded and the work is committed and pushed to `branch_name` at `commit_sha`.
 ```
 
 ## Coordinator Hooks
@@ -130,13 +132,14 @@ last_actor: triage
 - `worker.progress`: update card only for meaningful checkpoints.
 - `worker.blocked`: write concrete blocker and move to `blocked` only when human/manual intervention is required.
 - `worker.validation_complete`: record evidence.
-- `worker.finished`: move to `reviewing`.
+- `worker.finished`: commit and push the task branch, record `branch_name` and `commit_sha`, then move to `reviewing`.
 
 ## Reviewer Hooks
 
 - `reviewer.assigned`: inspect a `reviewing` card.
-- `reviewer.accepted`: move to `done`.
-- `reviewer.rejected`: record findings and return.
+- `reviewer.accepted`: merge or fast-forward the reviewed branch, push the integration branch when allowed, then move to `done`.
+- `reviewer.rejected`: record findings, clear assignment metadata, and move to `todo`.
+- `reviewer.invalid_handoff`: record missing branch/commit/evidence, clear assignment metadata, and move to `todo`.
 - `reviewer.needs_human_review`: move to `blocked`, set `review_state: human-review-required`, and write the human review request.
 - `reviewer.invalid_card`: send back to triage.
 

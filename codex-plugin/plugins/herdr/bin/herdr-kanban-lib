@@ -58,6 +58,7 @@ import sys
 codex_bin, worktree, prompt = sys.argv[1:4]
 argv = [
     codex_bin,
+    "exec",
     "--dangerously-bypass-approvals-and-sandbox",
     "--cd",
     worktree,
@@ -80,7 +81,7 @@ Read the card from Herdr Kanban and use the description file above as the handof
 
 herdr kanban attach $uuid
 
-Then move the card to ongoing, implement only the scoped work, update the description file with implementation notes and validation evidence, and move it to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked.
+Then move the card to ongoing, implement only the scoped work on a task branch, update the description file with implementation notes and validation evidence, commit the completed work, push the task branch, record branch_name and commit_sha in the description front matter, and move it to reviewing. Do not move dirty or unpushed work to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked. After moving the card to reviewing or blocked, exit this Codex session so the dispatcher can reclaim the pane.
 EOF
 }
 
@@ -93,9 +94,11 @@ Use the herdr-kanban-reviewer skill.
 Card: $uuid
 Description file: $description_path
 
-Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill.
+Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria, validation evidence, and the pushed branch recorded in branch_name and commit_sha. If accepted, merge or fast-forward the reviewed branch according to repo rules, push the integration branch when allowed, record the merge result in ## Review Notes, and move it to done. If changes are required, record findings in ## Review Notes, clear owner_role, assigned_pane, and assigned_workspace in the description front matter, and move it back to todo for a fresh worker. Do not move rejected work to ongoing.
 
 If review needs human input, do not ask the human directly. Update the description file with review notes, set review_state to human-review-required or triage-question-required, set blocked_reason with a short reason, fill ## Human Review Request with the exact question or artifact to inspect, and move the card to blocked.
+
+After moving the card to done, todo, or blocked, exit this Codex session so the dispatcher can reclaim the pane.
 EOF
 }
 

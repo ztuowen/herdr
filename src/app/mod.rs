@@ -3947,4 +3947,79 @@ last_pane = "prefix+tab"
         app.sync_toast_deadline(previous);
         assert!(app.toast_deadline.is_some());
     }
+
+    #[test]
+    fn test_speech_to_text_toggle_mode() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.release_events_supported = true;
+
+        // Mock Gemini API Key to enable STT checks under no_session mode
+        app.state.extensions.speech_to_text.gemini_api_key = Some("test-key".to_string());
+
+        let stt_key = TerminalKey::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+
+        // Mock start recording state directly (bypassing microphone stream initialization)
+        app.state.extensions.recording_workspace = Some("test_workspace_id".to_string());
+        app.extensions.speech_recorder.start_server(stt_key);
+        assert!(!app.extensions.speech_recorder.is_toggle);
+
+        // 1. Release quickly (<400ms): should enable toggle mode and not stop
+        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Release)));
+        assert!(app.state.extensions.recording_workspace.is_some());
+        assert!(app.extensions.speech_recorder.is_toggle);
+
+        // 2. Subsequent Press: should stop recording
+        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Press)));
+        assert!(!app.extensions.speech_recorder.is_recording());
+        assert!(!app.extensions.speech_recorder.is_toggle);
+
+        // Simulate transcription event finishing to clear recording_workspace
+        app.handle_internal_event(crate::events::AppEvent::SpeechTranscribed {
+            workspace_id: "test_workspace_id".to_string(),
+            pane_id: None,
+            result: Ok("hello".to_string()),
+        });
+        assert!(app.state.extensions.recording_workspace.is_none());
+    }
+
+    #[test]
+    fn test_speech_to_text_push_to_talk() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.release_events_supported = true;
+
+        // Mock Gemini API Key to enable STT checks under no_session mode
+        app.state.extensions.speech_to_text.gemini_api_key = Some("test-key".to_string());
+
+        let stt_key = TerminalKey::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+
+        // Mock start recording state directly (bypassing microphone stream initialization)
+        app.state.extensions.recording_workspace = Some("test_workspace_id".to_string());
+        app.extensions.speech_recorder.start_server(stt_key);
+        assert!(!app.extensions.speech_recorder.is_toggle);
+
+        // Simulate elapsed time >= 400ms by modifying the start_time to be in the past
+        if let Some(start_time) = &mut app.extensions.speech_recorder.start_time {
+            *start_time = std::time::Instant::now() - std::time::Duration::from_millis(400);
+        }
+
+        // 1. Release after >=400ms: should stop recording directly (no toggle mode)
+        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Release)));
+        assert!(!app.extensions.speech_recorder.is_recording());
+
+        // Simulate transcription event finishing to clear recording_workspace
+        app.handle_internal_event(crate::events::AppEvent::SpeechTranscribed {
+            workspace_id: "test_workspace_id".to_string(),
+            pane_id: None,
+            result: Ok("hello".to_string()),
+        });
+        assert!(app.state.extensions.recording_workspace.is_none());
+    }
 }

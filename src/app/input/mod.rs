@@ -194,20 +194,32 @@ impl App {
                     return true;
                 }
 
-                let should_stop = if key.kind == crossterm::event::KeyEventKind::Release {
-                    true
-                } else if key.kind == crossterm::event::KeyEventKind::Press {
-                    if !self.release_events_supported {
-                        if let Some(start_time) = self.extensions.speech_recorder.start_time() {
-                            start_time.elapsed() >= std::time::Duration::from_millis(400)
+                let elapsed = self
+                    .extensions
+                    .speech_recorder
+                    .start_time()
+                    .map(|t| t.elapsed())
+                    .unwrap_or(std::time::Duration::ZERO);
+
+                let should_stop = match key.kind {
+                    crossterm::event::KeyEventKind::Release => {
+                        if elapsed < std::time::Duration::from_millis(400) {
+                            self.extensions.speech_recorder.is_toggle = true;
+                            false
                         } else {
                             true
                         }
-                    } else {
-                        false
                     }
-                } else {
-                    false
+                    crossterm::event::KeyEventKind::Press => {
+                        if self.extensions.speech_recorder.is_toggle {
+                            true
+                        } else if !self.release_events_supported {
+                            elapsed >= std::time::Duration::from_millis(400)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
                 };
 
                 if should_stop {

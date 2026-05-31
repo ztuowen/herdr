@@ -89,10 +89,11 @@ pub enum TranscriptionEvent {
 
 /// Encapsulates the speech-to-text recording state and runtime machinery for App.
 pub struct SpeechRecorder {
-    stream: Option<SendStream>,
-    active: Option<Arc<std::sync::atomic::AtomicBool>>,
-    start_time: Option<std::time::Instant>,
-    key: Option<TerminalKey>,
+    pub(crate) stream: Option<SendStream>,
+    pub(crate) active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) start_time: Option<std::time::Instant>,
+    pub(crate) key: Option<TerminalKey>,
+    pub(crate) is_toggle: bool,
 }
 
 impl SpeechRecorder {
@@ -103,6 +104,7 @@ impl SpeechRecorder {
             active: None,
             start_time: None,
             key: None,
+            is_toggle: false,
         }
     }
 
@@ -126,6 +128,7 @@ impl SpeechRecorder {
     pub fn start_server(&mut self, key: TerminalKey) {
         self.key = Some(key);
         self.start_time = Some(std::time::Instant::now());
+        self.is_toggle = false;
     }
 
     /// Starts a local monolithic recording session.
@@ -139,6 +142,7 @@ impl SpeechRecorder {
     ) -> Result<(), String> {
         self.key = Some(key);
         self.start_time = Some(std::time::Instant::now());
+        self.is_toggle = false;
 
         let audio = AudioStream::start()?;
         self.stream = Some(audio.stream);
@@ -215,6 +219,7 @@ impl SpeechRecorder {
         self.stream = None;
         self.key = None;
         self.start_time = None;
+        self.is_toggle = false;
         self.active.take()
     }
 }

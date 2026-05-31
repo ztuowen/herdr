@@ -61,12 +61,8 @@ struct ClientState {
     mouse_scroll_lines: usize,
     /// Whether outer focus gain should force a full host-terminal redraw.
     redraw_on_focus_gained: bool,
-    /// CPAL recording stream to keep it alive.
-    recording_stream: Option<crate::speech::SendStream>,
-    /// Flags for signaling the recording task.
-    recording_active: Option<Arc<std::sync::atomic::AtomicBool>>,
-    recording_aborted: Option<Arc<std::sync::atomic::AtomicBool>>,
-    recording_buffer: Option<Arc<std::sync::Mutex<Vec<f32>>>>,
+    /// Active speech-to-text pipeline for client-side microphone capture.
+    recording_pipeline: Option<crate::speech::TranscriptionPipeline>,
 }
 
 #[derive(Debug, Default)]
@@ -482,7 +478,7 @@ fn do_handshake(
 // ---------------------------------------------------------------------------
 
 /// Internal events for the client event loop.
-enum ClientLoopEvent {
+pub(crate) enum ClientLoopEvent {
     /// Raw input bytes from stdin.
     StdinInput(Vec<u8>),
     /// Terminal resize detected.
@@ -694,10 +690,7 @@ async fn run_client_loop(
         attach_escape,
         mouse_scroll_lines,
         redraw_on_focus_gained,
-        recording_stream: None,
-        recording_active: None,
-        recording_aborted: None,
-        recording_buffer: None,
+        recording_pipeline: None,
     };
     debug!(?negotiated_encoding, "client render encoding active");
 
@@ -907,15 +900,9 @@ async fn run_client_loop(
                     pane_id,
                     is_agent,
                 } => {
-                    // Stop any existing recording
-                    if let Some(active) = state.recording_active.take() {
-                        active.store(false, Ordering::Release);
+                    if let Some(pipeline) = state.recording_pipeline.take() {
+                        pipeline.abort();
                     }
-                    if let Some(aborted) = state.recording_aborted.take() {
-                        aborted.store(true, Ordering::Release);
-                    }
-                    state.recording_stream = None;
-                    state.recording_buffer = None;
 
                     // Load config
                     let loaded_config = match crate::config::load_live_config() {
@@ -951,128 +938,48 @@ async fn run_client_loop(
                         }
                     };
 
-                    let model = loaded_config
-                        .config
-                        .speech_to_text
-                        .model
-                        .clone()
-                        .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
+                    let model = crate::speech::model_or_default(
+                        loaded_config.config.speech_to_text.model.clone(),
+                    );
+                    let postprocess_instruction = crate::speech::postprocess_instruction(
+                        &loaded_config.config.speech_to_text,
+                        is_agent,
+                    );
 
-                    let postprocess_instruction = if is_agent {
-                        loaded_config
-                            .config
-                            .speech_to_text
-                            .agent_system_instruction
-                            .clone()
-                            .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
-                            .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to an AI coding assistant. Clean up the raw transcription to make it clear, coherent, and grammatically correct. Keep the natural phrasing but remove filler words (like 'um', 'uh', 'like') and correct homophones or mistranscribed words. Output only the corrected text without any chat or explanation.".to_string())
-                    } else {
-                        loaded_config
-                            .config
-                            .speech_to_text
-                            .terminal_system_instruction
-                            .clone()
-                            .or_else(|| loaded_config.config.speech_to_text.system_instruction.clone())
-                            .unwrap_or_else(|| "You are a post-processing engine for speech-to-text. The user is speaking to a command-line terminal. Convert the raw transcription into the most likely shell command or command-line input. Correct spacing, casing, punctuation, and spelling errors for commands, flags, and paths. Output only the corrected terminal input without any chat or explanation.".to_string())
-                    };
-
-                    let recording_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
-                    let recording_aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-                    let audio = match crate::speech::AudioStream::start() {
-                        Ok(a) => a,
-                        Err(e) => {
-                            let error_msg = ClientMessage::SpeechTranscribed {
+                    let pipeline =
+                        match crate::speech::pipeline::TranscriptionPipeline::start_client_messages(
+                            crate::speech::pipeline::ClientPipelineConfig {
                                 workspace_id: workspace_id.clone(),
                                 pane_id,
-                                result: Err(e),
-                            };
-                            if let Err(err) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(err));
-                            }
-                            continue;
-                        }
-                    };
-
-                    state.recording_active = Some(recording_active.clone());
-                    state.recording_aborted = Some(recording_aborted.clone());
-                    state.recording_buffer = Some(audio.buffer.clone());
-                    state.recording_stream = Some(audio.stream);
-
-                    let event_tx_clone = event_tx.clone();
-                    let api_key_clone = api_key.clone();
-                    let workspace_id_clone = workspace_id.clone();
-                    let recording_active_clone = recording_active.clone();
-                    let recording_aborted_clone = recording_aborted.clone();
-                    let buffer_clone = audio.buffer.clone();
-                    let channels = audio.channels;
-                    let sample_rate = audio.sample_rate;
-
-                    let tokio_handle = tokio::runtime::Handle::current();
-
-                    tokio_handle.spawn(async move {
-                        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-                        let system_instruction = "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string();
-
-                        tokio::spawn(crate::speech::run_websocket_transcription(
-                            api_key_clone.clone(),
-                            model,
-                            system_instruction,
-                            buffer_clone,
-                            channels,
-                            sample_rate,
-                            recording_active_clone,
-                            Some(recording_aborted_clone),
-                            tx,
-                        ));
-
-                        while let Some(event) = rx.recv().await {
-                            match event {
-                                crate::speech::TranscriptionEvent::Partial(text) => {
-                                    let _ = event_tx_clone.send(ClientLoopEvent::ClientMessageToSend(
-                                        ClientMessage::SpeechPartialTranscription {
-                                            workspace_id: workspace_id_clone.clone(),
-                                            text,
-                                        }
-                                    )).await;
+                                api_key,
+                                model,
+                                postprocess_instruction,
+                            },
+                            event_tx.clone(),
+                        ) {
+                            Ok(pipeline) => pipeline,
+                            Err(e) => {
+                                let error_msg = ClientMessage::SpeechTranscribed {
+                                    workspace_id: workspace_id.clone(),
+                                    pane_id,
+                                    result: Err(e),
+                                };
+                                if let Err(err) = write_to_server(&mut write_stream, &error_msg) {
+                                    return Err(ClientError::ConnectionLost(err));
                                 }
-                                crate::speech::TranscriptionEvent::Finished(result) => {
-                                    let post_result = match result {
-                                        Ok(text) => {
-                                            let api_key_pp = api_key_clone.clone();
-                                            let inst_pp = postprocess_instruction.clone();
-                                            tokio::task::spawn_blocking(move || {
-                                                crate::speech::run_gemini_postprocess(api_key_pp, text, inst_pp)
-                                            })
-                                            .await
-                                            .unwrap_or_else(|e| Err(format!("Post-process task join error: {}", e)))
-                                        }
-                                        Err(e) => Err(e),
-                                    };
-
-                                    let _ = event_tx_clone.send(ClientLoopEvent::ClientMessageToSend(
-                                        ClientMessage::SpeechTranscribed {
-                                            workspace_id: workspace_id_clone.clone(),
-                                            pane_id,
-                                            result: post_result,
-                                        }
-                                    )).await;
-                                }
+                                continue;
                             }
-                        }
-                    });
+                        };
+                    state.recording_pipeline = Some(pipeline);
                 }
                 ServerMessage::StopRecording { abort } => {
-                    if let Some(active) = state.recording_active.take() {
-                        active.store(false, Ordering::Release);
-                    }
-                    if abort {
-                        if let Some(aborted) = state.recording_aborted.take() {
-                            aborted.store(true, Ordering::Release);
+                    if let Some(pipeline) = state.recording_pipeline.take() {
+                        if abort {
+                            pipeline.abort();
+                        } else {
+                            pipeline.stop();
                         }
                     }
-                    state.recording_stream = None;
-                    state.recording_buffer = None;
                 }
             },
             ClientLoopEvent::ServerDisconnected => {

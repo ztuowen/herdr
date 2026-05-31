@@ -1518,24 +1518,23 @@ impl App {
             return false;
         };
         let workspace_id = ws.id.clone();
-
-        if !self.no_session {
-            let pane_id = ws.focused_pane_id();
-            let is_agent = if let Some(pid) = pane_id {
-                if let Some(pane) = ws.pane_state(pid) {
-                    let term_id = pane.attached_terminal_id.clone();
-                    if let Some(term) = self.state.terminals.get(&term_id) {
-                        term.is_agent_terminal()
-                    } else {
-                        false
-                    }
+        let pane_id = ws.focused_pane_id();
+        let is_agent = if let Some(pid) = pane_id {
+            if let Some(pane) = ws.pane_state(pid) {
+                let term_id = pane.attached_terminal_id.clone();
+                if let Some(term) = self.state.terminals.get(&term_id) {
+                    term.is_agent_terminal()
                 } else {
                     false
                 }
             } else {
                 false
-            };
+            }
+        } else {
+            false
+        };
 
+        if !self.no_session {
             self.state.extensions.recording_workspace = Some(workspace_id.clone());
             self.extensions.speech_recorder.start_server(key);
             self.state.extensions.live_transcription = Some(String::new());
@@ -1565,20 +1564,20 @@ impl App {
             _ => return false,
         };
 
-        let model = self
-            .state
-            .extensions
-            .speech_to_text
-            .model
-            .clone()
-            .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
+        let model = self.state.extensions.speech_to_text.model.clone();
+        let postprocess_instruction =
+            crate::speech::postprocess_instruction(&self.state.extensions.speech_to_text, is_agent);
 
         if let Err(e) = self.extensions.speech_recorder.start_local(
-            workspace_id.clone(),
             key,
-            api_key,
-            model,
-            self.event_tx.clone(),
+            crate::speech::pipeline::AppPipelineConfig {
+                workspace_id: workspace_id.clone(),
+                pane_id,
+                api_key,
+                model: crate::speech::model_or_default(model),
+                postprocess_instruction,
+                event_tx: self.event_tx.clone(),
+            },
         ) {
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::NeedsAttention,
@@ -1603,17 +1602,21 @@ impl App {
 
     pub(crate) fn stop_recording(&mut self, abort: bool) {
         let was_recording = self.extensions.speech_recorder.is_recording();
-        let active = self.extensions.speech_recorder.stop();
+        let pipeline = self.extensions.speech_recorder.stop();
 
         if !was_recording && !abort {
             return;
         }
 
-        if let Some(active_flag) = &active {
-            active_flag.store(false, std::sync::atomic::Ordering::Release);
+        if let Some(pipeline) = &pipeline {
+            if abort {
+                pipeline.abort();
+            } else {
+                pipeline.stop();
+            }
         }
 
-        if !abort && active.is_some() {
+        if !abort && pipeline.is_some() {
             let previous_toast = self.state.toast.clone();
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::Finished,

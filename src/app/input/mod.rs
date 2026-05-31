@@ -61,38 +61,8 @@ impl App {
             self.release_events_supported = true;
         }
 
-        if key.kind == crossterm::event::KeyEventKind::Press {
-            let is_audio_summary_trigger =
-                self.state.keybinds.audio_summary.matches_direct_key(key)
-                    || (self.state.mode == Mode::Prefix
-                        && self.state.keybinds.audio_summary.matches_prefix_key(key));
-
-            if is_audio_summary_trigger {
-                let is_agent = self
-                    .state
-                    .active
-                    .and_then(|ws_idx| {
-                        let ws = self.state.workspaces.get(ws_idx)?;
-                        let pane_id = ws.focused_pane_id()?;
-                        let pane = ws.pane_state(pane_id)?;
-                        let term = self.state.terminals.get(&pane.attached_terminal_id)?;
-                        Some(term.is_agent_terminal())
-                    })
-                    .unwrap_or(false);
-
-                if is_agent {
-                    if let Some(ws_idx) = self.state.active {
-                        let tab_idx = self.state.workspaces[ws_idx].active_tab;
-                        self.trigger_audio_summary(ws_idx, tab_idx);
-                        if self.state.mode == Mode::Prefix {
-                            self::navigate::leave_command_mode(&mut self.state);
-                        }
-                        return;
-                    }
-                }
-            }
-
-            self.cancel_audio_summary();
+        if self.handle_audio_summary_key(key) {
+            return;
         }
 
         if crate::extensions::handle_extension_key(self, key) {
@@ -145,6 +115,44 @@ impl App {
                 tracing::warn!("failed to queue clipboard write event");
             }
         }
+    }
+
+    pub(crate) fn handle_audio_summary_key(&mut self, key: TerminalKey) -> bool {
+        if key.kind != crossterm::event::KeyEventKind::Press {
+            return false;
+        }
+
+        let is_audio_summary_trigger = self.state.keybinds.audio_summary.matches_direct_key(key)
+            || (self.state.mode == Mode::Prefix
+                && self.state.keybinds.audio_summary.matches_prefix_key(key));
+
+        if is_audio_summary_trigger {
+            let is_agent = self
+                .state
+                .active
+                .and_then(|ws_idx| {
+                    let ws = self.state.workspaces.get(ws_idx)?;
+                    let pane_id = ws.focused_pane_id()?;
+                    let pane = ws.pane_state(pane_id)?;
+                    let term = self.state.terminals.get(&pane.attached_terminal_id)?;
+                    Some(term.is_agent_terminal())
+                })
+                .unwrap_or(false);
+
+            if is_agent {
+                if let Some(ws_idx) = self.state.active {
+                    let tab_idx = self.state.workspaces[ws_idx].active_tab;
+                    self.trigger_audio_summary(ws_idx, tab_idx);
+                    if self.state.mode == Mode::Prefix {
+                        self::navigate::leave_command_mode(&mut self.state);
+                    }
+                    return true;
+                }
+            }
+        }
+
+        self.cancel_audio_summary();
+        false
     }
 
     pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {

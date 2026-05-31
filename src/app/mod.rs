@@ -1253,6 +1253,9 @@ impl App {
                     if self.handle_speech_to_text_key(key) {
                         continue;
                     }
+                    if self.handle_audio_summary_key(key) {
+                        continue;
+                    }
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
@@ -1446,7 +1449,7 @@ impl App {
             .speech_to_text
             .model
             .clone()
-            .unwrap_or_else(|| "gemini-2.5-flash".to_string());
+            .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
 
         let Some(text_content) =
             self.state

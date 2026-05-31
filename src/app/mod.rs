@@ -1603,7 +1603,7 @@ impl App {
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::Finished,
                 title: "Speech to Text".into(),
-                context: "Transcribing...".into(),
+                context: "Post-processing...".into(),
                 target: None,
             });
             self.sync_toast_deadline(previous_toast);
@@ -3915,11 +3915,11 @@ last_pane = "prefix+tab"
     fn test_sync_toast_deadline_exemption() {
         let mut app = test_app();
 
-        // Transcribing... should not set a deadline
+        // Post-processing... should not set a deadline
         app.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::Finished,
             title: "Speech to Text".into(),
-            context: "Transcribing...".into(),
+            context: "Post-processing...".into(),
             target: None,
         });
         app.sync_toast_deadline(None);

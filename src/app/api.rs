@@ -394,7 +394,7 @@ impl App {
     ) {
         if self.state.toast != previous_toast {
             self.toast_deadline = self.state.toast.as_ref().and_then(|toast| {
-                if toast.context == "Transcribing..."
+                if toast.context == "Post-processing..."
                     || self.state.extensions.recording_workspace.is_some()
                 {
                     None

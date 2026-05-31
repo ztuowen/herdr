@@ -284,20 +284,15 @@ async fn run_websocket_summary(
         return;
     }
 
-    // Send user content
+    if let Err(err) = wait_for_summary_setup_complete(&mut read).await {
+        let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
+        active.store(false, Ordering::Release);
+        return;
+    }
+
     let content_msg = serde_json::json!({
-        "clientContent": {
-            "turns": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": text_content
-                        }
-                    ]
-                }
-            ],
-            "turnComplete": true
+        "realtimeInput": {
+            "text": text_content
         }
     });
 
@@ -448,37 +443,99 @@ async fn run_websocket_summary(
     }
 
     let was_cancelled = !active.load(Ordering::Acquire);
-    active.store(false, Ordering::Release);
 
     if !was_cancelled {
         if let Some(err) = server_error_message {
+            active.store(false, Ordering::Release);
             let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
         } else if !has_audio.load(Ordering::Acquire) {
+            active.store(false, Ordering::Release);
             let _ = app_event_tx
                 .send(AppEvent::AudioSummaryError(
                     "WebSocket connection closed by server before audio was received.".to_string(),
                 ))
                 .await;
         } else {
-            // Wait until audio buffer is fully drained, up to a timeout, before closing stream
-            let start = std::time::Instant::now();
-            while active.load(Ordering::Acquire)
-                && start.elapsed() < std::time::Duration::from_secs(30)
-            {
-                let empty = {
-                    if let Ok(buf) = audio_buffer.lock() {
-                        buf.is_empty()
-                    } else {
-                        true
-                    }
-                };
-                if empty {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            }
+            wait_for_audio_buffer_to_drain(
+                &audio_buffer,
+                &active,
+                std::time::Duration::from_secs(30),
+            )
+            .await;
+            active.store(false, Ordering::Release);
             let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
         }
+    }
+}
+
+async fn wait_for_summary_setup_complete<R>(read: &mut R) -> Result<(), String>
+where
+    R: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    while let Some(msg) = read.next().await {
+        let msg = msg.map_err(|e| format!("WebSocket read error before setup completed: {e}"))?;
+        let text_opt = match msg {
+            tokio_tungstenite::tungstenite::Message::Text(text) => Some(text),
+            tokio_tungstenite::tungstenite::Message::Binary(bin) => String::from_utf8(bin).ok(),
+            tokio_tungstenite::tungstenite::Message::Close(frame) => {
+                return Err(frame
+                    .and_then(|frame| (!frame.reason.is_empty()).then(|| frame.reason.to_string()))
+                    .unwrap_or_else(|| "WebSocket closed before setup completed.".to_string()));
+            }
+            _ => None,
+        };
+
+        if let Some(text) = text_opt {
+            if let Some(err) = live_error_message(&text) {
+                return Err(err);
+            }
+            if is_setup_complete_frame(&text) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("WebSocket closed before setup completed.".to_string())
+}
+
+fn live_error_message(json_str: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    json.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(str::to_string)
+}
+
+fn is_setup_complete_frame(json_str: &str) -> bool {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return false;
+    };
+
+    json.get("setupComplete")
+        .or_else(|| json.get("setup_complete"))
+        .is_some()
+}
+
+async fn wait_for_audio_buffer_to_drain(
+    audio_buffer: &Arc<Mutex<VecDeque<f32>>>,
+    active: &Arc<AtomicBool>,
+    timeout: std::time::Duration,
+) {
+    let start = std::time::Instant::now();
+    while active.load(Ordering::Acquire) && start.elapsed() < timeout {
+        let empty = audio_buffer
+            .lock()
+            .map(|buf| buf.is_empty())
+            .unwrap_or(true);
+        if empty {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -560,5 +617,49 @@ mod tests {
         )];
 
         assert!(stereo_output_config_from_ranges(&default_config, ranges).is_none());
+    }
+
+    #[test]
+    fn setup_complete_frame_accepts_camel_and_snake_case() {
+        assert!(is_setup_complete_frame(r#"{"setupComplete": {}}"#));
+        assert!(is_setup_complete_frame(r#"{"setup_complete": {}}"#));
+        assert!(!is_setup_complete_frame(
+            r#"{"serverContent": {"turnComplete": true}}"#
+        ));
+        assert!(!is_setup_complete_frame("{invalid}"));
+    }
+
+    #[test]
+    fn live_error_message_extracts_server_error() {
+        assert_eq!(
+            live_error_message(r#"{"error": {"message": "bad request"}}"#),
+            Some("bad request".to_string())
+        );
+        assert_eq!(live_error_message(r#"{"setupComplete": {}}"#), None);
+    }
+
+    #[tokio::test]
+    async fn drain_wait_keeps_playback_active_until_queue_is_empty() {
+        let audio_buffer = Arc::new(Mutex::new(VecDeque::from([0.5_f32])));
+        let active = Arc::new(AtomicBool::new(true));
+        let draining_buffer = audio_buffer.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+            draining_buffer.lock().expect("buffer lock").pop_front();
+        });
+
+        wait_for_audio_buffer_to_drain(
+            &audio_buffer,
+            &active,
+            std::time::Duration::from_millis(500),
+        )
+        .await;
+
+        assert!(
+            active.load(Ordering::Acquire),
+            "playback must remain active while queued audio drains"
+        );
+        assert!(audio_buffer.lock().expect("buffer lock").is_empty());
     }
 }

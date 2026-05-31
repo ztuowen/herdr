@@ -82,6 +82,7 @@ pub async fn run_websocket_transcription(
         return;
     }
 
+    let mut setup_complete = false;
     let mut finalized_text = String::new();
     let mut current_turn_text = String::new();
     let mut recording_stopped = false;
@@ -97,6 +98,10 @@ pub async fn run_websocket_transcription(
 
         tokio::select! {
             _ = interval.tick() => {
+                if !setup_complete {
+                    continue;
+                }
+
                 if !recording_stopped {
                     if !recording_active.load(std::sync::atomic::Ordering::Acquire) {
                         recording_stopped = true;
@@ -161,6 +166,11 @@ pub async fn run_websocket_transcription(
                 };
 
                 if let Some(text) = text_opt {
+                    if is_setup_complete_frame(&text) {
+                        setup_complete = true;
+                        continue;
+                    }
+
                     if let Some((partial, turn_complete)) = parse_live_transcription_frame(&text) {
                         if !partial.is_empty() {
                             current_turn_text.push_str(&partial);
@@ -221,6 +231,16 @@ pub async fn run_websocket_transcription(
     };
 
     let _ = event_tx.send(TranscriptionEvent::Finished(result)).await;
+}
+
+fn is_setup_complete_frame(json_str: &str) -> bool {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return false;
+    };
+
+    json.get("setupComplete")
+        .or_else(|| json.get("setup_complete"))
+        .is_some()
 }
 
 fn encode_input_audio_chunk(samples: &[f32], channels: u16, sample_rate: u32) -> Vec<u8> {
@@ -402,5 +422,15 @@ mod tests {
 
         assert_eq!(parse_live_transcription_frame(""), None);
         assert_eq!(parse_live_transcription_frame("{invalid}"), None);
+    }
+
+    #[test]
+    fn setup_complete_frame_accepts_camel_and_snake_case() {
+        assert!(is_setup_complete_frame(r#"{"setupComplete": {}}"#));
+        assert!(is_setup_complete_frame(r#"{"setup_complete": {}}"#));
+        assert!(!is_setup_complete_frame(
+            r#"{"serverContent": {"turnComplete": true}}"#
+        ));
+        assert!(!is_setup_complete_frame("{invalid}"));
     }
 }

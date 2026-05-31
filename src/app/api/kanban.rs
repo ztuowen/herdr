@@ -5,6 +5,17 @@ use crate::api::schema::{
 use crate::app::App;
 
 impl App {
+    fn active_pane_terminal_ids(&self) -> std::collections::HashSet<String> {
+        let mut active = std::collections::HashSet::new();
+        for ws in &self.state.workspaces {
+            for tab in &ws.tabs {
+                for pane in tab.panes.values() {
+                    active.insert(pane.attached_terminal_id.to_string());
+                }
+            }
+        }
+        active
+    }
     pub(super) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
         if let Some(ref path_str) = params.description {
             if !path_str.is_empty() {
@@ -25,16 +36,23 @@ impl App {
                 tid
             }
         });
-        if self.state.clear_dead_kanban_terminals() {
+        let active_tids = self.active_pane_terminal_ids();
+        if self
+            .state
+            .kanban
+            .clear_dead_terminals(|tid| active_tids.contains(tid))
+        {
+            self.state.mark_session_dirty();
             self.schedule_session_save();
         }
 
-        let item = self.state.add_kanban_item(
+        let item = self.state.kanban.add_item(
             params.title,
             params.description,
             params.status,
             terminal_id,
         );
+        self.state.mark_session_dirty();
         self.schedule_session_save();
         encode_success(id, ResponseResult::KanbanItem { item })
     }
@@ -48,13 +66,20 @@ impl App {
             }
         });
 
-        if self.state.clear_dead_kanban_terminals() {
+        let active_tids = self.active_pane_terminal_ids();
+        if self
+            .state
+            .kanban
+            .clear_dead_terminals(|tid| active_tids.contains(tid))
+        {
+            self.state.mark_session_dirty();
             self.schedule_session_save();
         }
 
         let items = self
             .state
-            .kanban_items
+            .kanban
+            .items
             .iter()
             .filter(|item| {
                 if let Some(ref status) = params.status {
@@ -98,11 +123,17 @@ impl App {
                 tid
             }
         });
-        if self.state.clear_dead_kanban_terminals() {
+        let active_tids = self.active_pane_terminal_ids();
+        if self
+            .state
+            .kanban
+            .clear_dead_terminals(|tid| active_tids.contains(tid))
+        {
+            self.state.mark_session_dirty();
             self.schedule_session_save();
         }
 
-        match self.state.update_kanban_item(
+        match self.state.kanban.update_item(
             &params.uuid,
             params.title,
             params.description,
@@ -111,6 +142,7 @@ impl App {
             params.clear_terminal_id,
         ) {
             Some(item) => {
+                self.state.mark_session_dirty();
                 self.schedule_session_save();
                 encode_success(id, ResponseResult::KanbanItem { item })
             }
@@ -127,12 +159,19 @@ impl App {
         id: String,
         params: KanbanDeleteParams,
     ) -> String {
-        if self.state.clear_dead_kanban_terminals() {
+        let active_tids = self.active_pane_terminal_ids();
+        if self
+            .state
+            .kanban
+            .clear_dead_terminals(|tid| active_tids.contains(tid))
+        {
+            self.state.mark_session_dirty();
             self.schedule_session_save();
         }
 
-        match self.state.delete_kanban_item(&params.uuid) {
+        match self.state.kanban.delete_item(&params.uuid) {
             Some(item) => {
+                self.state.mark_session_dirty();
                 self.schedule_session_save();
                 encode_success(id, ResponseResult::KanbanItem { item })
             }
@@ -347,13 +386,13 @@ mod tests {
         assert!(add_res2.contains("\"type\":\"kanban_item\""));
 
         // 3. UI Helper behaves correctly
-        let (text, is_err) = crate::ui::get_description_text(&plan_path);
+        let (text, is_err) = crate::ui::kanban::get_description_text(&plan_path);
         assert_eq!(text, "API validation check");
         assert!(!is_err);
 
         // 4. UI Helper handles deleted file correctly
         std::fs::remove_file(&plan_file).unwrap();
-        let (text2, is_err2) = crate::ui::get_description_text(&plan_path);
+        let (text2, is_err2) = crate::ui::kanban::get_description_text(&plan_path);
         assert_eq!(text2, "NO DESCRIPTION FOUND");
         assert!(is_err2);
     }

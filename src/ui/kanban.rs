@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
@@ -42,10 +42,10 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
     for (name, color, col_idx) in statuses {
         let col_area = sections[col_idx];
-        let items = app.kanban_items_in_column(col_idx);
+        let items = app.kanban.items_in_column(col_idx);
         let count = items.len();
 
-        let is_col_focused = app.kanban_selected_col == col_idx;
+        let is_col_focused = app.kanban.selected_col == col_idx;
 
         // Render column block
         let col_border_color = if is_col_focused { p.accent } else { p.surface0 };
@@ -82,7 +82,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                 // Compute scroll offset for the focused column
                 let scroll_offset = if is_col_focused {
-                    let row = app.kanban_selected_row;
+                    let row = app.kanban.selected_row;
                     if max_visible_cards == 0 {
                         0
                     } else if row >= max_visible_cards {
@@ -104,11 +104,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                     let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
 
-                    let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+                    let is_card_selected = is_col_focused && app.kanban.selected_row == actual_idx;
 
                     let mut has_active_terminal = false;
                     if let Some(ref tid) = item.terminal_id {
-                        if app.kanban_item_pane_status(tid).exists {
+                        if app.kanban_pane_status(tid).exists {
                             has_active_terminal = true;
                         }
                     }
@@ -163,7 +163,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
                 // Compute scroll offset for the focused column (now row)
                 let scroll_offset = if is_col_focused {
-                    app.kanban_selected_row
+                    app.kanban.selected_row
                 } else {
                     0
                 };
@@ -176,11 +176,11 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
                     let card_height = 4u16.min(inner_area.height);
                     let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
 
-                    let is_card_selected = is_col_focused && app.kanban_selected_row == actual_idx;
+                    let is_card_selected = is_col_focused && app.kanban.selected_row == actual_idx;
 
                     let mut has_active_terminal = false;
                     if let Some(ref tid) = item.terminal_id {
-                        if app.kanban_item_pane_status(tid).exists {
+                        if app.kanban_pane_status(tid).exists {
                             has_active_terminal = true;
                         }
                     }
@@ -233,7 +233,7 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
             // Draw empty message
             let empty_text = Paragraph::new("No items")
                 .style(Style::default().fg(p.overlay0))
-                .alignment(ratatui::layout::Alignment::Center);
+                .alignment(Alignment::Center);
             let empty_rect = Rect::new(
                 inner_area.x,
                 inner_area.y + inner_area.height / 2,
@@ -244,9 +244,9 @@ pub(super) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
 
-    // Render detailed modal if app.kanban_detail_uuid is Some
-    if let Some(ref uuid) = app.kanban_detail_uuid {
-        if let Some(item) = app.kanban_items.iter().find(|it| it.uuid == *uuid) {
+    // Render detailed modal if app.kanban.detail_uuid is Some
+    if let Some(ref uuid) = app.kanban.detail_uuid {
+        if let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) {
             render_kanban_detail_modal(app, frame, area, item);
         }
     }
@@ -259,7 +259,7 @@ fn render_kanban_detail_modal(
     item: &crate::api::schema::KanbanItem,
 ) {
     let p = &app.palette;
-    let (width, height) = app.kanban_detail_modal_size();
+    let (width, height) = kanban_detail_modal_size(area);
     let Some(popup) = centered_popup_rect(area, width, height) else {
         return;
     };
@@ -333,7 +333,7 @@ fn render_kanban_detail_modal(
 
     // Associated Terminal / Pane status
     let terminal_line = if let Some(ref tid) = item.terminal_id {
-        let status = app.kanban_item_pane_status(tid);
+        let status = app.kanban_pane_status(tid);
         if status.exists {
             let agent_lbl = status
                 .agent_label
@@ -371,9 +371,9 @@ fn render_kanban_detail_modal(
     );
     let (display_desc, is_error) = get_description_text(&item.description);
 
-    let max_scroll = app.kanban_detail_max_scroll();
+    let max_scroll = kanban_detail_max_scroll(app);
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: max_scroll.saturating_sub(app.kanban_detail_scroll) as usize,
+        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
         max_offset_from_bottom: max_scroll as usize,
         viewport_rows: rows[6].height.max(1) as usize,
     };
@@ -441,18 +441,18 @@ fn render_kanban_detail_modal(
     let wrapped = super::wrap_markdown(
         &all_md_lines,
         desc_area.width as usize,
-        app.kanban_detail_horizontal_scroll as usize,
+        app.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
 
-    let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban_detail_scroll, 0));
+    let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban.detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
 
     if app.kitty_graphics_enabled && cell_size.is_known() {
         if let Ok(mut placements) = app.static_image_placements.lock() {
             for placement in wrapped.math_placements {
-                let viewport_row = placement.line_idx as i32 - app.kanban_detail_scroll as i32;
+                let viewport_row = placement.line_idx as i32 - app.kanban.detail_scroll as i32;
                 if viewport_row < desc_area.height as i32
                     && viewport_row + placement.height_cells as i32 > 0
                 {
@@ -493,7 +493,7 @@ fn render_kanban_detail_modal(
         Span::styled("Delete Card", Style::default().fg(p.overlay1)),
     ]);
     frame.render_widget(
-        Paragraph::new(footer_hints).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(footer_hints).alignment(Alignment::Center),
         rows[7],
     );
 }
@@ -538,4 +538,458 @@ pub(crate) fn format_kanban_title(title: &str, width: u16) -> String {
         lines.push(current_line);
     }
     lines.join("\n")
+}
+
+pub fn kanban_detail_modal_size(area: Rect) -> (u16, u16) {
+    let width = 80.max(area.width.saturating_mul(8) / 10);
+    let height = 20.max(area.height.saturating_mul(8) / 10);
+    (width, height)
+}
+
+pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
+    let Some(ref uuid) = app.kanban.detail_uuid else {
+        return 0;
+    };
+    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+        return 0;
+    };
+    let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
+    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
+        return 0;
+    };
+    let inner = Block::default().borders(Borders::ALL).inner(popup);
+    if inner.height < 7 || inner.width < 4 {
+        return 0;
+    }
+    let rows = Layout::vertical([
+        Constraint::Length(1), // Header title
+        Constraint::Length(1), // Divider
+        Constraint::Length(1), // Card Title
+        Constraint::Length(1), // Status Badge
+        Constraint::Length(1), // UUID
+        Constraint::Length(1), // Associated Terminal
+        Constraint::Min(1),    // Description
+        Constraint::Length(1), // Footer hint
+    ])
+    .split(inner);
+    let desc_area = rows[6];
+
+    let (display_desc, is_err) = get_description_text(&item.description);
+
+    let p = &app.palette;
+    let mut all_md_lines = Vec::new();
+    all_md_lines.push(super::MarkdownLine {
+        spans: vec![super::MarkdownSpan::Text(Span::styled(
+            "Description:",
+            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+        ))],
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: false,
+    });
+    if !item.description.is_empty() {
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Link {
+                label_spans: vec![Span::styled(
+                    item.description.clone(),
+                    Style::default()
+                        .fg(p.blue)
+                        .add_modifier(Modifier::UNDERLINED),
+                )],
+                url: item.description.clone(),
+            }],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+    if is_err {
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::styled(
+                display_desc,
+                Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+            ))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    } else {
+        all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
+    }
+
+    let cell_size = if app.kitty_graphics_enabled {
+        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
+    } else {
+        crate::kitty_graphics::HostCellSize::default()
+    };
+
+    let wrapped = super::wrap_markdown(
+        &all_md_lines,
+        desc_area.width as usize,
+        app.kanban.detail_horizontal_scroll as usize,
+        cell_size,
+        app.palette.text,
+    );
+    wrapped
+        .lines
+        .len()
+        .saturating_sub(desc_area.height as usize) as u16
+}
+
+pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
+    let Some(ref uuid) = app.kanban.detail_uuid else {
+        return 0;
+    };
+    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+        return 0;
+    };
+    let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
+    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
+        return 0;
+    };
+    let inner = Block::default().borders(Borders::ALL).inner(popup);
+    if inner.height < 7 || inner.width < 4 {
+        return 0;
+    }
+    let rows = Layout::vertical([
+        Constraint::Length(1), // Header title
+        Constraint::Length(1), // Divider
+        Constraint::Length(1), // Card Title
+        Constraint::Length(1), // Status Badge
+        Constraint::Length(1), // UUID
+        Constraint::Length(1), // Associated Terminal
+        Constraint::Min(1),    // Description
+        Constraint::Length(1), // Footer hint
+    ])
+    .split(inner);
+    let desc_area = rows[6];
+
+    let max_scroll = kanban_detail_max_scroll(app);
+    let metrics = crate::pane::ScrollMetrics {
+        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
+        max_offset_from_bottom: max_scroll as usize,
+        viewport_rows: desc_area.height.max(1) as usize,
+    };
+    let has_scrollbar = super::release_notes_scrollbar_rect(desc_area, metrics).is_some();
+    let text_area = if has_scrollbar {
+        Rect::new(
+            desc_area.x,
+            desc_area.y,
+            desc_area.width.saturating_sub(1),
+            desc_area.height,
+        )
+    } else {
+        desc_area
+    };
+
+    let (display_desc, is_err) = get_description_text(&item.description);
+    if is_err {
+        return 0;
+    }
+
+    let p = &app.palette;
+    let mut all_md_lines = Vec::new();
+    all_md_lines.push(super::MarkdownLine {
+        spans: vec![super::MarkdownSpan::Text(Span::styled(
+            "Description:",
+            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+        ))],
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: false,
+    });
+    if !item.description.is_empty() {
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::styled(
+                item.description.clone(),
+                Style::default().fg(p.overlay0),
+            ))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+    all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
+
+    let cell_size = if app.kitty_graphics_enabled {
+        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
+    } else {
+        crate::kitty_graphics::HostCellSize::default()
+    };
+
+    let wrapped = super::wrap_markdown(
+        &all_md_lines,
+        text_area.width as usize,
+        0,
+        cell_size,
+        app.palette.text,
+    );
+    wrapped
+        .max_original_width
+        .saturating_sub(text_area.width as usize) as u16
+}
+
+pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), String, String)> {
+    let Some(ref uuid) = app.kanban.detail_uuid else {
+        return Vec::new();
+    };
+    let Some(item) = app.kanban.items.iter().find(|it| it.uuid == *uuid) else {
+        return Vec::new();
+    };
+    let (width, height) = kanban_detail_modal_size(app.view.terminal_area);
+    let Some(popup) = centered_popup_rect(app.view.terminal_area, width, height) else {
+        return Vec::new();
+    };
+    let inner = Block::default().borders(Borders::ALL).inner(popup);
+    if inner.height < 7 || inner.width < 4 {
+        return Vec::new();
+    }
+    let rows = Layout::vertical([
+        Constraint::Length(1), // Header title
+        Constraint::Length(1), // Divider
+        Constraint::Length(1), // Card Title
+        Constraint::Length(1), // Status Badge
+        Constraint::Length(1), // UUID
+        Constraint::Length(1), // Associated Terminal
+        Constraint::Min(1),    // Description
+        Constraint::Length(1), // Footer hint
+    ])
+    .split(inner);
+    let desc_area = rows[6];
+
+    let max_scroll = kanban_detail_max_scroll(app);
+    let metrics = crate::pane::ScrollMetrics {
+        offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
+        max_offset_from_bottom: max_scroll as usize,
+        viewport_rows: desc_area.height.max(1) as usize,
+    };
+    let has_scrollbar = super::release_notes_scrollbar_rect(desc_area, metrics).is_some();
+    let text_area = if has_scrollbar {
+        Rect::new(
+            desc_area.x,
+            desc_area.y,
+            desc_area.width.saturating_sub(1),
+            desc_area.height,
+        )
+    } else {
+        desc_area
+    };
+
+    let (display_desc, is_err) = get_description_text(&item.description);
+    if is_err {
+        return Vec::new();
+    }
+
+    let p = &app.palette;
+    let mut all_md_lines = Vec::new();
+    all_md_lines.push(super::MarkdownLine {
+        spans: vec![super::MarkdownSpan::Text(Span::styled(
+            "Description:",
+            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+        ))],
+        is_code_block: false,
+        is_blockquote: false,
+        is_table_row: false,
+    });
+    if !item.description.is_empty() {
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Link {
+                label_spans: vec![Span::styled(
+                    item.description.clone(),
+                    Style::default()
+                        .fg(p.blue)
+                        .add_modifier(Modifier::UNDERLINED),
+                )],
+                url: item.description.clone(),
+            }],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+        all_md_lines.push(super::MarkdownLine {
+            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+    all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
+
+    let cell_size = if app.kitty_graphics_enabled {
+        crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
+    } else {
+        crate::kitty_graphics::HostCellSize::default()
+    };
+
+    let wrapped = super::wrap_markdown(
+        &all_md_lines,
+        text_area.width as usize,
+        app.kanban.detail_horizontal_scroll as usize,
+        cell_size,
+        app.palette.text,
+    );
+
+    let scroll_y = app.kanban.detail_scroll as usize;
+    let viewport_height = text_area.height as usize;
+
+    let mut links = Vec::new();
+    for (line_idx, col_range, url) in wrapped.link_ranges {
+        if line_idx >= scroll_y && line_idx - scroll_y < viewport_height {
+            let screen_y = text_area.y + (line_idx - scroll_y) as u16;
+            for col in col_range {
+                let screen_x = text_area.x + col as u16;
+                if let Some(line) = wrapped.lines.get(line_idx) {
+                    let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                    let char_symbol = line_text
+                        .chars()
+                        .nth(col)
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string());
+                    links.push(((screen_x, screen_y), char_symbol, url.clone()));
+                }
+            }
+        }
+    }
+    links
+}
+
+pub fn kanban_item_at(
+    app: &AppState,
+    col_x: u16,
+    row_y: u16,
+) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
+    let area = app.view.terminal_area;
+    let is_portrait = app.view.layout == crate::app::state::ViewLayout::Mobile;
+
+    if !is_portrait {
+        let cols = Layout::horizontal([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+
+        for col_idx in 0..4 {
+            let col_area = cols[col_idx];
+            let inner_area = Rect::new(
+                col_area.x.saturating_add(1),
+                col_area.y.saturating_add(1),
+                col_area.width.saturating_sub(2),
+                col_area.height.saturating_sub(2),
+            );
+
+            let items = app.kanban.items_in_column(col_idx);
+            let count = items.len();
+            if count == 0 {
+                continue;
+            }
+
+            let is_col_focused = app.kanban.selected_col == col_idx;
+            let card_height: u16 = 4;
+            let spacing: u16 = 1;
+            let total_card_height = card_height + spacing;
+
+            let max_visible_cards = inner_area
+                .height
+                .checked_div(total_card_height)
+                .map(usize::from)
+                .unwrap_or(0);
+
+            let scroll_offset = if is_col_focused {
+                let row = app.kanban.selected_row;
+                if max_visible_cards == 0 {
+                    0
+                } else if row >= max_visible_cards {
+                    row - max_visible_cards + 1
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+            for (idx, item) in visible_items.enumerate() {
+                let actual_idx = scroll_offset + idx;
+                let card_y = inner_area.y + (idx as u16 * total_card_height);
+                if card_y + card_height > inner_area.y + inner_area.height {
+                    break;
+                }
+
+                let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
+                if col_x >= card_area.x
+                    && col_x < card_area.x + card_area.width
+                    && row_y >= card_area.y
+                    && row_y < card_area.y + card_area.height
+                {
+                    return Some((col_idx, actual_idx, (*item).clone()));
+                }
+            }
+        }
+        None
+    } else {
+        let rows = Layout::vertical([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+
+        for col_idx in 0..4 {
+            let col_area = rows[col_idx];
+            let inner_area = Rect::new(
+                col_area.x.saturating_add(1),
+                col_area.y.saturating_add(1),
+                col_area.width.saturating_sub(2),
+                col_area.height.saturating_sub(2),
+            );
+
+            let items = app.kanban.items_in_column(col_idx);
+            let count = items.len();
+            if count == 0 {
+                continue;
+            }
+
+            let is_col_focused = app.kanban.selected_col == col_idx;
+            let card_width = inner_area.width;
+            let max_visible_cards = 1;
+
+            let scroll_offset = if is_col_focused {
+                app.kanban.selected_row
+            } else {
+                0
+            };
+
+            let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
+            for (idx, item) in visible_items.enumerate() {
+                let actual_idx = scroll_offset + idx;
+                let card_x = inner_area.x;
+
+                let card_height = 4u16.min(inner_area.height);
+                let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
+                if col_x >= card_area.x
+                    && col_x < card_area.x + card_area.width
+                    && row_y >= card_area.y
+                    && row_y < card_area.y + card_area.height
+                {
+                    return Some((col_idx, actual_idx, (*item).clone()));
+                }
+            }
+        }
+        None
+    }
 }

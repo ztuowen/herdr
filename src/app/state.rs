@@ -1203,12 +1203,7 @@ pub struct AppState {
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
-    pub kanban_items: Vec<crate::api::schema::KanbanItem>,
-    pub kanban_selected_col: usize,
-    pub kanban_selected_row: usize,
-    pub kanban_detail_uuid: Option<String>,
-    pub kanban_detail_scroll: u16,
-    pub kanban_detail_horizontal_scroll: u16,
+    pub kanban: crate::kanban::KanbanState,
     pub prefix_previous_mode: Option<Mode>,
 }
 
@@ -1364,81 +1359,6 @@ impl AppState {
         ws.active_tab().map(|tab| tab.layout.focused()) == Some(pane_id)
     }
 
-    pub fn add_kanban_item(
-        &mut self,
-        title: String,
-        description: Option<String>,
-        status: Option<crate::api::schema::KanbanStatus>,
-        terminal_id: Option<String>,
-    ) -> crate::api::schema::KanbanItem {
-        let item = crate::api::schema::KanbanItem {
-            uuid: uuid::Uuid::new_v4().to_string(),
-            title,
-            description: description.unwrap_or_default(),
-            status: status.unwrap_or(crate::api::schema::KanbanStatus::Todo),
-            terminal_id,
-        };
-        self.kanban_items.push(item.clone());
-        self.mark_session_dirty();
-        item
-    }
-
-    pub fn update_kanban_item(
-        &mut self,
-        uuid: &str,
-        title: Option<String>,
-        description: Option<String>,
-        status: Option<crate::api::schema::KanbanStatus>,
-        terminal_id: Option<String>,
-        clear_terminal_id: Option<bool>,
-    ) -> Option<crate::api::schema::KanbanItem> {
-        let cloned_item = {
-            let item = self.kanban_items.iter_mut().find(|it| it.uuid == uuid)?;
-            if let Some(t) = title {
-                item.title = t;
-            }
-            if let Some(d) = description {
-                item.description = d;
-            }
-            if let Some(s) = status {
-                item.status = s;
-            }
-            if clear_terminal_id.unwrap_or(false) {
-                item.terminal_id = None;
-            } else if terminal_id.is_some() {
-                item.terminal_id = terminal_id;
-            }
-            item.clone()
-        };
-        self.mark_session_dirty();
-        Some(cloned_item)
-    }
-
-    pub fn clear_dead_kanban_terminals(&mut self) -> bool {
-        let mut tids_to_clear = Vec::new();
-        for item in self.kanban_items.iter() {
-            if let Some(ref tid) = item.terminal_id {
-                if self.find_pane_by_terminal_id_str(tid).is_none() {
-                    tids_to_clear.push(item.uuid.clone());
-                }
-            }
-        }
-
-        let mut any_cleared = false;
-        for item in self.kanban_items.iter_mut() {
-            if tids_to_clear.contains(&item.uuid) {
-                item.terminal_id = None;
-                any_cleared = true;
-            }
-        }
-
-        if any_cleared {
-            self.mark_session_dirty();
-        }
-
-        any_cleared
-    }
-
     pub fn find_pane_by_terminal_id_str(
         &self,
         term_id_str: &str,
@@ -1455,10 +1375,7 @@ impl AppState {
         None
     }
 
-    pub fn kanban_item_pane_status(
-        &self,
-        term_id_str: &str,
-    ) -> crate::api::schema::KanbanPaneStatus {
+    pub fn kanban_pane_status(&self, term_id_str: &str) -> crate::api::schema::KanbanPaneStatus {
         if let Some((ws_idx, tab_idx, pane_id)) = self.find_pane_by_terminal_id_str(term_id_str) {
             if let Some(ws) = self.workspaces.get(ws_idx) {
                 if let Some(pane_state) = ws.pane_state(pane_id) {
@@ -1491,604 +1408,6 @@ impl AppState {
             agent_label: None,
             revision: None,
         }
-    }
-
-    pub fn delete_kanban_item(&mut self, uuid: &str) -> Option<crate::api::schema::KanbanItem> {
-        let pos = self.kanban_items.iter().position(|it| it.uuid == uuid)?;
-        let removed = self.kanban_items.remove(pos);
-        self.mark_session_dirty();
-        Some(removed)
-    }
-
-    pub fn kanban_item_at(
-        &self,
-        col_x: u16,
-        row_y: u16,
-    ) -> Option<(usize, usize, crate::api::schema::KanbanItem)> {
-        let area = self.view.terminal_area;
-        let is_portrait = self.view.layout == ViewLayout::Mobile;
-
-        if !is_portrait {
-            let cols = ratatui::layout::Layout::horizontal([
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-            ])
-            .split(area);
-
-            for col_idx in 0..4 {
-                let col_area = cols[col_idx];
-                let inner_area = Rect::new(
-                    col_area.x.saturating_add(1),
-                    col_area.y.saturating_add(1),
-                    col_area.width.saturating_sub(2),
-                    col_area.height.saturating_sub(2),
-                );
-
-                let items = self.kanban_items_in_column(col_idx);
-                let count = items.len();
-                if count == 0 {
-                    continue;
-                }
-
-                let is_col_focused = self.kanban_selected_col == col_idx;
-                let card_height: u16 = 4;
-                let spacing: u16 = 1;
-                let total_card_height = card_height + spacing;
-
-                let max_visible_cards = inner_area
-                    .height
-                    .checked_div(total_card_height)
-                    .map(usize::from)
-                    .unwrap_or(0);
-
-                let scroll_offset = if is_col_focused {
-                    let row = self.kanban_selected_row;
-                    if max_visible_cards == 0 {
-                        0
-                    } else if row >= max_visible_cards {
-                        row - max_visible_cards + 1
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
-
-                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-                for (idx, item) in visible_items.enumerate() {
-                    let actual_idx = scroll_offset + idx;
-                    let card_y = inner_area.y + (idx as u16 * total_card_height);
-                    if card_y + card_height > inner_area.y + inner_area.height {
-                        break;
-                    }
-
-                    let card_area = Rect::new(inner_area.x, card_y, inner_area.width, card_height);
-                    if col_x >= card_area.x
-                        && col_x < card_area.x + card_area.width
-                        && row_y >= card_area.y
-                        && row_y < card_area.y + card_area.height
-                    {
-                        return Some((col_idx, actual_idx, (*item).clone()));
-                    }
-                }
-            }
-            None
-        } else {
-            let rows = ratatui::layout::Layout::vertical([
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-            ])
-            .split(area);
-
-            for col_idx in 0..4 {
-                let col_area = rows[col_idx];
-                let inner_area = Rect::new(
-                    col_area.x.saturating_add(1),
-                    col_area.y.saturating_add(1),
-                    col_area.width.saturating_sub(2),
-                    col_area.height.saturating_sub(2),
-                );
-
-                let items = self.kanban_items_in_column(col_idx);
-                let count = items.len();
-                if count == 0 {
-                    continue;
-                }
-
-                let is_col_focused = self.kanban_selected_col == col_idx;
-                let card_width = inner_area.width;
-                let max_visible_cards = 1;
-
-                let scroll_offset = if is_col_focused {
-                    self.kanban_selected_row
-                } else {
-                    0
-                };
-
-                let visible_items = items.iter().skip(scroll_offset).take(max_visible_cards);
-                for (idx, item) in visible_items.enumerate() {
-                    let actual_idx = scroll_offset + idx;
-                    let card_x = inner_area.x;
-
-                    let card_height = 4u16.min(inner_area.height);
-                    let card_area = Rect::new(card_x, inner_area.y, card_width, card_height);
-                    if col_x >= card_area.x
-                        && col_x < card_area.x + card_area.width
-                        && row_y >= card_area.y
-                        && row_y < card_area.y + card_area.height
-                    {
-                        return Some((col_idx, actual_idx, (*item).clone()));
-                    }
-                }
-            }
-            None
-        }
-    }
-
-    pub fn kanban_items_in_column(&self, col: usize) -> Vec<&crate::api::schema::KanbanItem> {
-        let status = match col {
-            0 => crate::api::schema::KanbanStatus::Todo,
-            1 => crate::api::schema::KanbanStatus::InProgress,
-            2 => crate::api::schema::KanbanStatus::NeedReview,
-            3 => crate::api::schema::KanbanStatus::Done,
-            _ => return vec![],
-        };
-        self.kanban_items
-            .iter()
-            .filter(|item| item.status == status)
-            .collect()
-    }
-
-    pub fn kanban_move_col_left(&mut self) {
-        if self.kanban_selected_col > 0 {
-            self.kanban_selected_col -= 1;
-            self.kanban_selected_row = 0;
-        }
-    }
-
-    pub fn kanban_move_col_right(&mut self) {
-        if self.kanban_selected_col < 3 {
-            self.kanban_selected_col += 1;
-            self.kanban_selected_row = 0;
-        }
-    }
-
-    pub fn kanban_move_row_up(&mut self) {
-        if self.kanban_selected_row > 0 {
-            self.kanban_selected_row -= 1;
-        }
-    }
-
-    pub fn kanban_move_row_down(&mut self) {
-        let count = self.kanban_items_in_column(self.kanban_selected_col).len();
-        if count > 0 && self.kanban_selected_row < count - 1 {
-            self.kanban_selected_row += 1;
-        }
-    }
-
-    pub fn kanban_shift_item_left(&mut self) {
-        let col = self.kanban_selected_col;
-        if col == 0 {
-            return;
-        }
-        let items = self.kanban_items_in_column(col);
-        if let Some(item_to_move) = items.get(self.kanban_selected_row) {
-            let uuid = item_to_move.uuid.clone();
-            let new_status = match col - 1 {
-                0 => crate::api::schema::KanbanStatus::Todo,
-                1 => crate::api::schema::KanbanStatus::InProgress,
-                2 => crate::api::schema::KanbanStatus::NeedReview,
-                _ => return,
-            };
-            self.update_kanban_item(&uuid, None, None, Some(new_status), None, None);
-            self.kanban_selected_col = col - 1;
-            let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
-            self.kanban_selected_row = new_count.saturating_sub(1);
-        }
-    }
-
-    pub fn kanban_shift_item_right(&mut self) {
-        let col = self.kanban_selected_col;
-        if col >= 3 {
-            return;
-        }
-        let items = self.kanban_items_in_column(col);
-        if let Some(item_to_move) = items.get(self.kanban_selected_row) {
-            let uuid = item_to_move.uuid.clone();
-            let new_status = match col + 1 {
-                1 => crate::api::schema::KanbanStatus::InProgress,
-                2 => crate::api::schema::KanbanStatus::NeedReview,
-                3 => crate::api::schema::KanbanStatus::Done,
-                _ => return,
-            };
-            self.update_kanban_item(&uuid, None, None, Some(new_status), None, None);
-            self.kanban_selected_col = col + 1;
-            let new_count = self.kanban_items_in_column(self.kanban_selected_col).len();
-            self.kanban_selected_row = new_count.saturating_sub(1);
-        }
-    }
-
-    pub fn kanban_delete_selected(&mut self) {
-        let col = self.kanban_selected_col;
-        let items = self.kanban_items_in_column(col);
-        if let Some(item) = items.get(self.kanban_selected_row) {
-            let uuid = item.uuid.clone();
-            self.delete_kanban_item(&uuid);
-            let new_count = self.kanban_items_in_column(col).len();
-            if self.kanban_selected_row >= new_count && new_count > 0 {
-                self.kanban_selected_row = new_count - 1;
-            } else if new_count == 0 {
-                self.kanban_selected_row = 0;
-            }
-        }
-    }
-
-    pub fn kanban_detail_modal_size(&self) -> (u16, u16) {
-        let area = self.view.terminal_area;
-        let width = 80.max(area.width.saturating_mul(8) / 10);
-        let height = 20.max(area.height.saturating_mul(8) / 10);
-        (width, height)
-    }
-
-    pub fn set_kanban_detail_uuid(&mut self, uuid: Option<String>) {
-        self.kanban_detail_uuid = uuid;
-        self.kanban_detail_scroll = 0;
-        self.kanban_detail_horizontal_scroll = 0;
-    }
-
-    pub fn kanban_detail_max_scroll(&self) -> u16 {
-        let Some(ref uuid) = self.kanban_detail_uuid else {
-            return 0;
-        };
-        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
-            return 0;
-        };
-        let (width, height) = self.kanban_detail_modal_size();
-        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
-        else {
-            return 0;
-        };
-        let inner = ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .inner(popup);
-        if inner.height < 7 || inner.width < 4 {
-            return 0;
-        }
-        let rows = ratatui::layout::Layout::vertical([
-            ratatui::layout::Constraint::Length(1), // Header title
-            ratatui::layout::Constraint::Length(1), // Divider
-            ratatui::layout::Constraint::Length(1), // Card Title
-            ratatui::layout::Constraint::Length(1), // Status Badge
-            ratatui::layout::Constraint::Length(1), // UUID
-            ratatui::layout::Constraint::Length(1), // Associated Terminal
-            ratatui::layout::Constraint::Min(1),    // Description
-            ratatui::layout::Constraint::Length(1), // Footer hint
-        ])
-        .split(inner);
-        let desc_area = rows[6];
-
-        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
-
-        let p = &self.palette;
-        let mut all_md_lines = Vec::new();
-        all_md_lines.push(crate::ui::MarkdownLine {
-            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                "Description:",
-                ratatui::style::Style::default()
-                    .fg(p.overlay1)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        if !item.description.is_empty() {
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Link {
-                    label_spans: vec![ratatui::text::Span::styled(
-                        item.description.clone(),
-                        ratatui::style::Style::default()
-                            .fg(p.blue)
-                            .add_modifier(ratatui::style::Modifier::UNDERLINED),
-                    )],
-                    url: item.description.clone(),
-                }],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        }
-        if is_err {
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                    display_desc,
-                    ratatui::style::Style::default()
-                        .fg(p.red)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        } else {
-            all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
-        }
-
-        let cell_size = if self.kitty_graphics_enabled {
-            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
-        } else {
-            crate::kitty_graphics::HostCellSize::default()
-        };
-
-        let wrapped = crate::ui::wrap_markdown(
-            &all_md_lines,
-            desc_area.width as usize,
-            self.kanban_detail_horizontal_scroll as usize,
-            cell_size,
-            self.palette.text,
-        );
-        wrapped
-            .lines
-            .len()
-            .saturating_sub(desc_area.height as usize) as u16
-    }
-
-    pub fn active_kanban_detail_hyperlinks(&self) -> Vec<((u16, u16), String, String)> {
-        let Some(ref uuid) = self.kanban_detail_uuid else {
-            return Vec::new();
-        };
-        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
-            return Vec::new();
-        };
-        let (width, height) = self.kanban_detail_modal_size();
-        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
-        else {
-            return Vec::new();
-        };
-        let inner = ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .inner(popup);
-        if inner.height < 7 || inner.width < 4 {
-            return Vec::new();
-        }
-        let rows = ratatui::layout::Layout::vertical([
-            ratatui::layout::Constraint::Length(1), // Header title
-            ratatui::layout::Constraint::Length(1), // Divider
-            ratatui::layout::Constraint::Length(1), // Card Title
-            ratatui::layout::Constraint::Length(1), // Status Badge
-            ratatui::layout::Constraint::Length(1), // UUID
-            ratatui::layout::Constraint::Length(1), // Associated Terminal
-            ratatui::layout::Constraint::Min(1),    // Description
-            ratatui::layout::Constraint::Length(1), // Footer hint
-        ])
-        .split(inner);
-        let desc_area = rows[6];
-
-        let max_scroll = self.kanban_detail_max_scroll();
-        let metrics = crate::pane::ScrollMetrics {
-            offset_from_bottom: max_scroll.saturating_sub(self.kanban_detail_scroll) as usize,
-            max_offset_from_bottom: max_scroll as usize,
-            viewport_rows: desc_area.height.max(1) as usize,
-        };
-        let has_scrollbar = crate::ui::release_notes_scrollbar_rect(desc_area, metrics).is_some();
-        let text_area = if has_scrollbar {
-            ratatui::layout::Rect::new(
-                desc_area.x,
-                desc_area.y,
-                desc_area.width.saturating_sub(1),
-                desc_area.height,
-            )
-        } else {
-            desc_area
-        };
-
-        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
-        if is_err {
-            return Vec::new();
-        }
-
-        let p = &self.palette;
-        let mut all_md_lines = Vec::new();
-        all_md_lines.push(crate::ui::MarkdownLine {
-            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                "Description:",
-                ratatui::style::Style::default()
-                    .fg(p.overlay1)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        if !item.description.is_empty() {
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Link {
-                    label_spans: vec![ratatui::text::Span::styled(
-                        item.description.clone(),
-                        ratatui::style::Style::default()
-                            .fg(p.blue)
-                            .add_modifier(ratatui::style::Modifier::UNDERLINED),
-                    )],
-                    url: item.description.clone(),
-                }],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        }
-        all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
-
-        let cell_size = if self.kitty_graphics_enabled {
-            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
-        } else {
-            crate::kitty_graphics::HostCellSize::default()
-        };
-
-        let wrapped = crate::ui::wrap_markdown(
-            &all_md_lines,
-            text_area.width as usize,
-            self.kanban_detail_horizontal_scroll as usize,
-            cell_size,
-            self.palette.text,
-        );
-
-        let scroll_y = self.kanban_detail_scroll as usize;
-        let viewport_height = text_area.height as usize;
-
-        let mut links = Vec::new();
-        for (line_idx, col_range, url) in wrapped.link_ranges {
-            if line_idx >= scroll_y && line_idx - scroll_y < viewport_height {
-                let screen_y = text_area.y + (line_idx - scroll_y) as u16;
-                for col in col_range {
-                    let screen_x = text_area.x + col as u16;
-                    if let Some(line) = wrapped.lines.get(line_idx) {
-                        let line_text: String =
-                            line.spans.iter().map(|s| s.content.as_ref()).collect();
-                        let char_symbol = line_text
-                            .chars()
-                            .nth(col)
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| " ".to_string());
-                        links.push(((screen_x, screen_y), char_symbol, url.clone()));
-                    }
-                }
-            }
-        }
-        links
-    }
-
-    pub fn scroll_kanban_detail(&mut self, delta: i16) {
-        let max_scroll = self.kanban_detail_max_scroll();
-        let current = self.kanban_detail_scroll as i16;
-        self.kanban_detail_scroll =
-            current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
-    }
-
-    pub fn kanban_detail_max_horizontal_scroll(&self) -> u16 {
-        let Some(ref uuid) = self.kanban_detail_uuid else {
-            return 0;
-        };
-        let Some(item) = self.kanban_items.iter().find(|it| it.uuid == *uuid) else {
-            return 0;
-        };
-        let (width, height) = self.kanban_detail_modal_size();
-        let Some(popup) = crate::ui::centered_popup_rect(self.view.terminal_area, width, height)
-        else {
-            return 0;
-        };
-        let inner = ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .inner(popup);
-        if inner.height < 7 || inner.width < 4 {
-            return 0;
-        }
-        let rows = ratatui::layout::Layout::vertical([
-            ratatui::layout::Constraint::Length(1), // Header title
-            ratatui::layout::Constraint::Length(1), // Divider
-            ratatui::layout::Constraint::Length(1), // Card Title
-            ratatui::layout::Constraint::Length(1), // Status Badge
-            ratatui::layout::Constraint::Length(1), // UUID
-            ratatui::layout::Constraint::Length(1), // Associated Terminal
-            ratatui::layout::Constraint::Min(1),    // Description
-            ratatui::layout::Constraint::Length(1), // Footer hint
-        ])
-        .split(inner);
-        let desc_area = rows[6];
-
-        let max_scroll = self.kanban_detail_max_scroll();
-        let metrics = crate::pane::ScrollMetrics {
-            offset_from_bottom: max_scroll.saturating_sub(self.kanban_detail_scroll) as usize,
-            max_offset_from_bottom: max_scroll as usize,
-            viewport_rows: desc_area.height.max(1) as usize,
-        };
-        let has_scrollbar = crate::ui::release_notes_scrollbar_rect(desc_area, metrics).is_some();
-        let text_area = if has_scrollbar {
-            ratatui::layout::Rect::new(
-                desc_area.x,
-                desc_area.y,
-                desc_area.width.saturating_sub(1),
-                desc_area.height,
-            )
-        } else {
-            desc_area
-        };
-
-        let (display_desc, is_err) = crate::ui::get_description_text(&item.description);
-        if is_err {
-            return 0;
-        }
-
-        let p = &self.palette;
-        let mut all_md_lines = Vec::new();
-        all_md_lines.push(crate::ui::MarkdownLine {
-            spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                "Description:",
-                ratatui::style::Style::default()
-                    .fg(p.overlay1)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        if !item.description.is_empty() {
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::styled(
-                    item.description.clone(),
-                    ratatui::style::Style::default().fg(p.overlay0),
-                ))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-            all_md_lines.push(crate::ui::MarkdownLine {
-                spans: vec![crate::ui::MarkdownSpan::Text(ratatui::text::Span::raw(""))],
-                is_code_block: false,
-                is_blockquote: false,
-                is_table_row: false,
-            });
-        }
-        all_md_lines.extend(crate::ui::parse_markdown_with_links(&display_desc, p));
-
-        let cell_size = if self.kitty_graphics_enabled {
-            crate::kitty_graphics::HostCellSize::from_terminal(self.view.terminal_area)
-        } else {
-            crate::kitty_graphics::HostCellSize::default()
-        };
-
-        let wrapped = crate::ui::wrap_markdown(
-            &all_md_lines,
-            text_area.width as usize,
-            0,
-            cell_size,
-            self.palette.text,
-        );
-        wrapped
-            .max_original_width
-            .saturating_sub(text_area.width as usize) as u16
-    }
-
-    pub fn scroll_horizontal_kanban_detail(&mut self, delta: i16) {
-        let max_scroll = self.kanban_detail_max_horizontal_scroll();
-        let current = self.kanban_detail_horizontal_scroll as i16;
-        self.kanban_detail_horizontal_scroll =
-            current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
     }
 }
 
@@ -2242,12 +1561,7 @@ impl AppState {
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
-            kanban_items: Vec::new(),
-            kanban_selected_col: 0,
-            kanban_selected_row: 0,
-            kanban_detail_uuid: None,
-            kanban_detail_scroll: 0,
-            kanban_detail_horizontal_scroll: 0,
+            kanban: crate::kanban::KanbanState::default(),
             prefix_previous_mode: None,
         }
     }
@@ -2407,9 +1721,9 @@ mod tests {
     #[test]
     fn kanban_state_helpers() {
         let mut state = AppState::test_new();
-        assert!(state.kanban_items.is_empty());
+        assert!(state.kanban.items.is_empty());
 
-        let item1 = state.add_kanban_item(
+        let item1 = state.kanban.add_item(
             "Task 1".to_string(),
             Some("Desc 1".to_string()),
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -2420,7 +1734,7 @@ mod tests {
         assert_eq!(item1.description, "Desc 1");
         assert_eq!(item1.status, crate::api::schema::KanbanStatus::Todo);
 
-        let item2 = state.add_kanban_item(
+        let item2 = state.kanban.add_item(
             "Task 2".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::InProgress),
@@ -2428,12 +1742,13 @@ mod tests {
         );
         assert_eq!(item2.description, "");
 
-        assert_eq!(state.kanban_items_in_column(0).len(), 1);
-        assert_eq!(state.kanban_items_in_column(1).len(), 1);
+        assert_eq!(state.kanban.items_in_column(0).len(), 1);
+        assert_eq!(state.kanban.items_in_column(1).len(), 1);
 
         // Update item 1
         let updated = state
-            .update_kanban_item(
+            .kanban
+            .update_item(
                 &item1.uuid,
                 Some("Task 1 Updated".to_string()),
                 None,
@@ -2446,26 +1761,26 @@ mod tests {
         assert_eq!(updated.status, crate::api::schema::KanbanStatus::InProgress);
 
         // Now both should be in InProgress column
-        assert_eq!(state.kanban_items_in_column(0).len(), 0);
-        assert_eq!(state.kanban_items_in_column(1).len(), 2);
+        assert_eq!(state.kanban.items_in_column(0).len(), 0);
+        assert_eq!(state.kanban.items_in_column(1).len(), 2);
 
         // Shift item tests
-        state.kanban_selected_col = 1;
-        state.kanban_selected_row = 0;
-        state.kanban_shift_item_right();
-        assert_eq!(state.kanban_selected_col, 2);
-        assert_eq!(state.kanban_items_in_column(2).len(), 1);
+        state.kanban.selected_col = 1;
+        state.kanban.selected_row = 0;
+        state.kanban.shift_item_right();
+        assert_eq!(state.kanban.selected_col, 2);
+        assert_eq!(state.kanban.items_in_column(2).len(), 1);
 
         // kanban_item_at test
         state.view.terminal_area = Rect::new(0, 0, 100, 20);
-        state.kanban_items.clear();
-        state.add_kanban_item(
+        state.kanban.items.clear();
+        state.kanban.add_item(
             "Task 1".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        let hit = state.kanban_item_at(5, 3);
+        let hit = crate::ui::kanban::kanban_item_at(&state, 5, 3);
         assert!(hit.is_some());
         let (col, idx, item) = hit.unwrap();
         assert_eq!(col, 0);
@@ -2473,9 +1788,9 @@ mod tests {
         assert_eq!(item.title, "Task 1");
 
         // Delete item
-        let deleted = state.delete_kanban_item(&item.uuid).unwrap();
+        let deleted = state.kanban.delete_item(&item.uuid).unwrap();
         assert_eq!(deleted.uuid, item.uuid);
-        assert_eq!(state.kanban_items.len(), 0);
+        assert_eq!(state.kanban.items.len(), 0);
     }
 
     #[test]
@@ -2490,21 +1805,21 @@ mod tests {
         std::fs::write(&plan_file, desc_text).unwrap();
         let plan_path = plan_file.to_string_lossy().to_string();
 
-        let item = state.add_kanban_item(
+        let item = state.kanban.add_item(
             "Test Task".to_string(),
             Some(plan_path.clone()),
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
 
-        state.set_kanban_detail_uuid(Some(item.uuid.clone()));
+        state.kanban.detail_uuid = Some(item.uuid.clone());
 
         // Max scroll should correctly calculate the height including the path
-        let max_scroll = state.kanban_detail_max_scroll();
+        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&state);
 
         // Reducing terminal area height should increase max scroll since fewer lines fit
         state.view.terminal_area = Rect::new(0, 0, 100, 15);
-        let max_scroll_small = state.kanban_detail_max_scroll();
+        let max_scroll_small = crate::ui::kanban::kanban_detail_max_scroll(&state);
         assert!(max_scroll_small > max_scroll);
 
         let _ = std::fs::remove_file(plan_file);
@@ -2520,12 +1835,12 @@ mod tests {
         state.ensure_test_terminals();
 
         // 1. Check pane status for nonexistent terminal
-        let nonexistent_status = state.kanban_item_pane_status("term_nonexistent");
+        let nonexistent_status = state.kanban_pane_status("term_nonexistent");
         assert!(!nonexistent_status.exists);
 
         // 2. Check pane status for existing terminal
         let terminal_id_str = attached_terminal_id.to_string();
-        let status = state.kanban_item_pane_status(&terminal_id_str);
+        let status = state.kanban_pane_status(&terminal_id_str);
         assert!(status.exists);
         assert_eq!(
             status.workspace_id.as_deref(),

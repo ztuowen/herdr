@@ -545,12 +545,7 @@ impl App {
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
-            kanban_items,
-            kanban_selected_col: 0,
-            kanban_selected_row: 0,
-            kanban_detail_uuid: None,
-            kanban_detail_scroll: 0,
-            kanban_detail_horizontal_scroll: 0,
+            kanban: crate::kanban::KanbanState::new(kanban_items),
             prefix_previous_mode: None,
         };
 
@@ -672,7 +667,7 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
-        app.state.kanban_items = snapshot.kanban_items.clone();
+        app.state.kanban = crate::kanban::KanbanState::new(snapshot.kanban_items.clone());
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -3589,11 +3584,11 @@ last_pane = "prefix+tab"
             crate::api::EventHub::default(),
         );
 
-        assert_eq!(app.state.kanban_items.len(), 1);
-        assert_eq!(app.state.kanban_items[0].uuid, "test-uuid-123");
-        assert_eq!(app.state.kanban_items[0].title, "Mock Title");
+        assert_eq!(app.state.kanban.items.len(), 1);
+        assert_eq!(app.state.kanban.items[0].uuid, "test-uuid-123");
+        assert_eq!(app.state.kanban.items[0].title, "Mock Title");
         assert_eq!(
-            app.state.kanban_items[0].status,
+            app.state.kanban.items[0].status,
             crate::api::schema::KanbanStatus::InProgress
         );
 
@@ -3634,7 +3629,7 @@ last_pane = "prefix+tab"
         );
 
         // Add a Kanban item but keep workspaces empty
-        app.state.add_kanban_item(
+        app.state.kanban.add_item(
             "Test Save".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
@@ -3651,7 +3646,7 @@ last_pane = "prefix+tab"
         assert_eq!(parsed.kanban_items[0].title, "Test Save");
 
         // Clear kanban items and save again
-        app.state.kanban_items.clear();
+        app.state.kanban.items.clear();
         app.save_session_now();
 
         // Verify session.json is now deleted/cleared
@@ -3669,14 +3664,14 @@ last_pane = "prefix+tab"
         app.state.selected = 0;
         app.state.mode = Mode::Kanban;
 
-        let item = app.state.add_kanban_item(
+        let item = app.state.kanban.add_item(
             "Test Card".to_string(),
             None,
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        app.state.kanban_selected_col = 0;
-        app.state.kanban_selected_row = 0;
+        app.state.kanban.selected_col = 0;
+        app.state.kanban.selected_row = 0;
 
         // Route 'c' key in Kanban mode
         app.route_client_input(b"c".to_vec());

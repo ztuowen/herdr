@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 mod dialogs;
-mod kanban;
+pub(crate) mod kanban;
 mod keybind_help;
 mod markdown;
 mod menus;
@@ -26,7 +26,6 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
-pub(crate) use self::kanban::get_description_text;
 use self::kanban::render_kanban;
 use self::keybind_help::render_keybind_help_overlay;
 pub(crate) use self::markdown::{
@@ -179,9 +178,9 @@ fn compute_view_internal(
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     if app.mode == Mode::Kanban {
-        app.kanban_selected_col = app.kanban_selected_col.min(3);
-        let items_len = app.kanban_items_in_column(app.kanban_selected_col).len();
-        app.kanban_selected_row = app.kanban_selected_row.min(items_len.saturating_sub(1));
+        app.kanban.selected_col = app.kanban.selected_col.min(3);
+        let items_len = app.kanban.items_in_column(app.kanban.selected_col).len();
+        app.kanban.selected_row = app.kanban.selected_row.min(items_len.saturating_sub(1));
     }
 
     if is_mobile_width(area, app.mobile_width_threshold) {

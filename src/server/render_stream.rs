@@ -307,7 +307,9 @@ pub(crate) fn visible_hyperlinks(
     let mut links = Vec::new();
 
     if app_state.mode == Mode::Kanban {
-        links.extend(app_state.active_kanban_detail_hyperlinks());
+        links.extend(crate::ui::kanban::active_kanban_detail_hyperlinks(
+            app_state,
+        ));
     }
 
     for info in &app_state.view.pane_infos {

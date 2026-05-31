@@ -22,7 +22,7 @@ impl App {
             return;
         }
 
-        if self.state.workspaces.is_empty() && self.state.kanban_items.is_empty() {
+        if self.state.workspaces.is_empty() && self.state.kanban.items.is_empty() {
             crate::persist::clear();
         } else {
             let snap = crate::persist::capture(
@@ -35,7 +35,7 @@ impl App {
                 self.state.sidebar_width,
                 self.state.sidebar_section_split,
                 self.state.collapsed_space_keys.clone(),
-                self.state.kanban_items.clone(),
+                self.state.kanban.items.clone(),
             );
             let history = self.persist_pane_history.then(|| {
                 crate::persist::capture_history(&self.state.workspaces, &self.terminal_runtimes)

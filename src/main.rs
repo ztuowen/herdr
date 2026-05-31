@@ -31,6 +31,7 @@ mod handoff_runtime;
 mod input;
 mod integration;
 mod ipc;
+mod kanban;
 mod kitty_graphics;
 mod layout;
 mod logging;

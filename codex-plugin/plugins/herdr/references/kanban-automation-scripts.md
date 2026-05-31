@@ -90,6 +90,8 @@ herdr kanban attach <uuid>
 herdr kanban update <uuid> --status ongoing
 ```
 
+The prompt also includes the card description file path so the worker can update the handoff document directly.
+
 ## Review Flow
 
 `herdr-kanban-review`:
@@ -99,6 +101,8 @@ herdr kanban update <uuid> --status ongoing
 3. Requires a `## Validation Evidence` section.
 4. Creates a disposable reviewer workspace.
 5. Runs Codex in that workspace's root pane in YOLO mode with the reviewer skill prompt.
+
+The reviewer prompt includes the card description file path so review notes and routing decisions can be recorded directly in the handoff document.
 
 ## Sweep Flow
 

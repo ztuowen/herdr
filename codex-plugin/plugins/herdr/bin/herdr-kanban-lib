@@ -69,27 +69,31 @@ PY
 
 kanban_prompt_worker() {
   local uuid="$1"
+  local description_path="$2"
   cat <<EOF
 Use the herdr-kanban-worker skill.
 
 Card: $uuid
+Description file: $description_path
 
-Read the card from Herdr Kanban. First attach this pane with:
+Read the card from Herdr Kanban and use the description file above as the handoff document to update. First attach this pane with:
 
 herdr kanban attach $uuid
 
-Then move the card to ongoing, implement only the scoped work, record validation evidence in the card description, and move it to reviewing. If human input or manual intervention is required, record the concrete blocker and move it to blocked.
+Then move the card to ongoing, implement only the scoped work, update the description file with implementation notes and validation evidence, and move it to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked.
 EOF
 }
 
 kanban_prompt_reviewer() {
   local uuid="$1"
+  local description_path="$2"
   cat <<EOF
 Use the herdr-kanban-reviewer skill.
 
 Card: $uuid
+Description file: $description_path
 
-Read the card from Herdr Kanban and review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill. Use blocked with review_state: human-review-required for subjective UI or manual review.
+Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria and validation evidence. Move it to done, todo, ongoing, or blocked according to the reviewer skill. Use blocked with review_state: human-review-required for subjective UI or manual review, and record review notes in the description file.
 EOF
 }
 

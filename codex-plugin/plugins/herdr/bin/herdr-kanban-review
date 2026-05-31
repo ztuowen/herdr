@@ -57,7 +57,7 @@ while IFS=$'\t' read -r uuid title description_path; do
   [ -n "${uuid:-}" ] || continue
   short="$(kanban_short_uuid "$uuid")"
   workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX reviewer $short"
-  prompt="$(kanban_prompt_reviewer "$uuid")"
+  prompt="$(kanban_prompt_reviewer "$uuid" "$description_path")"
   codex_command="$(kanban_codex_command "$prompt")"
 
   kanban_log "route reviewer: $uuid $title"

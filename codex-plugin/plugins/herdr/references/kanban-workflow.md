@@ -8,6 +8,10 @@ Herdr Kanban is the only handoff surface. Agents must not rely on chat history, 
 - attached pane
 - Herdr-visible agent status
 
+Ready cards must be tracer bullets: each card should produce an independently demonstrable end-to-end slice, not just a horizontal layer that waits on other cards. A card may build infrastructure, but it still needs an observable proof such as a diagnostics panel, CLI/API invocation, integration test, fixture-backed mock mode, or visible UI state.
+
+Dependencies must be bounded. If a dependency is unavailable, the card should describe the fallback path that still lets a worker produce reviewable progress: mock data, fixture input, a standalone route, a diagnostic panel, a focused test, or a manual invocation.
+
 ## Commands
 
 ```bash
@@ -66,6 +70,10 @@ last_actor: triage
 
 ## Dependencies
 - 
+
+## Tracer Bullet Proof
+- What end-to-end behavior this card must demonstrate:
+- How to demonstrate it if related cards are not complete:
 
 ## Implementation Notes
 

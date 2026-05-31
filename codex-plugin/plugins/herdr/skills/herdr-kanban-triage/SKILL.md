@@ -13,7 +13,7 @@ Triage is the only phase that should clarify with the human or perform open-ende
 
 1. Clarify the user request until routine execution would be safe.
 2. Research local repo context, linked issues, docs, errors, or prior work as needed.
-3. Split the work into independently reviewable cards.
+3. Split the work into independently reviewable tracer-bullet cards.
 4. Create only ready cards, or explicitly mark unresolved work as `clarify:` or move it to `blocked` when human or manual intervention is required.
 5. Put the full handoff contract in each card description.
 
@@ -34,7 +34,15 @@ Every ready card must include:
 - acceptance criteria
 - validation requirements
 - dependencies
+- tracer bullet proof
+- bounded fallback path
 - handoff rules
+
+Every ready card must produce an independently demonstrable end-to-end slice. Avoid layer-only cards such as "build the API bridge" unless the card also includes an observable proof such as a diagnostics panel, CLI invocation, integration test, fixture-backed mock mode, or visible UI state.
+
+Dependencies must be bounded. If another card is unavailable, the card must say how the worker can still produce reviewable progress through a fallback, mock, fixture, diagnostic panel, standalone route, or targeted test. Do not create cards that can wait indefinitely on competing work.
+
+Before creating cards, check that each card can be worked without relying on chat context or another unfinished card. If not, split it differently or add a fallback validation path.
 
 Do not create vague cards. If the task cannot be made routine, keep ownership in triage and ask the human.
 

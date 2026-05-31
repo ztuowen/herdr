@@ -18,6 +18,7 @@ pub(super) enum SettingsAction {
     SaveToastDelivery(ToastDelivery),
     SaveAgentBorderLabels(bool),
     SavePaneHistory(bool),
+    SaveKittyGraphics(bool),
     InstallRecommendedIntegrations,
 }
 
@@ -34,6 +35,9 @@ impl App {
                 }
                 SettingsAction::SavePaneHistory(enabled) => {
                     self.save_pane_history_persistence(enabled)
+                }
+                SettingsAction::SaveKittyGraphics(enabled) => {
+                    self.save_kitty_graphics_enabled(enabled)
                 }
                 SettingsAction::InstallRecommendedIntegrations => {
                     self.install_recommended_integrations()
@@ -228,10 +232,22 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
             }
         },
         SettingsSection::Experiments => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.settings.list.move_prev();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.settings.list.move_next(2);
+            }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                return Some(SettingsAction::SavePaneHistory(
-                    !state.pane_history_persistence_enabled(),
-                ));
+                if state.settings.list.selected == 0 {
+                    return Some(SettingsAction::SavePaneHistory(
+                        !state.pane_history_persistence_enabled(),
+                    ));
+                } else if state.settings.list.selected == 1 {
+                    return Some(SettingsAction::SaveKittyGraphics(
+                        !state.kitty_graphics_enabled,
+                    ));
+                }
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
                 state.settings.section = SettingsSection::Integrations;
@@ -377,7 +393,11 @@ impl AppState {
             }
             SettingsSection::Experiments => {
                 let list_y = area.y + 3;
-                (row == list_y).then_some(0)
+                if row >= list_y && row < list_y + 2 {
+                    Some((row - list_y) as usize)
+                } else {
+                    None
+                }
             }
             SettingsSection::Integrations => None,
         }
@@ -419,9 +439,19 @@ impl AppState {
                             let enabled = idx == 0;
                             Some(SettingsAction::SaveAgentBorderLabels(enabled))
                         }
-                        SettingsSection::Experiments => Some(SettingsAction::SavePaneHistory(
-                            !self.pane_history_persistence_enabled(),
-                        )),
+                        SettingsSection::Experiments => {
+                            if idx == 0 {
+                                Some(SettingsAction::SavePaneHistory(
+                                    !self.pane_history_persistence_enabled(),
+                                ))
+                            } else if idx == 1 {
+                                Some(SettingsAction::SaveKittyGraphics(
+                                    !self.kitty_graphics_enabled,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
                         SettingsSection::Integrations => None,
                     };
                 }
@@ -520,6 +550,22 @@ mod tests {
         );
 
         assert_eq!(action, Some(SettingsAction::SavePaneHistory(true)));
+        assert_eq!(state.mode, Mode::Settings);
+    }
+
+    #[test]
+    fn settings_experiments_toggles_kitty_graphics() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.kitty_graphics_enabled = false;
+        open_settings_at(&mut state, SettingsSection::Experiments);
+        state.settings.list.selected = 1;
+
+        let action = update_settings_state(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+
+        assert_eq!(action, Some(SettingsAction::SaveKittyGraphics(true)));
         assert_eq!(state.mode, Mode::Settings);
     }
 

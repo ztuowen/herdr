@@ -114,4 +114,12 @@ impl App {
             self.apply_config_from_disk(false);
         }
     }
+
+    pub(super) fn save_kitty_graphics_enabled(&mut self, enabled: bool) {
+        if self.update_config_file("experimental kitty graphics", |content| {
+            crate::config::upsert_section_bool(content, "experimental", "kitty_graphics", enabled)
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
 }

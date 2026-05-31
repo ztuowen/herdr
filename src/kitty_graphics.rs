@@ -428,8 +428,26 @@ fn collect_visible_placements(
                     let image_id = 900_000 + (formula_hash % 99_999);
                     let placement_id = 900_000 + (formula_hash % 99_999);
 
+                    let grid_width_px = sp.grid_cols * cell_size.width_px;
+                    let grid_height_px = sp.grid_rows * cell_size.height_px;
+
+                    // Scale and pad the math image to match the grid cell size,
+                    // preserving aspect ratio and preventing distortion.
+                    let (final_bytes, final_w, final_h) = if let Some(padded_bytes) =
+                        crate::math_compiler::scale_and_pad_math_image(
+                            &png_bytes,
+                            w_px,
+                            h_px,
+                            grid_width_px,
+                            grid_height_px,
+                        ) {
+                        (padded_bytes, grid_width_px, grid_height_px)
+                    } else {
+                        (png_bytes, w_px, h_px)
+                    };
+
                     let mut fingerprint_hasher = DefaultHasher::new();
-                    png_bytes.hash(&mut fingerprint_hasher);
+                    final_bytes.hash(&mut fingerprint_hasher);
                     let data_fingerprint = fingerprint_hasher.finish();
 
                     let placement = KittyImagePlacement {
@@ -438,12 +456,12 @@ fn collect_visible_placements(
                         z: 10,
                         x_offset: 0,
                         y_offset: 0,
-                        image_width: w_px,
-                        image_height: h_px,
+                        image_width: final_w,
+                        image_height: final_h,
                         format: KittyImageFormat::Png,
-                        data_len: png_bytes.len(),
+                        data_len: final_bytes.len(),
                         data_fingerprint,
-                        data: png_bytes,
+                        data: final_bytes,
                         render: crate::ghostty::KittyPlacementRenderInfo {
                             pixel_width: 0,
                             pixel_height: 0,

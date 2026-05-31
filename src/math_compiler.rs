@@ -221,11 +221,69 @@ $ {} $
         &mut pixmap.as_mut(),
     );
 
-    let png_bytes = pixmap
+    // Find the bounding box of non-transparent pixels to trim empty space
+    let mut min_x = pixmap.width();
+    let mut max_x = 0;
+    let mut min_y = pixmap.height();
+    let mut max_y = 0;
+    let pixels = pixmap.data();
+    let width = pixmap.width();
+    let height = pixmap.height();
+
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 4) as usize;
+            let alpha = pixels[idx + 3];
+            if alpha > 0 {
+                if x < min_x {
+                    min_x = x;
+                }
+                if x > max_x {
+                    max_x = x;
+                }
+                if y < min_y {
+                    min_y = y;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
+            }
+        }
+    }
+
+    let (trimmed_pixmap, final_w, final_h) = if min_x <= max_x && min_y <= max_y {
+        // Add 1px padding to avoid anti-aliasing cut-off
+        let padding = 1;
+        let min_x = min_x.saturating_sub(padding);
+        let min_y = min_y.saturating_sub(padding);
+        let max_x = (max_x + padding).min(width - 1);
+        let max_y = (max_y + padding).min(height - 1);
+
+        let crop_width = max_x - min_x + 1;
+        let crop_height = max_y - min_y + 1;
+
+        if let Some(mut cropped) = tiny_skia::Pixmap::new(crop_width, crop_height) {
+            for y in 0..crop_height {
+                let src_y = min_y + y;
+                let src_start = ((src_y * width + min_x) * 4) as usize;
+                let src_end = src_start + (crop_width * 4) as usize;
+                let dest_start = ((y * crop_width) * 4) as usize;
+                cropped.data_mut()[dest_start..dest_start + (crop_width * 4) as usize]
+                    .copy_from_slice(&pixels[src_start..src_end]);
+            }
+            (cropped, crop_width, crop_height)
+        } else {
+            (pixmap, width, height)
+        }
+    } else {
+        (pixmap, width, height)
+    };
+
+    let png_bytes = trimmed_pixmap
         .encode_png()
         .map_err(|e| format!("Failed to encode PNG: {e}"))?;
 
-    Ok((png_bytes, pixmap_size.width(), pixmap_size.height()))
+    Ok((png_bytes, final_w, final_h))
 }
 
 struct MathWorld {
@@ -272,4 +330,37 @@ impl World for MathWorld {
     fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
         None
     }
+}
+
+pub(crate) fn scale_and_pad_math_image(
+    png_bytes: &[u8],
+    w_px: u32,
+    h_px: u32,
+    grid_width_px: u32,
+    grid_height_px: u32,
+) -> Option<Vec<u8>> {
+    if w_px == 0 || h_px == 0 || grid_width_px == 0 || grid_height_px == 0 {
+        return None;
+    }
+
+    let src_pixmap = tiny_skia::Pixmap::decode_png(png_bytes).ok()?;
+    let mut dest_pixmap = tiny_skia::Pixmap::new(grid_width_px, grid_height_px)?;
+
+    let scale_x = grid_width_px as f32 / w_px as f32;
+    let scale_y = grid_height_px as f32 / h_px as f32;
+    let scale = scale_x.min(scale_y);
+
+    let dx = (grid_width_px as f32 - w_px as f32 * scale) / 2.0;
+    let dy = (grid_height_px as f32 - h_px as f32 * scale) / 2.0;
+
+    let paint = tiny_skia::PixmapPaint {
+        quality: tiny_skia::FilterQuality::Bilinear,
+        ..Default::default()
+    };
+
+    let transform = tiny_skia::Transform::from_scale(scale, scale).post_translate(dx, dy);
+
+    dest_pixmap.draw_pixmap(0, 0, src_pixmap.as_ref(), &paint, transform, None);
+
+    dest_pixmap.encode_png().ok()
 }

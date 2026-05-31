@@ -364,13 +364,6 @@ fn render_kanban_detail_modal(
     };
     frame.render_widget(Paragraph::new(terminal_line), rows[5]);
 
-    // Description block
-    let desc_title = Span::styled(
-        "Description:",
-        Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
-    );
-    let (display_desc, is_error) = get_description_text(&item.description);
-
     let max_scroll = kanban_detail_max_scroll(app);
     let metrics = crate::pane::ScrollMetrics {
         offset_from_bottom: max_scroll.saturating_sub(app.kanban.detail_scroll) as usize,
@@ -389,84 +382,26 @@ fn render_kanban_detail_modal(
         })
         .unwrap_or(rows[6]);
 
-    let mut all_md_lines = Vec::new();
-    all_md_lines.push(super::MarkdownLine {
-        spans: vec![super::MarkdownSpan::Text(desc_title)],
-        is_code_block: false,
-        is_blockquote: false,
-        is_table_row: false,
-    });
-    if !item.description.is_empty() {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Link {
-                label_spans: vec![Span::styled(
-                    item.description.clone(),
-                    Style::default()
-                        .fg(p.blue)
-                        .add_modifier(Modifier::UNDERLINED),
-                )],
-                url: item.description.clone(),
-            }],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    }
-    if is_error {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::styled(
-                display_desc,
-                Style::default().fg(p.red).add_modifier(Modifier::BOLD),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    } else {
-        all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
-    }
-
+    let doc = build_kanban_description_doc(item, p);
     let cell_size = if app.kitty_graphics_enabled {
         crate::kitty_graphics::HostCellSize::from_terminal(area)
     } else {
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let wrapped = super::wrap_markdown(
-        &all_md_lines,
+    let wrapped = doc.wrap(
         desc_area.width as usize,
         app.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
 
-    let desc_text = Paragraph::new(wrapped.lines).scroll((app.kanban.detail_scroll, 0));
+    let desc_text = Paragraph::new(wrapped.lines().to_vec()).scroll((app.kanban.detail_scroll, 0));
     frame.render_widget(desc_text, desc_area);
 
     if app.kitty_graphics_enabled && cell_size.is_known() {
         if let Ok(mut placements) = app.static_image_placements.lock() {
-            for placement in wrapped.math_placements {
-                let viewport_row = placement.line_idx as i32 - app.kanban.detail_scroll as i32;
-                if viewport_row < desc_area.height as i32
-                    && viewport_row + placement.height_cells as i32 > 0
-                {
-                    placements.push(crate::app::state::StaticImagePlacement {
-                        formula: placement.formula.clone(),
-                        text_color_hex: placement.text_color_hex.clone(),
-                        area: desc_area,
-                        grid_cols: placement.width_cells as u32,
-                        grid_rows: placement.height_cells as u32,
-                        viewport_col: placement.col_idx as i32,
-                        viewport_row,
-                    });
-                }
-            }
+            wrapped.push_image_placements(&mut placements, desc_area, app.kanban.detail_scroll);
         }
     }
 
@@ -507,6 +442,37 @@ pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
             Err(_) => ("NO DESCRIPTION FOUND".to_string(), true),
         }
     }
+}
+
+fn build_kanban_description_doc(
+    item: &crate::api::schema::KanbanItem,
+    p: &crate::app::state::Palette,
+) -> super::MarkdownDocument {
+    let (display_desc, is_error) = get_description_text(&item.description);
+    let mut doc = super::MarkdownDocument::new();
+    doc.append_text_line(
+        "Description:",
+        Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
+    );
+    if !item.description.is_empty() {
+        doc.append_link_line(
+            &item.description,
+            &item.description,
+            Style::default()
+                .fg(p.blue)
+                .add_modifier(Modifier::UNDERLINED),
+        );
+        doc.append_empty_line();
+    }
+    if is_error {
+        doc.append_text_line(
+            &display_desc,
+            Style::default().fg(p.red).add_modifier(Modifier::BOLD),
+        );
+    } else {
+        doc.append_markdown(&display_desc, p);
+    }
+    doc
 }
 
 pub(crate) fn format_kanban_title(title: &str, width: u16) -> String {
@@ -574,72 +540,20 @@ pub fn kanban_detail_max_scroll(app: &AppState) -> u16 {
     .split(inner);
     let desc_area = rows[6];
 
-    let (display_desc, is_err) = get_description_text(&item.description);
-
-    let p = &app.palette;
-    let mut all_md_lines = Vec::new();
-    all_md_lines.push(super::MarkdownLine {
-        spans: vec![super::MarkdownSpan::Text(Span::styled(
-            "Description:",
-            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
-        ))],
-        is_code_block: false,
-        is_blockquote: false,
-        is_table_row: false,
-    });
-    if !item.description.is_empty() {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Link {
-                label_spans: vec![Span::styled(
-                    item.description.clone(),
-                    Style::default()
-                        .fg(p.blue)
-                        .add_modifier(Modifier::UNDERLINED),
-                )],
-                url: item.description.clone(),
-            }],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    }
-    if is_err {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::styled(
-                display_desc,
-                Style::default().fg(p.red).add_modifier(Modifier::BOLD),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    } else {
-        all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
-    }
-
+    let doc = build_kanban_description_doc(item, &app.palette);
     let cell_size = if app.kitty_graphics_enabled {
         crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
     } else {
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let wrapped = super::wrap_markdown(
-        &all_md_lines,
+    let wrapped = doc.wrap(
         desc_area.width as usize,
         app.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
-    wrapped
-        .lines
-        .len()
-        .saturating_sub(desc_area.height as usize) as u16
+    wrapped.max_scroll_y(desc_area.height)
 }
 
 pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
@@ -688,57 +602,15 @@ pub fn kanban_detail_max_horizontal_scroll(app: &AppState) -> u16 {
         desc_area
     };
 
-    let (display_desc, is_err) = get_description_text(&item.description);
-    if is_err {
-        return 0;
-    }
-
-    let p = &app.palette;
-    let mut all_md_lines = Vec::new();
-    all_md_lines.push(super::MarkdownLine {
-        spans: vec![super::MarkdownSpan::Text(Span::styled(
-            "Description:",
-            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
-        ))],
-        is_code_block: false,
-        is_blockquote: false,
-        is_table_row: false,
-    });
-    if !item.description.is_empty() {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::styled(
-                item.description.clone(),
-                Style::default().fg(p.overlay0),
-            ))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    }
-    all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
-
+    let doc = build_kanban_description_doc(item, &app.palette);
     let cell_size = if app.kitty_graphics_enabled {
         crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
     } else {
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let wrapped = super::wrap_markdown(
-        &all_md_lines,
-        text_area.width as usize,
-        0,
-        cell_size,
-        app.palette.text,
-    );
-    wrapped
-        .max_original_width
-        .saturating_sub(text_area.width as usize) as u16
+    let wrapped = doc.wrap(text_area.width as usize, 0, cell_size, app.palette.text);
+    wrapped.max_scroll_x(text_area.width)
 }
 
 pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), String, String)> {
@@ -787,82 +659,21 @@ pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), Strin
         desc_area
     };
 
-    let (display_desc, is_err) = get_description_text(&item.description);
-    if is_err {
-        return Vec::new();
-    }
-
-    let p = &app.palette;
-    let mut all_md_lines = Vec::new();
-    all_md_lines.push(super::MarkdownLine {
-        spans: vec![super::MarkdownSpan::Text(Span::styled(
-            "Description:",
-            Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
-        ))],
-        is_code_block: false,
-        is_blockquote: false,
-        is_table_row: false,
-    });
-    if !item.description.is_empty() {
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Link {
-                label_spans: vec![Span::styled(
-                    item.description.clone(),
-                    Style::default()
-                        .fg(p.blue)
-                        .add_modifier(Modifier::UNDERLINED),
-                )],
-                url: item.description.clone(),
-            }],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-        all_md_lines.push(super::MarkdownLine {
-            spans: vec![super::MarkdownSpan::Text(Span::raw(""))],
-            is_code_block: false,
-            is_blockquote: false,
-            is_table_row: false,
-        });
-    }
-    all_md_lines.extend(super::parse_markdown_with_links(&display_desc, p));
-
+    let doc = build_kanban_description_doc(item, &app.palette);
     let cell_size = if app.kitty_graphics_enabled {
         crate::kitty_graphics::HostCellSize::from_terminal(app.view.terminal_area)
     } else {
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let wrapped = super::wrap_markdown(
-        &all_md_lines,
+    let wrapped = doc.wrap(
         text_area.width as usize,
         app.kanban.detail_horizontal_scroll as usize,
         cell_size,
         app.palette.text,
     );
 
-    let scroll_y = app.kanban.detail_scroll as usize;
-    let viewport_height = text_area.height as usize;
-
-    let mut links = Vec::new();
-    for (line_idx, col_range, url) in wrapped.link_ranges {
-        if line_idx >= scroll_y && line_idx - scroll_y < viewport_height {
-            let screen_y = text_area.y + (line_idx - scroll_y) as u16;
-            for col in col_range {
-                let screen_x = text_area.x + col as u16;
-                if let Some(line) = wrapped.lines.get(line_idx) {
-                    let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-                    let char_symbol = line_text
-                        .chars()
-                        .nth(col)
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| " ".to_string());
-                    links.push(((screen_x, screen_y), char_symbol, url.clone()));
-                }
-            }
-        }
-    }
-    links
+    wrapped.active_hyperlinks(text_area, app.kanban.detail_scroll)
 }
 
 pub fn kanban_item_at(

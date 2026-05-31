@@ -28,9 +28,7 @@ use self::dialogs::{
 };
 use self::kanban::render_kanban;
 use self::keybind_help::render_keybind_help_overlay;
-pub(crate) use self::markdown::{
-    parse_markdown_with_links, wrap_markdown, MarkdownLine, MarkdownSpan,
-};
+pub(crate) use self::markdown::MarkdownDocument;
 use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
     render_navigate_overlay, render_prefix_overlay, render_resize_overlay,

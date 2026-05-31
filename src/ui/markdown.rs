@@ -2225,6 +2225,147 @@ fn commit_line(
     wrapped_lines.push(Line::from(spans));
 }
 
+#[derive(Debug, Clone)]
+pub struct MarkdownDocument {
+    lines: Vec<MarkdownLine>,
+}
+
+impl MarkdownDocument {
+    pub fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+
+    pub fn append_markdown(&mut self, text: &str, palette: &Palette) {
+        let parsed = parse_markdown_with_links(text, palette);
+        self.lines.extend(parsed);
+    }
+
+    pub fn append_text_line(&mut self, text: &str, style: Style) {
+        self.lines.push(MarkdownLine {
+            spans: vec![MarkdownSpan::Text(Span::styled(text.to_string(), style))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+
+    pub fn append_link_line(&mut self, label: &str, url: &str, style: Style) {
+        self.lines.push(MarkdownLine {
+            spans: vec![MarkdownSpan::Link {
+                label_spans: vec![Span::styled(label.to_string(), style)],
+                url: url.to_string(),
+            }],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+
+    pub fn append_empty_line(&mut self) {
+        self.lines.push(MarkdownLine {
+            spans: vec![MarkdownSpan::Text(Span::raw(""))],
+            is_code_block: false,
+            is_blockquote: false,
+            is_table_row: false,
+        });
+    }
+
+    pub fn wrap(
+        &self,
+        width: usize,
+        table_scroll_x: usize,
+        cell_size: crate::kitty_graphics::HostCellSize,
+        text_color: ratatui::style::Color,
+    ) -> WrappedMarkdownDocument {
+        let wrapped = wrap_markdown(&self.lines, width, table_scroll_x, cell_size, text_color);
+        WrappedMarkdownDocument { wrapped }
+    }
+}
+
+impl Default for MarkdownDocument {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WrappedMarkdownDocument {
+    wrapped: WrappedMarkdown,
+}
+
+impl WrappedMarkdownDocument {
+    pub fn lines(&self) -> &[Line<'static>] {
+        &self.wrapped.lines
+    }
+
+    pub fn max_scroll_y(&self, viewport_height: u16) -> u16 {
+        self.wrapped
+            .lines
+            .len()
+            .saturating_sub(viewport_height as usize) as u16
+    }
+
+    pub fn max_scroll_x(&self, viewport_width: u16) -> u16 {
+        self.wrapped
+            .max_original_width
+            .saturating_sub(viewport_width as usize) as u16
+    }
+
+    pub fn active_hyperlinks(
+        &self,
+        viewport_area: ratatui::layout::Rect,
+        scroll_y: u16,
+    ) -> Vec<((u16, u16), String, String)> {
+        let scroll_y = scroll_y as usize;
+        let viewport_height = viewport_area.height as usize;
+        let mut links = Vec::new();
+        for (line_idx, col_range, url) in &self.wrapped.link_ranges {
+            let line_idx = *line_idx;
+            if line_idx >= scroll_y && line_idx - scroll_y < viewport_height {
+                let screen_y = viewport_area.y + (line_idx - scroll_y) as u16;
+                for col in col_range.clone() {
+                    let screen_x = viewport_area.x + col as u16;
+                    if let Some(line) = self.wrapped.lines.get(line_idx) {
+                        let line_text: String =
+                            line.spans.iter().map(|s| s.content.as_ref()).collect();
+                        let char_symbol = line_text
+                            .chars()
+                            .nth(col)
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        links.push(((screen_x, screen_y), char_symbol, url.clone()));
+                    }
+                }
+            }
+        }
+        links
+    }
+
+    pub fn push_image_placements(
+        &self,
+        placements: &mut Vec<crate::app::state::StaticImagePlacement>,
+        viewport_area: ratatui::layout::Rect,
+        scroll_y: u16,
+    ) {
+        for placement in &self.wrapped.math_placements {
+            let viewport_row = placement.line_idx as i32 - scroll_y as i32;
+            if viewport_row < viewport_area.height as i32
+                && viewport_row + placement.height_cells as i32 > 0
+            {
+                placements.push(crate::app::state::StaticImagePlacement {
+                    formula: placement.formula.clone(),
+                    text_color_hex: placement.text_color_hex.clone(),
+                    area: viewport_area,
+                    grid_cols: placement.width_cells as u32,
+                    grid_rows: placement.height_cells as u32,
+                    viewport_col: placement.col_idx as i32,
+                    viewport_row,
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

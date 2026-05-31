@@ -3,6 +3,8 @@ use crate::api::schema::{
     Method, Request,
 };
 
+const STATUS_HELP: &str = "todo|ongoing|blocked|reviewing|done";
+
 pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
         print_kanban_help();
@@ -29,8 +31,8 @@ pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
 
 fn print_kanban_help() {
     eprintln!("herdr kanban commands:");
-    eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
-    eprintln!("  herdr kanban list [--status <todo|in-progress|need-review|done>] [--pane]");
+    eprintln!("  herdr kanban add <title> [--description <path.md>] [--status <{STATUS_HELP}>]");
+    eprintln!("  herdr kanban list [--status <{STATUS_HELP}>] [--pane]");
     eprintln!(
         "  herdr kanban update <uuid> [--title <title>] [--description <path.md>] [--status <status>]"
     );
@@ -41,7 +43,9 @@ fn print_kanban_help() {
 
 fn kanban_add(args: &[String]) -> std::io::Result<i32> {
     let Some(title) = args.first() else {
-        eprintln!("usage: herdr kanban add <title> [--description <path.md>] [--status <todo|in-progress|need-review|done>]");
+        eprintln!(
+            "usage: herdr kanban add <title> [--description <path.md>] [--status <{STATUS_HELP}>]"
+        );
         return Ok(2);
     };
 
@@ -74,9 +78,7 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
                 let parsed_status = match KanbanStatus::from_str(val) {
                     Some(s) => s,
                     None => {
-                        eprintln!(
-                            "invalid status: {val} (expected todo|in-progress|need-review|done)"
-                        );
+                        eprintln!("invalid status: {val} (expected {STATUS_HELP})");
                         return Ok(2);
                     }
                 };
@@ -115,9 +117,7 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
                 let parsed_status = match KanbanStatus::from_str(val) {
                     Some(s) => s,
                     None => {
-                        eprintln!(
-                            "invalid status: {val} (expected todo|in-progress|need-review|done)"
-                        );
+                        eprintln!("invalid status: {val} (expected {STATUS_HELP})");
                         return Ok(2);
                     }
                 };
@@ -198,9 +198,7 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
                 let parsed_status = match KanbanStatus::from_str(val) {
                     Some(s) => s,
                     None => {
-                        eprintln!(
-                            "invalid status: {val} (expected todo|in-progress|need-review|done)"
-                        );
+                        eprintln!("invalid status: {val} (expected {STATUS_HELP})");
                         return Ok(2);
                     }
                 };

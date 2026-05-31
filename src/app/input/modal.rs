@@ -1710,7 +1710,7 @@ mod tests {
         let _item1_0 = state.extensions.kanban.add_item(
             "Task 3".to_string(),
             None,
-            Some(crate::api::schema::KanbanStatus::InProgress),
+            Some(crate::api::schema::KanbanStatus::Ongoing),
             None,
         );
 
@@ -1720,7 +1720,7 @@ mod tests {
         state.extensions.kanban.selected_col = 0;
         state.extensions.kanban.selected_row = 0;
 
-        // Down should move to next column (InProgress = 1)
+        // Down should move to next column (Ongoing = 1)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())),
@@ -1752,7 +1752,7 @@ mod tests {
         assert_eq!(state.extensions.kanban.selected_col, 0);
         assert_eq!(state.extensions.kanban.selected_row, 0);
 
-        // Shift+Down should shift item right/down (from Todo to InProgress)
+        // Shift+Down should shift item right/down (from Todo to Ongoing)
         handle_kanban_key(
             &mut state,
             TerminalKey::from(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),

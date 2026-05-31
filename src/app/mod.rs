@@ -3819,7 +3819,7 @@ last_pane = "prefix+tab"
             uuid: "test-uuid-123".to_string(),
             title: "Mock Title".to_string(),
             description: "Mock Description".to_string(),
-            status: crate::api::schema::KanbanStatus::InProgress,
+            status: crate::api::schema::KanbanStatus::Ongoing,
             terminal_id: None,
         };
 
@@ -3852,7 +3852,7 @@ last_pane = "prefix+tab"
         assert_eq!(app.state.extensions.kanban.items[0].title, "Mock Title");
         assert_eq!(
             app.state.extensions.kanban.items[0].status,
-            crate::api::schema::KanbanStatus::InProgress
+            crate::api::schema::KanbanStatus::Ongoing
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);

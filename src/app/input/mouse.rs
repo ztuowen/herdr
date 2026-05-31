@@ -3077,27 +3077,27 @@ mod tests {
         let old_sidebar = app.state.view.sidebar_rect;
         app.state.view.sidebar_rect = Rect::default();
         app.state.view.terminal_area = Rect::new(0, 0, 80, 20); // y from 0 to 20
-                                                                // Four rows/vertical columns, each gets 5 rows:
-                                                                // Todo: y=0..5, InProgress: y=5..10, NeedReview: y=10..15, Done: y=15..20
+                                                                // Five rows/vertical columns, each gets 4 rows:
+                                                                // Todo: y=0..4, Ongoing: y=4..8, Blocked: y=8..12, Reviewing: y=12..16, Done: y=16..20
 
         app.state.extensions.kanban.items.clear();
         for i in 0..5 {
             app.state.extensions.kanban.add_item(
                 format!("Task {i}"),
                 None,
-                Some(crate::api::schema::KanbanStatus::InProgress), // Column 1
+                Some(crate::api::schema::KanbanStatus::Ongoing), // Column 1
                 None,
             );
         }
         app.state.extensions.kanban.selected_col = 0;
         app.state.extensions.kanban.selected_row = 0;
 
-        // Scroll down on In Progress (hover at y = 7, inside y = 5..10)
+        // Scroll down on Ongoing (hover at y = 7, inside y = 4..8)
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 10, 7));
         assert_eq!(app.state.extensions.kanban.selected_col, 1);
         assert_eq!(app.state.extensions.kanban.selected_row, 1);
 
-        // Scroll up on In Progress (hover at y = 7)
+        // Scroll up on Ongoing (hover at y = 7)
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 10, 7));
         assert_eq!(app.state.extensions.kanban.selected_col, 1);
         assert_eq!(app.state.extensions.kanban.selected_row, 0);

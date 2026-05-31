@@ -2858,7 +2858,7 @@ fn kanban_cli_attach_detach_behavior() {
     // 2. herdr kanban update: by default, does not attach terminal_id
     let res = run_cli_with_env(
         &socket_path,
-        &["kanban", "update", "uuid-123", "--status", "need-review"],
+        &["kanban", "update", "uuid-123", "--status", "reviewing"],
         &[("HERDR_PANE_ID", "p_123")],
     );
     assert!(res.status.success());

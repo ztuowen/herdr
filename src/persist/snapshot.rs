@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 3;
+pub(super) const SNAPSHOT_VERSION: u32 = 4;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -177,7 +177,19 @@ struct RawSessionSnapshot {
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
     #[serde(default)]
-    kanban_items: Vec<crate::api::schema::KanbanItem>,
+    kanban_items: Vec<RawKanbanItem>,
+}
+
+#[derive(Deserialize)]
+struct RawKanbanItem {
+    uuid: String,
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    terminal_id: Option<String>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -194,8 +206,41 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
-        kanban_items: raw.kanban_items,
+        kanban_items: raw
+            .kanban_items
+            .into_iter()
+            .map(migrate_kanban_item)
+            .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+fn migrate_kanban_item(raw: RawKanbanItem) -> Result<crate::api::schema::KanbanItem, String> {
+    Ok(crate::api::schema::KanbanItem {
+        uuid: raw.uuid,
+        title: raw.title,
+        description: raw.description,
+        status: migrate_kanban_status(raw.status)?,
+        terminal_id: raw.terminal_id,
+    })
+}
+
+fn migrate_kanban_status(raw: Option<String>) -> Result<crate::api::schema::KanbanStatus, String> {
+    match raw.as_deref().unwrap_or("todo") {
+        "todo" | "TODO" | "Todo" => Ok(crate::api::schema::KanbanStatus::Todo),
+        "ongoing" | "ONGOING" | "Ongoing" => Ok(crate::api::schema::KanbanStatus::Ongoing),
+        "blocked" | "BLOCKED" | "Blocked" => Ok(crate::api::schema::KanbanStatus::Blocked),
+        "reviewing" | "REVIEWING" | "Reviewing" => Ok(crate::api::schema::KanbanStatus::Reviewing),
+        "done" | "DONE" | "Done" => Ok(crate::api::schema::KanbanStatus::Done),
+        "in_progress" | "in-progress" | "IN_PROGRESS" | "InProgress" => {
+            Ok(crate::api::schema::KanbanStatus::Ongoing)
+        }
+        "need_review" | "need-review" | "NEED_REVIEW" | "NeedReview" => {
+            Ok(crate::api::schema::KanbanStatus::Reviewing)
+        }
+        other => Err(format!(
+            "unknown kanban status in session snapshot: {other}"
+        )),
+    }
 }
 
 fn migrate_workspace(raw: serde_json::Value) -> Result<WorkspaceSnapshot, String> {
@@ -714,6 +759,52 @@ mod tests {
         assert_eq!(restored.agent_panel_scope, AgentPanelScope::AllWorkspaces);
         assert_eq!(restored.sidebar_width, None);
         assert_eq!(restored.sidebar_section_split, None);
+    }
+
+    #[test]
+    fn legacy_kanban_statuses_migrate_on_load() {
+        let json = serde_json::json!({
+            "version": 3,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "kanban_items": [
+                {
+                    "uuid": "old-ongoing",
+                    "title": "Old ongoing",
+                    "description": "",
+                    "status": "in_progress"
+                },
+                {
+                    "uuid": "old-reviewing",
+                    "title": "Old reviewing",
+                    "description": "",
+                    "status": "need_review"
+                },
+                {
+                    "uuid": "new-blocked",
+                    "title": "New blocked",
+                    "description": "",
+                    "status": "blocked"
+                }
+            ]
+        })
+        .to_string();
+
+        let restored = parse_snapshot(&json).unwrap();
+
+        assert_eq!(
+            restored.kanban_items[0].status,
+            crate::api::schema::KanbanStatus::Ongoing
+        );
+        assert_eq!(
+            restored.kanban_items[1].status,
+            crate::api::schema::KanbanStatus::Reviewing
+        );
+        assert_eq!(
+            restored.kanban_items[2].status,
+            crate::api::schema::KanbanStatus::Blocked
+        );
     }
 
     #[test]

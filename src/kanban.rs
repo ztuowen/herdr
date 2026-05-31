@@ -2,13 +2,37 @@
 // This preserves the pure data structure for snapshot/session compatibility.
 #![allow(dead_code)]
 
+use crate::api::schema::{KanbanItem, KanbanStatus};
 use serde::{Deserialize, Serialize};
 
-use crate::api::schema::{KanbanItem, KanbanStatus};
-
-const KANBAN_COLUMN_COUNT: usize = 4;
+pub(crate) const KANBAN_COLUMNS: [KanbanStatus; 5] = [
+    KanbanStatus::Todo,
+    KanbanStatus::Ongoing,
+    KanbanStatus::Blocked,
+    KanbanStatus::Reviewing,
+    KanbanStatus::Done,
+];
 const DESKTOP_CARD_HEIGHT: u16 = 4;
 const DESKTOP_CARD_SPACING: u16 = 1;
+
+pub(crate) fn column_count() -> usize {
+    KANBAN_COLUMNS.len()
+}
+
+pub(crate) fn last_column_index() -> usize {
+    column_count().saturating_sub(1)
+}
+
+pub fn status_for_column(col: usize) -> Option<KanbanStatus> {
+    KANBAN_COLUMNS.get(col).copied()
+}
+
+pub fn column_index_for_status(status: KanbanStatus) -> usize {
+    KANBAN_COLUMNS
+        .iter()
+        .position(|column_status| *column_status == status)
+        .unwrap_or(0)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KanbanBoardLayout {
@@ -177,12 +201,8 @@ impl KanbanState {
     }
 
     pub fn items_in_column(&self, col: usize) -> Vec<&KanbanItem> {
-        let status = match col {
-            0 => KanbanStatus::Todo,
-            1 => KanbanStatus::InProgress,
-            2 => KanbanStatus::NeedReview,
-            3 => KanbanStatus::Done,
-            _ => return vec![],
+        let Some(status) = status_for_column(col) else {
+            return vec![];
         };
         self.items
             .iter()
@@ -195,27 +215,19 @@ impl KanbanState {
         area: ratatui::layout::Rect,
         layout: KanbanBoardLayout,
     ) -> KanbanBoardProjection {
+        let constraints =
+            vec![ratatui::layout::Constraint::Ratio(1, column_count() as u32); column_count()];
         let sections = match layout {
-            KanbanBoardLayout::Desktop => ratatui::layout::Layout::horizontal([
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-            ])
-            .split(area),
-            KanbanBoardLayout::Mobile => ratatui::layout::Layout::vertical([
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-                ratatui::layout::Constraint::Percentage(25),
-            ])
-            .split(area),
+            KanbanBoardLayout::Desktop => {
+                ratatui::layout::Layout::horizontal(constraints).split(area)
+            }
+            KanbanBoardLayout::Mobile => ratatui::layout::Layout::vertical(constraints).split(area),
         };
 
         let selected_col = self.clamped_selected_col();
         let selected_row = self.clamped_selected_row(selected_col);
-        let mut columns = Vec::with_capacity(KANBAN_COLUMN_COUNT);
-        for col_idx in 0..KANBAN_COLUMN_COUNT {
+        let mut columns = Vec::with_capacity(column_count());
+        for col_idx in 0..column_count() {
             let area = sections[col_idx];
             let inner_area = ratatui::layout::Rect::new(
                 area.x.saturating_add(1),
@@ -411,7 +423,7 @@ impl KanbanState {
     }
 
     fn clamped_selected_col(&self) -> usize {
-        self.selected_col.min(KANBAN_COLUMN_COUNT - 1)
+        self.selected_col.min(last_column_index())
     }
 
     fn clamped_selected_row(&self, col: usize) -> usize {
@@ -420,7 +432,7 @@ impl KanbanState {
     }
 
     pub fn move_col_right(&mut self) {
-        if self.selected_col < 3 {
+        if self.selected_col < last_column_index() {
             self.selected_col += 1;
             self.selected_row = 0;
         }
@@ -447,11 +459,8 @@ impl KanbanState {
         let items = self.items_in_column(col);
         if let Some(item_to_move) = items.get(self.selected_row) {
             let uuid = item_to_move.uuid.clone();
-            let new_status = match col - 1 {
-                0 => crate::api::schema::KanbanStatus::Todo,
-                1 => crate::api::schema::KanbanStatus::InProgress,
-                2 => crate::api::schema::KanbanStatus::NeedReview,
-                _ => return,
+            let Some(new_status) = status_for_column(col - 1) else {
+                return;
             };
             self.update_item(&uuid, None, None, Some(new_status), None, None);
             self.selected_col = col - 1;
@@ -462,17 +471,14 @@ impl KanbanState {
 
     pub fn shift_item_right(&mut self) {
         let col = self.selected_col;
-        if col >= 3 {
+        if col >= last_column_index() {
             return;
         }
         let items = self.items_in_column(col);
         if let Some(item_to_move) = items.get(self.selected_row) {
             let uuid = item_to_move.uuid.clone();
-            let new_status = match col + 1 {
-                1 => crate::api::schema::KanbanStatus::InProgress,
-                2 => crate::api::schema::KanbanStatus::NeedReview,
-                3 => crate::api::schema::KanbanStatus::Done,
-                _ => return,
+            let Some(new_status) = status_for_column(col + 1) else {
+                return;
             };
             self.update_item(&uuid, None, None, Some(new_status), None, None);
             self.selected_col = col + 1;
@@ -511,25 +517,6 @@ impl KanbanState {
         let current = self.detail_horizontal_scroll as i16;
         self.detail_horizontal_scroll =
             current.saturating_add(delta).clamp(0, max_scroll as i16) as u16;
-    }
-}
-
-pub fn status_for_column(col: usize) -> Option<KanbanStatus> {
-    match col {
-        0 => Some(KanbanStatus::Todo),
-        1 => Some(KanbanStatus::InProgress),
-        2 => Some(KanbanStatus::NeedReview),
-        3 => Some(KanbanStatus::Done),
-        _ => None,
-    }
-}
-
-pub fn column_index_for_status(status: KanbanStatus) -> usize {
-    match status {
-        KanbanStatus::Todo => 0,
-        KanbanStatus::InProgress => 1,
-        KanbanStatus::NeedReview => 2,
-        KanbanStatus::Done => 3,
     }
 }
 
@@ -617,7 +604,7 @@ mod tests {
 
         // 1. Add items
         let item1 = state.add_item("Task 1".into(), None, Some(KanbanStatus::Todo), None);
-        let item2 = state.add_item("Task 2".into(), None, Some(KanbanStatus::InProgress), None);
+        let item2 = state.add_item("Task 2".into(), None, Some(KanbanStatus::Ongoing), None);
         assert_eq!(state.items.len(), 2);
         assert_eq!(state.items_in_column(0).len(), 1);
         assert_eq!(state.items_in_column(1).len(), 1);
@@ -628,15 +615,15 @@ mod tests {
                 &item1.uuid,
                 Some("New Task 1 Title".into()),
                 None,
-                Some(KanbanStatus::NeedReview),
+                Some(KanbanStatus::Reviewing),
                 None,
                 None,
             )
             .unwrap();
         assert_eq!(updated.title, "New Task 1 Title");
-        assert_eq!(updated.status, KanbanStatus::NeedReview);
+        assert_eq!(updated.status, KanbanStatus::Reviewing);
         assert_eq!(state.items_in_column(0).len(), 0);
-        assert_eq!(state.items_in_column(2).len(), 1);
+        assert_eq!(state.items_in_column(3).len(), 1);
 
         // 3. Clear dead terminals helper
         let term_id = "term-123".to_string();
@@ -668,7 +655,7 @@ mod tests {
         state.move_row_down();
         assert_eq!(state.selected_row, 1);
 
-        // Shift item right from Todo to InProgress
+        // Shift item right from Todo to Ongoing
         state.shift_item_right();
         assert_eq!(state.selected_col, 1);
         assert_eq!(state.selected_row, 0); // moves to end of next column (only 1 item there)
@@ -687,7 +674,7 @@ mod tests {
         let projection =
             state.board_projection(Rect::new(0, 0, 80, 20), KanbanBoardLayout::Desktop);
 
-        assert!(projection.columns[3].is_selected);
+        assert!(projection.columns[4].is_selected);
         assert_eq!(projection.columns[0].cards.len(), 2);
         assert_eq!(projection.columns[0].cards[0].item.uuid, first.uuid);
         assert_eq!(projection.columns[0].cards[1].item.uuid, second.uuid);
@@ -716,7 +703,7 @@ mod tests {
         let item = state.add_item(
             "Tracked".into(),
             None,
-            Some(KanbanStatus::InProgress),
+            Some(KanbanStatus::Ongoing),
             Some("term-1".into()),
         );
 

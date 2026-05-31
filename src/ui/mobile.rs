@@ -451,9 +451,10 @@ fn render_mobile_switcher_content(
     let active = app.mode == Mode::Kanban;
     let bg = mobile_item_bg(false, active, p);
     let todo_count = app.extensions.kanban.items_in_column(0).len();
-    let in_progress_count = app.extensions.kanban.items_in_column(1).len();
-    let review_count = app.extensions.kanban.items_in_column(2).len();
-    let done_count = app.extensions.kanban.items_in_column(3).len();
+    let ongoing_count = app.extensions.kanban.items_in_column(1).len();
+    let blocked_count = app.extensions.kanban.items_in_column(2).len();
+    let reviewing_count = app.extensions.kanban.items_in_column(3).len();
+    let done_count = app.extensions.kanban.items_in_column(4).len();
 
     let kanban_style = if active {
         Style::default()
@@ -478,7 +479,7 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            in_progress_count.to_string(),
+            ongoing_count.to_string(),
             Style::default()
                 .fg(p.yellow)
                 .bg(bg)
@@ -486,7 +487,15 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            review_count.to_string(),
+            blocked_count.to_string(),
+            Style::default()
+                .fg(p.red)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            reviewing_count.to_string(),
             Style::default()
                 .fg(p.peach)
                 .bg(bg)

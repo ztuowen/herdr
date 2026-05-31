@@ -1859,7 +1859,7 @@ mod tests {
         let item2 = state.extensions.kanban.add_item(
             "Task 2".to_string(),
             None,
-            Some(crate::api::schema::KanbanStatus::InProgress),
+            Some(crate::api::schema::KanbanStatus::Ongoing),
             None,
         );
         assert_eq!(item2.description, "");
@@ -1875,15 +1875,15 @@ mod tests {
                 &item1.uuid,
                 Some("Task 1 Updated".to_string()),
                 None,
-                Some(crate::api::schema::KanbanStatus::InProgress),
+                Some(crate::api::schema::KanbanStatus::Ongoing),
                 None,
                 None,
             )
             .unwrap();
         assert_eq!(updated.title, "Task 1 Updated");
-        assert_eq!(updated.status, crate::api::schema::KanbanStatus::InProgress);
+        assert_eq!(updated.status, crate::api::schema::KanbanStatus::Ongoing);
 
-        // Now both should be in InProgress column
+        // Now both should be in Ongoing column
         assert_eq!(state.extensions.kanban.items_in_column(0).len(), 0);
         assert_eq!(state.extensions.kanban.items_in_column(1).len(), 2);
 

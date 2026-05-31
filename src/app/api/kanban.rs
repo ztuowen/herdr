@@ -309,7 +309,7 @@ mod tests {
                 uuid: item.uuid.clone(),
                 title: Some("Updated Title".into()),
                 description: None,
-                status: Some(crate::api::schema::KanbanStatus::InProgress),
+                status: Some(crate::api::schema::KanbanStatus::Ongoing),
                 terminal_id: None,
                 clear_terminal_id: None,
             },
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(updated_item.title, "Updated Title");
         assert_eq!(
             updated_item.status,
-            crate::api::schema::KanbanStatus::InProgress
+            crate::api::schema::KanbanStatus::Ongoing
         );
 
         // Delete

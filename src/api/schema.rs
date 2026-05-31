@@ -1060,8 +1060,9 @@ fn default_true() -> bool {
 pub enum KanbanStatus {
     #[default]
     Todo,
-    InProgress,
-    NeedReview,
+    Ongoing,
+    Blocked,
+    Reviewing,
     Done,
 }
 
@@ -1071,8 +1072,9 @@ impl KanbanStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Todo => "todo",
-            Self::InProgress => "in_progress",
-            Self::NeedReview => "need_review",
+            Self::Ongoing => "ongoing",
+            Self::Blocked => "blocked",
+            Self::Reviewing => "reviewing",
             Self::Done => "done",
         }
     }
@@ -1080,8 +1082,9 @@ impl KanbanStatus {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "todo" | "TODO" | "Todo" => Some(Self::Todo),
-            "in_progress" | "in-progress" | "IN_PROGRESS" | "InProgress" => Some(Self::InProgress),
-            "need_review" | "need-review" | "NEED_REVIEW" | "NeedReview" => Some(Self::NeedReview),
+            "ongoing" | "ONGOING" | "Ongoing" => Some(Self::Ongoing),
+            "blocked" | "BLOCKED" | "Blocked" => Some(Self::Blocked),
+            "reviewing" | "REVIEWING" | "Reviewing" => Some(Self::Reviewing),
             "done" | "DONE" | "Done" => Some(Self::Done),
             _ => None,
         }
@@ -1152,6 +1155,32 @@ pub struct KanbanUpdateParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KanbanDeleteParams {
     pub uuid: String,
+}
+
+#[cfg(test)]
+mod kanban_status_tests {
+    use super::KanbanStatus;
+
+    #[test]
+    fn kanban_status_parser_accepts_only_current_public_names() {
+        assert_eq!(KanbanStatus::from_str("todo"), Some(KanbanStatus::Todo));
+        assert_eq!(
+            KanbanStatus::from_str("ongoing"),
+            Some(KanbanStatus::Ongoing)
+        );
+        assert_eq!(
+            KanbanStatus::from_str("blocked"),
+            Some(KanbanStatus::Blocked)
+        );
+        assert_eq!(
+            KanbanStatus::from_str("reviewing"),
+            Some(KanbanStatus::Reviewing)
+        );
+        assert_eq!(KanbanStatus::from_str("done"), Some(KanbanStatus::Done));
+
+        assert_eq!(KanbanStatus::from_str("in-progress"), None);
+        assert_eq!(KanbanStatus::from_str("need-review"), None);
+    }
 }
 
 #[cfg(test)]

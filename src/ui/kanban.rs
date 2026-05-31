@@ -21,6 +21,23 @@ pub(crate) fn kanban_board_layout(app: &AppState) -> KanbanBoardLayout {
     }
 }
 
+fn kanban_constraints() -> Vec<Constraint> {
+    vec![Constraint::Ratio(1, crate::kanban::column_count() as u32); crate::kanban::column_count()]
+}
+
+fn status_label_and_color(
+    status: crate::api::schema::KanbanStatus,
+    p: &crate::app::state::Palette,
+) -> (&'static str, ratatui::style::Color) {
+    match status {
+        crate::api::schema::KanbanStatus::Todo => ("todo", p.overlay1),
+        crate::api::schema::KanbanStatus::Ongoing => ("ongoing", p.yellow),
+        crate::api::schema::KanbanStatus::Blocked => ("blocked", p.red),
+        crate::api::schema::KanbanStatus::Reviewing => ("reviewing", p.peach),
+        crate::api::schema::KanbanStatus::Done => ("done", p.green),
+    }
+}
+
 pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let projection = app
@@ -28,17 +45,8 @@ pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
         .kanban
         .board_projection(area, kanban_board_layout(app));
 
-    let statuses = [
-        ("todo", p.overlay1, 0),
-        ("in progress", p.yellow, 1),
-        ("need review", p.peach, 2),
-        ("done", p.green, 3),
-    ];
-
-    for (name, color, col_idx) in statuses {
-        let Some(column) = projection.columns.get(col_idx) else {
-            continue;
-        };
+    for column in &projection.columns {
+        let (name, color) = status_label_and_color(column.status, p);
 
         // Render column block
         let col_border_color = if column.is_selected {
@@ -66,7 +74,7 @@ pub(crate) fn render_kanban(app: &AppState, frame: &mut Frame, area: Rect) {
 
         // Draw cards in this column
         if column.item_count > 0 {
-            render_kanban_cards(app, frame, &projection, col_idx);
+            render_kanban_cards(app, frame, &projection, column.index);
         } else {
             // Draw empty message
             let empty_text = Paragraph::new("No items")
@@ -204,12 +212,7 @@ fn render_kanban_detail_modal(
     );
 
     // Title & Status Badge
-    let status_color = match item.status {
-        crate::api::schema::KanbanStatus::Todo => p.overlay1,
-        crate::api::schema::KanbanStatus::InProgress => p.yellow,
-        crate::api::schema::KanbanStatus::NeedReview => p.peach,
-        crate::api::schema::KanbanStatus::Done => p.green,
-    };
+    let (_, status_color) = status_label_and_color(item.status, p);
     let status_str = item.status.as_str().to_uppercase();
 
     let title_line = Line::from(vec![Span::styled(

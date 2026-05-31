@@ -4,6 +4,7 @@
 
 ### Added
 - Custom command keybindings now accept an optional `description` field to provide user-defined descriptions shown in the keybind help panel instead of the default `'custom command'` label. (#362)
+- Kanban now uses `todo`, `ongoing`, `blocked`, `reviewing`, and `done` statuses, with old session data migrated on load.
 
 ### Fixed
 - The OpenCode integration no longer treats `session.created` or `session.updated` plugin events as idle signals, so active sessions stay marked working until OpenCode reports `session.status` or `session.idle`. (#351)

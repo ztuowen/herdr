@@ -329,9 +329,7 @@ impl App {
                     SettingsAction::SavePaneHistory(enabled) => {
                         self.save_pane_history_persistence(enabled)
                     }
-                    SettingsAction::SaveKittyGraphics(enabled) => {
-                        self.save_kitty_graphics_enabled(enabled)
-                    }
+
                     SettingsAction::InstallRecommendedIntegrations => {
                         self.install_recommended_integrations()
                     }

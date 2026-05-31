@@ -381,16 +381,11 @@ allow_nested = false
 
 Only enable nested launches for testing.
 
-## Kitty graphics
+## Kitty graphics and LaTeX math rendering
 
-Kitty graphics support is experimental.
+Kitty graphics support is enabled by default for supported terminal environments (such as Ghostty, WezTerm, Kitty, Konsole, Foot, and Rio).
 
-```toml
-[experimental]
-kitty_graphics = false
-```
-
-Leave this off unless you are testing terminal image behavior.
+When a supported terminal is detected, LaTeX math formulas in Markdown documents are compiled and rendered as inline/block graphics. If terminal support is not detected or the terminal's pixel dimensions cannot be queried, LaTeX math rendering automatically falls back to raw LaTeX text.
 
 ## Agent session restore
 

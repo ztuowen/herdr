@@ -27,13 +27,13 @@ pub(crate) struct HostCellSize {
 impl HostCellSize {
     pub(crate) fn from_terminal(area: Rect) -> Self {
         let Ok(size) = crossterm::terminal::window_size() else {
-            return Self::fallback_for_area(area);
+            return Self::default();
         };
         if size.columns == 0 || size.rows == 0 {
-            return Self::fallback_for_area(area);
+            return Self::default();
         }
         if size.width == 0 || size.height == 0 {
-            return Self::fallback_for_area(area);
+            return Self::default();
         }
         Self {
             width_px: (size.width as u32 / size.columns as u32).max(1),
@@ -46,20 +46,64 @@ impl HostCellSize {
         self.width_px > 0 && self.height_px > 0
     }
 
-    fn fallback_for_area(area: Rect) -> Self {
-        Self {
-            width_px: 8,
-            height_px: 16,
-        }
-        .for_area(area)
-    }
-
     fn for_area(self, area: Rect) -> Self {
         if area.width == 0 || area.height == 0 {
             return Self::default();
         }
         self
     }
+}
+
+pub(crate) fn detect_support() -> bool {
+    let Ok(size) = crossterm::terminal::window_size() else {
+        return false;
+    };
+    if size.columns == 0 || size.rows == 0 || size.width == 0 || size.height == 0 {
+        return false;
+    }
+
+    // 1. Explicitly allow known terminals that support Kitty graphics
+    let term_program = std::env::var("TERM_PROGRAM").ok();
+    let term_program = term_program.as_deref();
+    let term = std::env::var("TERM").ok();
+    let term = term.as_deref();
+
+    if term_program == Some("ghostty") || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some() {
+        return true;
+    }
+    if term_program == Some("WezTerm") || std::env::var_os("WEZTERM_PANE").is_some() {
+        return true;
+    }
+    if term_program == Some("kitty") || term == Some("xterm-kitty") {
+        return true;
+    }
+    if term_program == Some("Konsole") || std::env::var_os("KONSOLE_VERSION").is_some() {
+        return true;
+    }
+    if term_program == Some("foot") || term == Some("foot") {
+        return true;
+    }
+    if term_program == Some("rio") {
+        return true;
+    }
+
+    // 2. Fall back to true if we are running in tmux (since the outer terminal
+    // might support kitty graphics and passthrough is handled).
+    if std::env::var_os("TMUX").is_some() {
+        return true;
+    }
+
+    // 3. Exclude known incompatible terminals
+    if term_program == Some("Apple_Terminal") || term_program == Some("vscode") {
+        return false;
+    }
+    if std::env::var_os("GNOME_TERMINAL_SCREEN").is_some()
+        || std::env::var_os("GNOME_TERMINAL_SERVICE").is_some()
+    {
+        return false;
+    }
+
+    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

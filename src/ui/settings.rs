@@ -395,13 +395,10 @@ fn render_settings_experiments(app: &AppState, frame: &mut Frame, area: Rect) {
         Style::default().fg(p.overlay1),
     );
 
-    let items = [
-        (
-            "pane screen history",
-            app.pane_history_persistence_enabled(),
-        ),
-        ("kitty graphics", app.kitty_graphics_enabled),
-    ];
+    let items = [(
+        "pane screen history",
+        app.pane_history_persistence_enabled(),
+    )];
 
     for (i, (label, enabled)) in items.iter().enumerate() {
         let marker = if *enabled { "[✓]" } else { "[ ]" };
@@ -476,55 +473,5 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("pane screen history [ ]"));
-    }
-
-    #[test]
-    fn experiments_kitty_graphics_uses_settings_checkmark_marker() {
-        let mut app = AppState::test_new();
-        app.kitty_graphics_enabled = true;
-        app.settings.section = SettingsSection::Experiments;
-        app.settings.list.selected = 1;
-        app.mode = Mode::Settings;
-
-        let mut terminal =
-            Terminal::new(TestBackend::new(80, 24)).expect("test terminal should initialize");
-        terminal
-            .draw(|frame| render_settings_overlay(&app, frame, Rect::new(0, 0, 80, 24)))
-            .expect("settings overlay should render");
-
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-
-        assert!(rendered.contains("kitty graphics [✓]"));
-    }
-
-    #[test]
-    fn experiments_kitty_graphics_keeps_empty_checkbox_marker_when_disabled() {
-        let mut app = AppState::test_new();
-        app.kitty_graphics_enabled = false;
-        app.settings.section = SettingsSection::Experiments;
-        app.settings.list.selected = 1;
-        app.mode = Mode::Settings;
-
-        let mut terminal =
-            Terminal::new(TestBackend::new(80, 24)).expect("test terminal should initialize");
-        terminal
-            .draw(|frame| render_settings_overlay(&app, frame, Rect::new(0, 0, 80, 24)))
-            .expect("settings overlay should render");
-
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-
-        assert!(rendered.contains("kitty graphics [ ]"));
     }
 }

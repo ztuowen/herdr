@@ -1677,6 +1677,7 @@ fn slice_spans_horizontally(
     spans: &[MarkdownSpan],
     scroll_x: usize,
     width: usize,
+    cell_size: crate::kitty_graphics::HostCellSize,
 ) -> (Vec<Span<'static>>, Vec<(std::ops::Range<usize>, String)>) {
     use unicode_width::UnicodeWidthChar;
 
@@ -1757,12 +1758,14 @@ fn slice_spans_horizontally(
                     current_x = char_end;
                 }
                 if !active_chars.is_empty() {
-                    out_spans.push(Span::styled(
-                        active_chars,
+                    let style = if cell_size.is_known() {
                         Style::default()
                             .fg(ratatui::style::Color::Yellow)
-                            .add_modifier(Modifier::ITALIC),
-                    ));
+                            .add_modifier(Modifier::ITALIC)
+                    } else {
+                        Style::default()
+                    };
+                    out_spans.push(Span::styled(active_chars, style));
                 }
             }
         }
@@ -1826,6 +1829,15 @@ pub fn wrap_markdown(
                 is_block: true,
             } = &md_line.spans[0]
             {
+                if !cell_size.is_known() {
+                    wrapped_lines.push(Line::from(vec![Span::raw("$$")]));
+                    for line in formula.lines() {
+                        wrapped_lines.push(Line::from(vec![Span::raw(line.to_string())]));
+                    }
+                    wrapped_lines.push(Line::from(vec![Span::raw("$$")]));
+                    continue;
+                }
+
                 let mut rendered = false;
                 if cell_size.is_known() {
                     if let Some((_, w_px, h_px, failed)) =
@@ -1926,7 +1938,7 @@ pub fn wrap_markdown(
             max_original_width = max_original_width.max(original_width);
 
             let (sliced_spans, sliced_links) =
-                slice_spans_horizontally(&md_line.spans, table_scroll_x, width);
+                slice_spans_horizontally(&md_line.spans, table_scroll_x, width, cell_size);
             for (range, url) in sliced_links {
                 link_ranges.push((line_index, range, url));
             }
@@ -2004,11 +2016,16 @@ pub fn wrap_markdown(
 
                     if !tokenized {
                         let text = format!("${}$", formula);
+                        let style = if cell_size.is_known() {
+                            Style::default()
+                                .fg(ratatui::style::Color::Yellow)
+                                .add_modifier(Modifier::ITALIC)
+                        } else {
+                            Style::default()
+                        };
                         tokens.push(Token {
                             text,
-                            style: Style::default()
-                                .fg(ratatui::style::Color::Yellow)
-                                .add_modifier(Modifier::ITALIC),
+                            style,
                             url: None,
                             math_formula: None,
                         });
@@ -3274,15 +3291,15 @@ This is paragraph line 2.
             wrap_markdown(&parsed_block_lines, 80, 0, cell_size_unknown, palette.text);
         assert!(wrapped_fallback.lines.len() >= 3);
 
-        let has_top_border = wrapped_fallback.lines.iter().any(|line| {
+        let has_separator = wrapped_fallback.lines.iter().any(|line| {
             let line_str: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            line_str.contains("┌") && line_str.contains("─")
+            line_str == "$$"
         });
         let has_formula_line = wrapped_fallback.lines.iter().any(|line| {
             let line_str: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             line_str.contains("f(x) = \\sin(x)")
         });
-        assert!(has_top_border);
+        assert!(has_separator);
         assert!(has_formula_line);
     }
 }

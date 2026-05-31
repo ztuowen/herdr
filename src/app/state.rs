@@ -1529,7 +1529,7 @@ impl AppState {
             cjk_ime_agent_filter_configured: false,
             cjk_ime_agents: Vec::new(),
             cjk_ime_cursor_shape: 2, // steady_block
-            kitty_graphics_enabled: false,
+            kitty_graphics_enabled: true,
             default_shell: String::new(),
             shell_mode: crate::config::ShellModeConfig::Auto,
             new_terminal_cwd: NewTerminalCwdConfig::Follow,

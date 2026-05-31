@@ -18,7 +18,6 @@ pub(super) enum SettingsAction {
     SaveToastDelivery(ToastDelivery),
     SaveAgentBorderLabels(bool),
     SavePaneHistory(bool),
-    SaveKittyGraphics(bool),
     InstallRecommendedIntegrations,
 }
 
@@ -35,9 +34,6 @@ impl App {
                 }
                 SettingsAction::SavePaneHistory(enabled) => {
                     self.save_pane_history_persistence(enabled)
-                }
-                SettingsAction::SaveKittyGraphics(enabled) => {
-                    self.save_kitty_graphics_enabled(enabled)
                 }
                 SettingsAction::InstallRecommendedIntegrations => {
                     self.install_recommended_integrations()
@@ -236,16 +232,12 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 state.settings.list.move_prev();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                state.settings.list.move_next(2);
+                state.settings.list.move_next(1);
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if state.settings.list.selected == 0 {
                     return Some(SettingsAction::SavePaneHistory(
                         !state.pane_history_persistence_enabled(),
-                    ));
-                } else if state.settings.list.selected == 1 {
-                    return Some(SettingsAction::SaveKittyGraphics(
-                        !state.kitty_graphics_enabled,
                     ));
                 }
             }
@@ -393,8 +385,8 @@ impl AppState {
             }
             SettingsSection::Experiments => {
                 let list_y = area.y + 3;
-                if row >= list_y && row < list_y + 2 {
-                    Some((row - list_y) as usize)
+                if row == list_y {
+                    Some(0)
                 } else {
                     None
                 }
@@ -443,10 +435,6 @@ impl AppState {
                             if idx == 0 {
                                 Some(SettingsAction::SavePaneHistory(
                                     !self.pane_history_persistence_enabled(),
-                                ))
-                            } else if idx == 1 {
-                                Some(SettingsAction::SaveKittyGraphics(
-                                    !self.kitty_graphics_enabled,
                                 ))
                             } else {
                                 None
@@ -550,22 +538,6 @@ mod tests {
         );
 
         assert_eq!(action, Some(SettingsAction::SavePaneHistory(true)));
-        assert_eq!(state.mode, Mode::Settings);
-    }
-
-    #[test]
-    fn settings_experiments_toggles_kitty_graphics() {
-        let mut state = state_with_workspaces(&["test"]);
-        state.kitty_graphics_enabled = false;
-        open_settings_at(&mut state, SettingsSection::Experiments);
-        state.settings.list.selected = 1;
-
-        let action = update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
-        );
-
-        assert_eq!(action, Some(SettingsAction::SaveKittyGraphics(true)));
         assert_eq!(state.mode, Mode::Settings);
     }
 

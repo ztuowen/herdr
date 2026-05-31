@@ -527,8 +527,8 @@ fn run_client_with_mode(
     let redraw_on_focus_gained = loaded_config.config.ui.redraw_on_focus_gained;
     let sound_config = loaded_config.config.ui.sound;
     let direct_attach_requested = attach_request.is_some();
-    let kitty_graphics_enabled =
-        loaded_config.config.experimental.kitty_graphics && !direct_attach_requested;
+    let mut kitty_graphics_enabled =
+        crate::kitty_graphics::detect_support() && !direct_attach_requested;
 
     let socket_path = client_socket_path();
     crate::logging::startup("client");
@@ -546,8 +546,13 @@ fn run_client_with_mode(
     };
 
     // Get the terminal geometry before handshake (before raw mode).
-    let (cols, rows, cell_width_px, cell_height_px) =
+    let (cols, rows, mut cell_width_px, mut cell_height_px) =
         current_terminal_geometry(kitty_graphics_enabled);
+    if cell_width_px == 0 || cell_height_px == 0 {
+        kitty_graphics_enabled = false;
+        cell_width_px = 0;
+        cell_height_px = 0;
+    }
 
     // Perform handshake while the stream is still in blocking mode.
     let negotiated_encoding = match do_handshake(
@@ -1372,10 +1377,10 @@ fn current_terminal_geometry(kitty_graphics_enabled: bool) -> (u16, u16, u32, u3
         return (cols, rows, 0, 0);
     }
     let Ok(size) = crossterm::terminal::window_size() else {
-        return (cols, rows, 8, 16);
+        return (cols, rows, 0, 0);
     };
     if size.columns == 0 || size.rows == 0 || size.width == 0 || size.height == 0 {
-        return (cols, rows, 8, 16);
+        return (cols, rows, 0, 0);
     }
     (
         cols,

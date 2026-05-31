@@ -252,7 +252,7 @@ impl App {
         event_hub: crate::api::EventHub,
     ) -> Self {
         let (prefix_code, prefix_mods) = config.prefix_key();
-        crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
+        crate::kitty_graphics::set_enabled(true);
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(AtomicBool::new(false));
@@ -512,7 +512,7 @@ impl App {
             cjk_ime_agent_filter_configured: !config.experimental.cjk_ime_agents.is_empty(),
             cjk_ime_agents: parse_cjk_ime_agents(&config.experimental.cjk_ime_agents),
             cjk_ime_cursor_shape: config.experimental.cjk_ime_cursor_shape.to_decscusr(),
-            kitty_graphics_enabled: config.experimental.kitty_graphics,
+            kitty_graphics_enabled: true,
             default_shell: config.terminal.default_shell.clone(),
             shell_mode: config.terminal.shell_mode,
             new_terminal_cwd: config.terminal.new_cwd.clone(),
@@ -1144,12 +1144,6 @@ impl App {
         }
 
         if !invalid_section("experimental") {
-            let was_kitty_graphics_enabled = self.state.kitty_graphics_enabled;
-            self.state.kitty_graphics_enabled = config.experimental.kitty_graphics;
-            crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
-            if was_kitty_graphics_enabled && !config.experimental.kitty_graphics {
-                let _ = crate::kitty_graphics::clear_all_host_graphics();
-            }
             self.state.reveal_hidden_cursor_for_cjk_ime =
                 config.experimental.reveal_hidden_cursor_for_cjk_ime;
             self.state.cjk_ime_agent_filter_configured =

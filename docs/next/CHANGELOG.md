@@ -15,6 +15,7 @@
 - Large restored sessions no longer leave restored or newly split panes without shells after startup, and live handoff keeps PTY ownership bounded to one master fd per pane. (#357)
 - Pane shutdown no longer warns that a pane is still alive after the direct child has already exited and been reaped. (#338)
 - Closing the last pane or tab in a parent worktree workspace now shows the existing confirmation before closing the whole worktree group. (#369)
+- Speech-to-text transcription sent to agent panes now submits automatically again, while regular terminal panes still receive only the transcribed text.
 
 ## [0.6.5] - 2026-05-29
 

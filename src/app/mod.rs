@@ -3974,6 +3974,63 @@ last_pane = "prefix+tab"
         assert!(app.toast_deadline.is_some());
     }
 
+    #[tokio::test]
+    async fn speech_transcribed_event_submits_transcription_to_agent_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(focused)
+            .unwrap()
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        let workspace_id = app.state.workspaces[0].id.clone();
+
+        app.handle_internal_event(crate::events::AppEvent::SpeechTranscribed {
+            workspace_id,
+            pane_id: Some(focused),
+            result: Ok("hello agent".to_string()),
+        });
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"hello agent\r")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn speech_transcribed_event_does_not_submit_transcription_to_regular_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        let workspace_id = app.state.workspaces[0].id.clone();
+
+        app.handle_internal_event(crate::events::AppEvent::SpeechTranscribed {
+            workspace_id,
+            pane_id: Some(focused),
+            result: Ok("echo hello".to_string()),
+        });
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"echo hello")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
     #[test]
     fn test_sync_toast_deadline_exemption() {
         let mut app = test_app();

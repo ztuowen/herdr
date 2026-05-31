@@ -209,6 +209,12 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                         if let Some(ws) = app.state.workspaces.get(ws_idx) {
                             let target_pane_id = pane_id.or_else(|| ws.focused_pane_id());
                             if let Some(focused_pane_id) = target_pane_id {
+                                let submit_to_agent = ws
+                                    .pane_state(focused_pane_id)
+                                    .and_then(|pane| {
+                                        app.state.terminals.get(&pane.attached_terminal_id)
+                                    })
+                                    .is_some_and(|terminal| terminal.is_agent_terminal());
                                 if let Some(runtime) =
                                     app.lookup_runtime_sender(ws_idx, focused_pane_id)
                                 {
@@ -216,16 +222,28 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                         .input_state()
                                         .map(|s| s.bracketed_paste)
                                         .unwrap_or(false);
-                                    let payload = if bracketed {
-                                        format!("\x1b[200~{sanitized}\x1b[201~")
+                                    let mut payload = if bracketed {
+                                        format!("\x1b[200~{sanitized}\x1b[201~").into_bytes()
                                     } else {
-                                        sanitized.clone()
+                                        sanitized.as_bytes().to_vec()
                                     };
+                                    if submit_to_agent {
+                                        payload.extend(
+                                            runtime.encode_terminal_key(
+                                                crossterm::event::KeyEvent::new(
+                                                    crossterm::event::KeyCode::Enter,
+                                                    crossterm::event::KeyModifiers::empty(),
+                                                )
+                                                .into(),
+                                            ),
+                                        );
+                                    }
                                     tracing::info!(
-                                        "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, text={:?}",
+                                        "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, submit_to_agent={}, text={:?}",
                                         workspace_id,
                                         focused_pane_id,
                                         bracketed,
+                                        submit_to_agent,
                                         sanitized
                                     );
                                     if let Err(e) =

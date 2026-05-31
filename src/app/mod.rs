@@ -14,7 +14,6 @@ mod ids;
 mod input;
 mod runtime;
 mod session;
-pub(crate) mod speech;
 pub mod state;
 mod terminal_targets;
 mod theme_sync;
@@ -118,13 +117,7 @@ pub struct App {
     pub(crate) overlay_panes: HashMap<crate::layout::PaneId, OverlayPaneState>,
     pub(crate) local_terminal_notifications: bool,
     pub(crate) config_reloaded_from_disk: bool,
-    pub(crate) recording_stream: Option<cpal::Stream>,
-    pub(crate) recording_buffer: Option<Arc<std::sync::Mutex<Vec<f32>>>>,
-    pub(crate) recording_sample_rate: u32,
-    pub(crate) recording_channels: u16,
-    pub(crate) recording_key: Option<TerminalKey>,
-    pub(crate) recording_active: Option<Arc<std::sync::atomic::AtomicBool>>,
-    pub(crate) recording_start_time: Option<std::time::Instant>,
+    pub(crate) speech_recorder: crate::speech::SpeechRecorder,
     pub(crate) release_events_supported: bool,
 }
 pub(crate) const APP_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -610,13 +603,7 @@ impl App {
             overlay_panes: HashMap::new(),
             local_terminal_notifications: true,
             config_reloaded_from_disk: false,
-            recording_stream: None,
-            recording_buffer: None,
-            recording_sample_rate: 0,
-            recording_channels: 0,
-            recording_key: None,
-            recording_active: None,
-            recording_start_time: None,
+            speech_recorder: crate::speech::SpeechRecorder::new(),
             release_events_supported: false,
         }
     }
@@ -1425,6 +1412,122 @@ impl App {
     /// the server's AppState maintains view geometry from virtual rendering.
     fn handle_mouse_event_headless(&mut self, mouse: crossterm::event::MouseEvent) {
         self.handle_mouse(mouse);
+    }
+
+    pub(crate) fn start_recording(&mut self, ws_idx: usize, key: TerminalKey) -> bool {
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return false;
+        };
+        let workspace_id = ws.id.clone();
+
+        if !self.no_session {
+            let pane_id = ws.focused_pane_id();
+            let is_agent = if let Some(pid) = pane_id {
+                if let Some(pane) = ws.pane_state(pid) {
+                    let term_id = pane.attached_terminal_id.clone();
+                    if let Some(term) = self.state.terminals.get(&term_id) {
+                        term.is_agent_terminal()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            self.state.recording_workspace = Some(workspace_id.clone());
+            self.speech_recorder.start_server(key);
+            self.state.live_transcription = Some(String::new());
+
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::Finished,
+                title: "Speech to Text".into(),
+                context: "Listening...".into(),
+                target: None,
+            });
+
+            if let Err(e) = self
+                .event_tx
+                .try_send(crate::events::AppEvent::SpeechStartRecording {
+                    workspace_id,
+                    pane_id,
+                    is_agent,
+                })
+            {
+                tracing::error!("failed to send SpeechStartRecording: {:?}", e);
+            }
+            return true;
+        }
+
+        let api_key = match &self.state.speech_to_text.gemini_api_key {
+            Some(k) if !k.trim().is_empty() => k.clone(),
+            _ => return false,
+        };
+
+        let model = self
+            .state
+            .speech_to_text
+            .model
+            .clone()
+            .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
+
+        if let Err(e) = self.speech_recorder.start_local(
+            workspace_id.clone(),
+            key,
+            api_key,
+            model,
+            self.event_tx.clone(),
+        ) {
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Speech to Text".into(),
+                context: e,
+                target: None,
+            });
+            return false;
+        }
+
+        self.state.recording_workspace = Some(workspace_id);
+        self.state.live_transcription = Some(String::new());
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "Speech to Text".into(),
+            context: "Listening...".into(),
+            target: None,
+        });
+
+        true
+    }
+
+    pub(crate) fn stop_recording(&mut self, abort: bool) {
+        let active = self.speech_recorder.stop();
+
+        if !abort && active.is_some() {
+            let previous_toast = self.state.toast.clone();
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::Finished,
+                title: "Speech to Text".into(),
+                context: "Transcribing...".into(),
+                target: None,
+            });
+            self.sync_toast_deadline(previous_toast);
+        }
+
+        if !self.no_session {
+            if let Err(e) = self
+                .event_tx
+                .try_send(crate::events::AppEvent::SpeechStopRecording { abort })
+            {
+                tracing::error!("failed to send SpeechStopRecording: {:?}", e);
+            }
+        }
+
+        if abort {
+            self.state.recording_workspace = None;
+            self.state.live_transcription = None;
+        }
     }
 }
 

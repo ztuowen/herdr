@@ -1,97 +1,31 @@
-use super::App;
 use crate::input::TerminalKey;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
 
-impl App {
-    pub(crate) fn start_recording(&mut self, ws_idx: usize, key: TerminalKey) -> bool {
-        let Some(ws) = self.state.workspaces.get(ws_idx) else {
-            return false;
-        };
-        let workspace_id = ws.id.clone();
+/// Thread-safe Send/Sync wrapper around cpal::Stream.
+pub struct SendStream(#[allow(dead_code)] pub cpal::Stream);
+unsafe impl Send for SendStream {}
+unsafe impl Sync for SendStream {}
 
-        if !self.no_session {
-            let pane_id = ws.focused_pane_id();
-            let is_agent = if let Some(pid) = pane_id {
-                if let Some(pane) = ws.pane_state(pid) {
-                    let term_id = pane.attached_terminal_id.clone();
-                    if let Some(term) = self.state.terminals.get(&term_id) {
-                        term.is_agent_terminal()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+/// Reusable audio capture stream configuration and buffer.
+pub struct AudioStream {
+    pub stream: SendStream,
+    pub buffer: Arc<std::sync::Mutex<Vec<f32>>>,
+    pub sample_rate: u32,
+    pub channels: u16,
+}
 
-            self.state.recording_workspace = Some(workspace_id.clone());
-            self.recording_key = Some(key);
-            self.recording_start_time = Some(std::time::Instant::now());
-            self.state.live_transcription = Some(String::new());
-
-            self.state.toast = Some(crate::app::state::ToastNotification {
-                kind: crate::app::state::ToastKind::Finished,
-                title: "Speech to Text".into(),
-                context: "Listening...".into(),
-                target: None,
-            });
-
-            if let Err(e) = self
-                .event_tx
-                .try_send(crate::events::AppEvent::SpeechStartRecording {
-                    workspace_id,
-                    pane_id,
-                    is_agent,
-                })
-            {
-                tracing::error!("failed to send SpeechStartRecording: {:?}", e);
-            }
-            return true;
-        }
-
-        let api_key = match &self.state.speech_to_text.gemini_api_key {
-            Some(k) if !k.trim().is_empty() => k.clone(),
-            _ => return false,
-        };
-
-        let system_instruction = "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string();
-
-        let model = self
-            .state
-            .speech_to_text
-            .model
-            .clone()
-            .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
-
+impl AudioStream {
+    /// Discovers the default input device and builds/starts a CPAL recording stream.
+    pub fn start() -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = match host.default_input_device() {
-            Some(dev) => dev,
-            None => {
-                self.state.toast = Some(crate::app::state::ToastNotification {
-                    kind: crate::app::state::ToastKind::NeedsAttention,
-                    title: "Speech to Text".into(),
-                    context: "No default input device found.".into(),
-                    target: None,
-                });
-                return false;
-            }
-        };
+        let device = host
+            .default_input_device()
+            .ok_or_else(|| "No default input device found.".to_string())?;
 
-        let config = match device.default_input_config() {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                self.state.toast = Some(crate::app::state::ToastNotification {
-                    kind: crate::app::state::ToastKind::NeedsAttention,
-                    title: "Speech to Text".into(),
-                    context: format!("Failed to get input config: {}", e),
-                    target: None,
-                });
-                return false;
-            }
-        };
+        let config = device
+            .default_input_config()
+            .map_err(|e| format!("Failed to get input config: {}", e))?;
 
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
@@ -129,62 +63,91 @@ impl App {
                 err_fn,
                 None,
             ),
-            _ => {
-                self.state.toast = Some(crate::app::state::ToastNotification {
-                    kind: crate::app::state::ToastKind::NeedsAttention,
-                    title: "Speech to Text".into(),
-                    context: "Unsupported sample format.".into(),
-                    target: None,
-                });
-                return false;
-            }
-        };
-
-        let stream = match stream {
-            Ok(s) => s,
-            Err(e) => {
-                self.state.toast = Some(crate::app::state::ToastNotification {
-                    kind: crate::app::state::ToastKind::NeedsAttention,
-                    title: "Speech to Text".into(),
-                    context: format!("Failed to build input stream: {}", e),
-                    target: None,
-                });
-                return false;
-            }
-        };
-
-        if let Err(e) = stream.play() {
-            self.state.toast = Some(crate::app::state::ToastNotification {
-                kind: crate::app::state::ToastKind::NeedsAttention,
-                title: "Speech to Text".into(),
-                context: format!("Failed to play input stream: {}", e),
-                target: None,
-            });
-            return false;
+            _ => return Err("Unsupported sample format.".to_string()),
         }
+        .map_err(|e| format!("Failed to build input stream: {}", e))?;
 
-        self.recording_stream = Some(stream);
-        self.recording_buffer = Some(buffer.clone());
-        self.recording_sample_rate = sample_rate;
-        self.recording_channels = channels;
-        self.recording_key = Some(key);
-        self.recording_start_time = Some(std::time::Instant::now());
-        self.state.recording_workspace = Some(workspace_id.clone());
+        stream
+            .play()
+            .map_err(|e| format!("Failed to play input stream: {}", e))?;
 
-        self.state.toast = Some(crate::app::state::ToastNotification {
-            kind: crate::app::state::ToastKind::Finished,
-            title: "Speech to Text".into(),
-            context: "Listening...".into(),
-            target: None,
-        });
+        Ok(Self {
+            stream: SendStream(stream),
+            buffer,
+            sample_rate,
+            channels,
+        })
+    }
+}
 
-        // Initialize live transcription
-        self.state.live_transcription = Some(String::new());
+/// Transcription events produced by the WebSocket streaming thread.
+#[derive(Debug)]
+pub enum TranscriptionEvent {
+    Partial(String),
+    Finished(Result<String, String>),
+}
 
-        let recording_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        self.recording_active = Some(recording_active.clone());
+/// Encapsulates the speech-to-text recording state and runtime machinery for App.
+pub struct SpeechRecorder {
+    stream: Option<SendStream>,
+    active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    start_time: Option<std::time::Instant>,
+    key: Option<TerminalKey>,
+}
 
-        let event_tx = self.event_tx.clone();
+impl SpeechRecorder {
+    /// Creates a new, inactive `SpeechRecorder`.
+    pub fn new() -> Self {
+        Self {
+            stream: None,
+            active: None,
+            start_time: None,
+            key: None,
+        }
+    }
+
+    /// Checks if a speech recording is currently in progress.
+    #[allow(dead_code)] // Exposed as part of the public SpeechRecorder API for completeness
+    pub fn is_recording(&self) -> bool {
+        self.start_time.is_some()
+    }
+
+    /// Returns the start time of the active recording, if any.
+    pub fn start_time(&self) -> Option<std::time::Instant> {
+        self.start_time
+    }
+
+    /// Returns the key that was pressed to trigger the active recording, if any.
+    pub fn recording_key(&self) -> Option<TerminalKey> {
+        self.key
+    }
+
+    /// Starts tracking a recording session in server/client mode.
+    pub fn start_server(&mut self, key: TerminalKey) {
+        self.key = Some(key);
+        self.start_time = Some(std::time::Instant::now());
+    }
+
+    /// Starts a local monolithic recording session.
+    pub fn start_local(
+        &mut self,
+        workspace_id: String,
+        key: TerminalKey,
+        api_key: String,
+        model: String,
+        app_event_tx: tokio::sync::mpsc::Sender<crate::events::AppEvent>,
+    ) -> Result<(), String> {
+        self.key = Some(key);
+        self.start_time = Some(std::time::Instant::now());
+
+        let audio = AudioStream::start()?;
+        self.stream = Some(audio.stream);
+        let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        self.active = Some(active.clone());
+
+        let system_instruction = "You are a transcription engine. Output the exact text of the audio you hear. Do not converse, do not answer questions, and do not add commentary.".to_string();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
 
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
@@ -194,73 +157,65 @@ impl App {
                 Ok(rt) => rt,
                 Err(e) => {
                     tracing::error!("Speech to Text: failed to build tokio runtime: {}", e);
-                    let _ = event_tx.blocking_send(crate::events::AppEvent::SpeechRawTranscribed {
-                        workspace_id: workspace_id.clone(),
-                        result: Err(format!("Failed to build tokio runtime: {}", e)),
-                    });
+                    let _ =
+                        app_event_tx.blocking_send(crate::events::AppEvent::SpeechRawTranscribed {
+                            workspace_id,
+                            result: Err(format!("Failed to build tokio runtime: {}", e)),
+                        });
                     return;
                 }
             };
 
+            let app_event_tx_clone = app_event_tx.clone();
+            let workspace_id_clone = workspace_id.clone();
             rt.block_on(async {
-                run_websocket_transcription(
-                    workspace_id,
-                    api_key,
-                    model,
-                    system_instruction,
-                    buffer,
-                    channels,
-                    sample_rate,
-                    recording_active,
-                    event_tx,
-                )
-                .await;
+                tokio::spawn(async move {
+                    run_websocket_transcription(
+                        api_key,
+                        model,
+                        system_instruction,
+                        audio.buffer,
+                        audio.channels,
+                        audio.sample_rate,
+                        active,
+                        None,
+                        tx,
+                    )
+                    .await;
+                });
+
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        TranscriptionEvent::Partial(text) => {
+                            let _ = app_event_tx_clone
+                                .send(crate::events::AppEvent::SpeechPartialTranscription {
+                                    workspace_id: workspace_id_clone.clone(),
+                                    text,
+                                })
+                                .await;
+                        }
+                        TranscriptionEvent::Finished(result) => {
+                            let _ = app_event_tx_clone
+                                .send(crate::events::AppEvent::SpeechRawTranscribed {
+                                    workspace_id: workspace_id_clone.clone(),
+                                    result,
+                                })
+                                .await;
+                        }
+                    }
+                }
             });
         });
 
-        true
+        Ok(())
     }
 
-    pub(crate) fn stop_recording(&mut self, abort: bool) -> Option<(Vec<f32>, u32, u16)> {
-        self.recording_stream = None;
-        self.recording_buffer = None;
-        self.recording_key = None;
-        self.recording_start_time = None;
-
-        if let Some(active) = self.recording_active.take() {
-            active.store(false, std::sync::atomic::Ordering::Release);
-
-            if !abort {
-                let previous_toast = self.state.toast.clone();
-                self.state.toast = Some(crate::app::state::ToastNotification {
-                    kind: crate::app::state::ToastKind::Finished,
-                    title: "Speech to Text".into(),
-                    context: "Transcribing...".into(),
-                    target: None,
-                });
-                self.sync_toast_deadline(previous_toast);
-            }
-        }
-
-        if !self.no_session {
-            if let Err(e) = self
-                .event_tx
-                .try_send(crate::events::AppEvent::SpeechStopRecording { abort })
-            {
-                tracing::error!("failed to send SpeechStopRecording: {:?}", e);
-            }
-            if abort {
-                self.state.recording_workspace = None;
-                self.state.live_transcription = None;
-            }
-        } else {
-            if abort {
-                self.state.recording_workspace = None;
-                self.state.live_transcription = None;
-            }
-        }
-
-        None
+    /// Stops the current recording session.
+    pub fn stop(&mut self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.stream = None;
+        self.key = None;
+        self.start_time = None;
+        self.active.take()
     }
 }
 
@@ -282,7 +237,8 @@ where
     }
 }
 
-pub(crate) fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+/// Downmixes a multi-channel audio buffer to mono.
+pub fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels == 1 {
         return samples.to_vec();
     }
@@ -301,7 +257,8 @@ pub(crate) fn downmix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
     mono
 }
 
-pub(crate) fn resample(samples: &[f32], src_rate: u32, target_rate: u32) -> Vec<f32> {
+/// Linearly resamples an audio buffer from `src_rate` to `target_rate`.
+pub fn resample(samples: &[f32], src_rate: u32, target_rate: u32) -> Vec<f32> {
     if src_rate == target_rate {
         return samples.to_vec();
     }
@@ -323,8 +280,8 @@ pub(crate) fn resample(samples: &[f32], src_rate: u32, target_rate: u32) -> Vec<
     resampled
 }
 
-async fn run_websocket_transcription(
-    workspace_id: String,
+/// Runs the main WebSocket streaming transcription loop, writing events to the Sender channel.
+pub async fn run_websocket_transcription(
     api_key: String,
     model: String,
     system_instruction: String,
@@ -332,7 +289,8 @@ async fn run_websocket_transcription(
     channels: u16,
     sample_rate: u32,
     recording_active: Arc<std::sync::atomic::AtomicBool>,
-    event_tx: tokio::sync::mpsc::Sender<crate::events::AppEvent>,
+    recording_aborted: Option<Arc<std::sync::atomic::AtomicBool>>,
+    event_tx: tokio::sync::mpsc::Sender<TranscriptionEvent>,
 ) {
     use base64::Engine;
     use futures_util::{SinkExt, StreamExt};
@@ -356,10 +314,10 @@ async fn run_websocket_transcription(
                 e
             );
             let _ = event_tx
-                .send(crate::events::AppEvent::SpeechRawTranscribed {
-                    workspace_id,
-                    result: Err(format!("WebSocket connection failed: {}", e)),
-                })
+                .send(TranscriptionEvent::Finished(Err(format!(
+                    "WebSocket connection failed: {}",
+                    e
+                ))))
                 .await;
             return;
         }
@@ -394,10 +352,10 @@ async fn run_websocket_transcription(
     {
         tracing::error!("Speech to Text: failed to send setup message: {}", e);
         let _ = event_tx
-            .send(crate::events::AppEvent::SpeechRawTranscribed {
-                workspace_id,
-                result: Err(format!("Failed to send setup message: {}", e)),
-            })
+            .send(TranscriptionEvent::Finished(Err(format!(
+                "Failed to send setup message: {}",
+                e
+            ))))
             .await;
         return;
     }
@@ -409,6 +367,12 @@ async fn run_websocket_transcription(
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
 
     loop {
+        if let Some(aborted) = &recording_aborted {
+            if aborted.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+        }
+
         tokio::select! {
             _ = interval.tick() => {
                 if !recording_stopped {
@@ -494,10 +458,7 @@ async fn run_websocket_transcription(
                             }
                             full_text.push_str(&current_turn_text);
 
-                            let _ = event_tx.send(crate::events::AppEvent::SpeechPartialTranscription {
-                                workspace_id: workspace_id.clone(),
-                                text: full_text,
-                            }).await;
+                            let _ = event_tx.send(TranscriptionEvent::Partial(full_text)).await;
                         }
                         if turn_complete {
                             if !current_turn_text.is_empty() {
@@ -544,15 +505,12 @@ async fn run_websocket_transcription(
         Err("No speech detected / transcription empty.".to_string())
     };
 
-    let _ = event_tx
-        .send(crate::events::AppEvent::SpeechRawTranscribed {
-            workspace_id,
-            result,
-        })
-        .await;
+    let _ = event_tx.send(TranscriptionEvent::Finished(result)).await;
 }
 
-pub(crate) fn parse_live_transcription_frame(json_str: &str) -> Option<(String, bool)> {
+/// Parses a JSON frame from the Gemini Live WebSocket, returning the partial transcription
+/// text and whether the turn is complete.
+pub fn parse_live_transcription_frame(json_str: &str) -> Option<(String, bool)> {
     let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
 
     if let Some(err) = json
@@ -608,7 +566,8 @@ pub(crate) fn parse_live_transcription_frame(json_str: &str) -> Option<(String, 
     Some((text, turn_complete))
 }
 
-pub(crate) fn run_gemini_postprocess(
+/// Runs the Gemini post-processing API request.
+pub fn run_gemini_postprocess(
     api_key: String,
     raw_text: String,
     system_instruction: String,
@@ -681,80 +640,10 @@ pub(crate) fn run_gemini_postprocess(
 
 #[cfg(test)]
 mod tests {
-    use crate::app::tests::test_app;
-
-    #[test]
-    fn speech_transcribed_event_handles_result() {
-        let mut app = test_app();
-        app.state.workspaces = vec![crate::workspace::Workspace::test_new("main")];
-        let workspace_id = app.state.workspaces[0].id.clone();
-
-        let event_ok = crate::events::AppEvent::SpeechTranscribed {
-            workspace_id: workspace_id.clone(),
-            pane_id: None,
-            result: Ok("hello world".to_string()),
-        };
-        app.handle_internal_event(event_ok);
-
-        let toast = app.state.toast.as_ref().unwrap();
-        assert_eq!(toast.title, "Speech to Text");
-        assert_eq!(toast.context, "hello world");
-        assert!(app.toast_deadline.is_some());
-
-        let event_err = crate::events::AppEvent::SpeechTranscribed {
-            workspace_id,
-            pane_id: None,
-            result: Err("mic failure".to_string()),
-        };
-        app.handle_internal_event(event_err);
-
-        let toast = app.state.toast.as_ref().unwrap();
-        assert_eq!(toast.title, "Speech to Text Error");
-        assert_eq!(toast.context, "mic failure");
-        assert!(app.toast_deadline.is_some());
-    }
-
-    #[test]
-    fn test_sync_toast_deadline_exemption() {
-        let mut app = test_app();
-
-        // Transcribing... should not set a deadline
-        app.state.toast = Some(crate::app::state::ToastNotification {
-            kind: crate::app::state::ToastKind::Finished,
-            title: "Speech to Text".into(),
-            context: "Transcribing...".into(),
-            target: None,
-        });
-        app.sync_toast_deadline(None);
-        assert!(app.toast_deadline.is_none());
-
-        // Other content under Finished should set a deadline (5 seconds)
-        app.state.toast = Some(crate::app::state::ToastNotification {
-            kind: crate::app::state::ToastKind::Finished,
-            title: "Speech to Text".into(),
-            context: "hello world".into(),
-            target: None,
-        });
-        let previous = app.state.toast.clone();
-        app.sync_toast_deadline(None);
-        assert!(app.toast_deadline.is_some());
-
-        // Reset deadline and test abort
-        app.toast_deadline = None;
-        app.state.toast = Some(crate::app::state::ToastNotification {
-            kind: crate::app::state::ToastKind::NeedsAttention,
-            title: "Speech to Text".into(),
-            context: "Recording aborted.".into(),
-            target: None,
-        });
-        app.sync_toast_deadline(previous);
-        assert!(app.toast_deadline.is_some());
-    }
+    use super::*;
 
     #[test]
     fn test_parse_live_transcription_frame() {
-        use super::parse_live_transcription_frame;
-
         // Test camelCase nested structure
         let msg = r#"{"serverContent": {"inputTranscription": {"text": "hello "}, "turnComplete": true}}"#;
         let res = parse_live_transcription_frame(msg);

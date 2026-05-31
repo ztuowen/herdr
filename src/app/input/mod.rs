@@ -130,7 +130,8 @@ impl App {
         if self.state.recording_workspace.is_some() {
             let is_stt_key = self.state.keybinds.speech_to_text.matches_direct_key(key)
                 || self.state.keybinds.speech_to_text.matches_prefix_key(key)
-                || (self.recording_key.is_some() && key.code == self.recording_key.unwrap().code);
+                || (self.speech_recorder.recording_key().is_some()
+                    && key.code == self.speech_recorder.recording_key().unwrap().code);
 
             if is_stt_key || key.code == KeyCode::Esc {
                 if key.kind == crossterm::event::KeyEventKind::Repeat {
@@ -139,7 +140,7 @@ impl App {
 
                 if key.code == KeyCode::Esc {
                     let previous_toast = self.state.toast.clone();
-                    let _ = self.stop_recording(true);
+                    self.stop_recording(true);
                     self.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::NeedsAttention,
                         title: "Speech to Text".into(),
@@ -154,7 +155,7 @@ impl App {
                     true
                 } else if key.kind == crossterm::event::KeyEventKind::Press {
                     if !self.release_events_supported {
-                        if let Some(start_time) = self.recording_start_time {
+                        if let Some(start_time) = self.speech_recorder.start_time() {
                             start_time.elapsed() >= std::time::Duration::from_millis(400)
                         } else {
                             true

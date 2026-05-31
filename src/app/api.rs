@@ -126,12 +126,11 @@ impl App {
                                 let workspace_id_clone = workspace_id.clone();
                                 let raw_text_clone = raw_text.clone();
                                 std::thread::spawn(move || {
-                                    let postprocess_result =
-                                        crate::app::speech::run_gemini_postprocess(
-                                            api_key,
-                                            raw_text_clone,
-                                            system_instruction,
-                                        );
+                                    let postprocess_result = crate::speech::run_gemini_postprocess(
+                                        api_key,
+                                        raw_text_clone,
+                                        system_instruction,
+                                    );
                                     let _ = event_tx.blocking_send(AppEvent::SpeechTranscribed {
                                         workspace_id: workspace_id_clone,
                                         pane_id: Some(pane_id),

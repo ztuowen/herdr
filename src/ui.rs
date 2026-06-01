@@ -45,8 +45,8 @@ use self::onboarding::render_onboarding_overlay;
 use self::panes::{compute_pane_infos, render_panes, resize_tab_panes};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
-    release_notes_display_lines, release_notes_sections, release_notes_wrapped_line_count,
-    PRODUCT_ANNOUNCEMENT_MODAL_SIZE, RELEASE_NOTES_MODAL_SIZE,
+    release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
+    RELEASE_NOTES_MODAL_SIZE,
 };
 use self::release_notes::{render_product_announcement_overlay, render_release_notes_overlay};
 pub(crate) use self::scrollbar::{
@@ -74,9 +74,10 @@ pub(crate) use self::{
         agent_panel_body_rect, agent_panel_entries, agent_panel_scroll_metrics,
         agent_panel_scrollbar_rect, agent_panel_toggle_rect, collapsed_sidebar_sections,
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas, expanded_sidebar_sections,
-        normalized_workspace_scroll, sidebar_section_divider_rect, workspace_drop_indicator_row,
-        workspace_list_entries, workspace_list_rect, workspace_list_scroll_metrics,
-        workspace_list_scrollbar_rect, workspace_parent_group_state, WorkspaceListEntry,
+        expanded_sidebar_toggle_rect, normalized_workspace_scroll, sidebar_section_divider_rect,
+        workspace_drop_indicator_row, workspace_list_entries, workspace_list_rect,
+        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_parent_group_state,
+        WorkspaceListEntry,
     },
 };
 pub(crate) use self::{

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added `ui.right_click_passthrough_modifier` so a configured modifier such as `ctrl` can forward right-click hold and drag gestures to mouse-reporting pane apps while normal right-click still opens Herdr's pane menu. (#148)
+- Added Kilo Code CLI automatic detection for idle, working, and blocked terminal states. (#270)
+
+## [0.6.6] - 2026-05-31
+
+### Added
 - Custom command keybindings now accept an optional `description` field to provide user-defined descriptions shown in the keybind help panel instead of the default `'custom command'` label. (#362)
 - Kanban now uses `todo`, `ongoing`, `blocked`, `reviewing`, and `done` statuses, with old session data migrated on load.
 

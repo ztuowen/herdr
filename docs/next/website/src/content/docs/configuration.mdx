@@ -251,6 +251,7 @@ sidebar_min_width = 18
 sidebar_max_width = 36
 mobile_width_threshold = 64
 mouse_capture = true
+right_click_passthrough_modifier = ""
 redraw_on_focus_gained = true
 mouse_scroll_lines = 3
 confirm_close = true
@@ -269,6 +270,8 @@ accent = "cyan"
 `confirm_close` controls whether closing a workspace asks for confirmation. `prompt_new_tab_name` controls whether new tabs ask for a label first.
 
 Set `mouse_capture = false` if you want your terminal to handle normal clicks, such as command-clicking URLs. With mouse capture enabled, Ctrl-click opens pane links when your terminal sends that modified click to Herdr; use Shift-Ctrl-click on Linux or Shift-Cmd-click on macOS for the terminal-native bypass path.
+
+Set `right_click_passthrough_modifier = "ctrl"` if you want Ctrl-right-click, hold, and drag gestures inside mouse-reporting pane apps to reach the app instead of opening Herdr's pane menu. The default is empty, which disables this passthrough. Supported modifiers are `ctrl`, `alt`, `cmd`, `super`, `meta`, and `hyper`; `shift` is rejected because many terminals reserve Shift+mouse for their own mouse bypass.
 
 Set `redraw_on_focus_gained = false` to avoid the visible full-screen refresh when switching back to Herdr. The default is `true` because a full redraw recovers from rare stale or dirty host terminal surfaces.
 
@@ -427,7 +430,7 @@ cjk_ime_cursor_shape = "steady_block"
 
 When enabled, the cursor stays visible at the focused pane's reported position. If the pane reports no cursor position, the anchor falls back to the pane's top-left so a stable IME hint is always available.
 
-`cjk_ime_agents` is an optional allow-list. When empty, the reveal applies to any focused pane. When non-empty, the reveal only applies if the focused pane's detected agent matches one of the listed names — useful to enable the reveal only for AI-agent TUIs that paint their own cursor while leaving plain shells untouched. Accepted names: `pi`, `claude`, `codex`, `gemini`, `cursor`, `agy`, `cline`, `opencode`, `copilot`, `kimi`, `kiro`, `droid`, `amp`, `grok`, `hermes`, `qodercli`, and `qoder`. Unknown names are ignored; if the list contains no valid names, the reveal does not apply.
+`cjk_ime_agents` is an optional allow-list. When empty, the reveal applies to any focused pane. When non-empty, the reveal only applies if the focused pane's detected agent matches one of the listed names — useful to enable the reveal only for AI-agent TUIs that paint their own cursor while leaving plain shells untouched. Accepted names: `pi`, `claude`, `codex`, `gemini`, `cursor`, `agy`, `cline`, `opencode`, `copilot`, `kimi`, `kiro`, `droid`, `amp`, `grok`, `hermes`, `kilo`, `qodercli`, and `qoder`. Unknown names are ignored; if the list contains no valid names, the reveal does not apply.
 
 `cjk_ime_cursor_shape` controls the DECSCUSR shape rendered for the IME anchor. Accepted values: `block`, `steady_block` (default), `underline`, `steady_underline`, `bar`, `steady_bar`.
 

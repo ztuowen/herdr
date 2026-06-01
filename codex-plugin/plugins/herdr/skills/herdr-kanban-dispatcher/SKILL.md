@@ -31,7 +31,7 @@ React to these Herdr-native events when available, and use a periodic tick as fa
 5. Do not assign `blocked` or `clarify:` cards to workers.
 6. Enforce one active card per agent.
 
-Send the selected card UUID to the target agent and instruct it to use the matching role skill. The assigned agent must attach its own pane with `herdr kanban attach <uuid>`.
+Create the target pane, immediately attach it to the selected card, then send the selected card UUID to the target agent and instruct it to use the matching role skill.
 
 ## Invariants
 

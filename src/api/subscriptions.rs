@@ -90,6 +90,7 @@ impl PanePresentationSnapshot {
 
 pub(super) struct ActiveEventSubscription {
     event_kind: crate::api::schema::EventKind,
+    kanban_uuid: Option<String>,
     last_sequence: u64,
 }
 
@@ -110,58 +111,87 @@ impl ActiveSubscription {
         match subscription {
             Subscription::WorkspaceCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceCreated,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceUpdated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceUpdated,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceRenamed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceRenamed,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceClosed,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceFocused,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::TabCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabCreated,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::TabClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabClosed,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::TabFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabFocused,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::TabRenamed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabRenamed,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneCreated,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneClosed,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneFocused,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneExited {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneExited,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneAgentDetected {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneAgentDetected,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
+            Subscription::KanbanAdded { uuid } => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::KanbanAdded,
+                kanban_uuid: uuid,
+                last_sequence: 0,
+            })),
+            Subscription::KanbanUpdated { uuid } => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::KanbanUpdated,
+                kanban_uuid: uuid,
+                last_sequence: 0,
+            })),
+            Subscription::KanbanDeleted { uuid } => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::KanbanDeleted,
+                kanban_uuid: uuid,
                 last_sequence: 0,
             })),
             Subscription::PaneOutputMatched {
@@ -265,11 +295,23 @@ impl ActiveEventSubscription {
     fn poll(&mut self, event_hub: &EventHub) -> Option<serde_json::Value> {
         for (sequence, event) in event_hub.events_after(self.last_sequence) {
             self.last_sequence = sequence;
-            if event.event == self.event_kind {
+            if event.event == self.event_kind && self.matches_event(&event) {
                 return serde_json::to_value(event).ok();
             }
         }
         None
+    }
+
+    fn matches_event(&self, event: &crate::api::schema::EventEnvelope) -> bool {
+        let Some(wanted_uuid) = &self.kanban_uuid else {
+            return true;
+        };
+        match &event.data {
+            crate::api::schema::EventData::KanbanAdded { item }
+            | crate::api::schema::EventData::KanbanUpdated { item }
+            | crate::api::schema::EventData::KanbanDeleted { item } => &item.uuid == wanted_uuid,
+            _ => true,
+        }
     }
 }
 

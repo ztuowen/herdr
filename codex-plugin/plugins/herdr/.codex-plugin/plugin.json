@@ -1,6 +1,6 @@
 {
   "name": "herdr",
-  "version": "0.1.0+codex.20260531235559",
+  "version": "0.1.0+codex.20260601042724",
   "description": "Herdr Kanban workflow skills for agent coordination.",
   "author": {
     "name": "Herdr local"
@@ -17,6 +17,7 @@
       "Agent dispatch",
       "Worker handoff",
       "Review routing",
+      "Human audit",
       "Board sweeping"
     ],
     "defaultPrompt": "Coordinate this work through Herdr Kanban."

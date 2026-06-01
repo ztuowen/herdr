@@ -3,11 +3,28 @@
 
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
-    KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanUpdateParams, ResponseResult,
+    EventData, EventEnvelope, EventKind, KanbanAddParams, KanbanDeleteParams, KanbanItem,
+    KanbanListParams, KanbanUpdateParams, ResponseResult,
 };
 use crate::app::App;
 
 impl App {
+    fn emit_kanban_event(&self, event: EventKind, data: EventData) {
+        self.emit_event(EventEnvelope { event, data });
+    }
+
+    fn emit_kanban_added(&self, item: KanbanItem) {
+        self.emit_kanban_event(EventKind::KanbanAdded, EventData::KanbanAdded { item });
+    }
+
+    fn emit_kanban_updated(&self, item: KanbanItem) {
+        self.emit_kanban_event(EventKind::KanbanUpdated, EventData::KanbanUpdated { item });
+    }
+
+    fn emit_kanban_deleted(&self, item: KanbanItem) {
+        self.emit_kanban_event(EventKind::KanbanDeleted, EventData::KanbanDeleted { item });
+    }
+
     fn active_pane_terminal_ids(&self) -> std::collections::HashSet<String> {
         let mut active = std::collections::HashSet::new();
         for ws in &self.state.workspaces {
@@ -58,6 +75,7 @@ impl App {
         );
         self.state.mark_session_dirty();
         self.schedule_session_save();
+        self.emit_kanban_added(item.clone());
         encode_success(id, ResponseResult::KanbanItem { item })
     }
 
@@ -151,6 +169,7 @@ impl App {
             Some(item) => {
                 self.state.mark_session_dirty();
                 self.schedule_session_save();
+                self.emit_kanban_updated(item.clone());
                 encode_success(id, ResponseResult::KanbanItem { item })
             }
             None => encode_error(
@@ -181,6 +200,7 @@ impl App {
             Some(item) => {
                 self.state.mark_session_dirty();
                 self.schedule_session_save();
+                self.emit_kanban_deleted(item.clone());
                 encode_success(id, ResponseResult::KanbanItem { item })
             }
             None => encode_error(
@@ -351,6 +371,70 @@ mod tests {
         assert_eq!(items.len(), 0);
 
         let _ = std::fs::remove_file(plan_file);
+    }
+
+    #[test]
+    fn kanban_api_handlers_emit_mutation_events() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let event_hub = crate::api::EventHub::default();
+        let mut app = App::new(&Config::default(), true, None, api_rx, event_hub.clone());
+
+        let add_res = app.handle_kanban_add(
+            "add".into(),
+            KanbanAddParams {
+                title: "Streamed card".into(),
+                description: None,
+                status: None,
+                terminal_id: None,
+            },
+        );
+        let resp: SuccessResponse = serde_json::from_str(&add_res).unwrap();
+        let item = match resp.result {
+            ResponseResult::KanbanItem { item } => item,
+            _ => panic!("Expected ResponseResult::KanbanItem"),
+        };
+
+        app.handle_kanban_update(
+            "update".into(),
+            KanbanUpdateParams {
+                uuid: item.uuid.clone(),
+                title: Some("Updated streamed card".into()),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Reviewing),
+                terminal_id: None,
+                clear_terminal_id: None,
+            },
+        );
+        app.handle_kanban_delete(
+            "delete".into(),
+            KanbanDeleteParams {
+                uuid: item.uuid.clone(),
+            },
+        );
+
+        let events = event_hub.events_after(0);
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[0].1.data,
+            crate::api::schema::EventData::KanbanAdded { item: added }
+                if events[0].1.event == crate::api::schema::EventKind::KanbanAdded
+                    && added.uuid == item.uuid
+                    && added.title == "Streamed card"
+        ));
+        assert!(matches!(
+            &events[1].1.data,
+            crate::api::schema::EventData::KanbanUpdated { item: updated }
+                if events[1].1.event == crate::api::schema::EventKind::KanbanUpdated
+                    && updated.uuid == item.uuid
+                    && updated.title == "Updated streamed card"
+                    && updated.status == crate::api::schema::KanbanStatus::Reviewing
+        ));
+        assert!(matches!(
+            &events[2].1.data,
+            crate::api::schema::EventData::KanbanDeleted { item: deleted }
+                if events[2].1.event == crate::api::schema::EventKind::KanbanDeleted
+                    && deleted.uuid == item.uuid
+        ));
     }
 
     #[test]

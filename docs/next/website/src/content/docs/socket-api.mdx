@@ -226,6 +226,8 @@ The first response acknowledges the subscription. Later lines are pushed events.
 
 Workspace event subscriptions include `workspace.created`, `workspace.updated`, `workspace.renamed`, `workspace.closed`, and `workspace.focused`.
 
+Kanban event subscriptions include `kanban.added`, `kanban.updated`, and `kanban.deleted`. Each pushed event includes the changed `item`; clients can optionally pass `uuid` on the subscription to receive events for one card.
+
 Use `events.wait` when you want one matching event and then a response.
 
 ## Reading panes

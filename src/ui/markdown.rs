@@ -1058,10 +1058,49 @@ enum Block {
     Math(String),
 }
 
+fn escape_table_cell_value(value: &str) -> String {
+    value.replace('|', "\\|")
+}
+
+fn parse_frontmatter_rows(input_lines: &[&str]) -> Option<(usize, Vec<String>)> {
+    if input_lines.first().map(|line| line.trim()) != Some("---") {
+        return None;
+    }
+
+    let closing_idx = input_lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(idx, line)| (line.trim() == "---").then_some(idx))?;
+
+    let rows = input_lines[1..closing_idx]
+        .iter()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            Some(format!(
+                "| {} | {} |",
+                escape_table_cell_value(key.trim()),
+                escape_table_cell_value(value.trim())
+            ))
+        })
+        .collect();
+
+    Some((closing_idx + 1, rows))
+}
+
 pub fn parse_markdown_with_links(text: &str, palette: &Palette) -> Vec<MarkdownLine> {
     let mut blocks = Vec::new();
     let input_lines: Vec<&str> = text.lines().collect();
-    let mut line_idx = 0;
+    let mut line_idx = if let Some((next_idx, body)) = parse_frontmatter_rows(&input_lines) {
+        blocks.push(Block::Table {
+            header: "| Key | Value |".to_string(),
+            delimiter: "| --- | --- |".to_string(),
+            body,
+        });
+        next_idx
+    } else {
+        0
+    };
 
     while line_idx < input_lines.len() {
         let line = input_lines[line_idx];
@@ -2578,6 +2617,22 @@ mod tests {
         }
     }
 
+    fn markdown_line_text(line: &MarkdownLine) -> String {
+        let mut text = String::new();
+        for span in &line.spans {
+            match span {
+                MarkdownSpan::Text(span) => text.push_str(span.content.as_ref()),
+                MarkdownSpan::Link { label_spans, .. } => {
+                    for span in label_spans {
+                        text.push_str(span.content.as_ref());
+                    }
+                }
+                MarkdownSpan::Math { .. } => {}
+            }
+        }
+        text
+    }
+
     #[test]
     fn test_markdown_preview_allocates_scrollbar_geometry() {
         let mut doc = MarkdownDocument::new();
@@ -3282,6 +3337,66 @@ mod tests {
             })
             .collect();
         assert_eq!(line6_text, "└───────┴───────┘");
+    }
+
+    #[test]
+    fn test_frontmatter_renders_as_table() {
+        let palette = test_palette();
+        let md = "\
+---
+workflow_state: ready
+owner_role: worker
+assigned_pane:
+retries: 3
+url: https://example.test/a:b
+label: alpha|beta
+---
+
+## Objective
+Render metadata.";
+
+        let lines = parse_markdown_with_links(md, &palette);
+        let line_texts: Vec<String> = lines.iter().map(markdown_line_text).collect();
+
+        assert!(lines[0].is_table_row);
+        assert!(line_texts[1].contains("Key"));
+        assert!(line_texts[1].contains("Value"));
+        assert!(line_texts
+            .iter()
+            .any(|line| line.contains("workflow_state") && line.contains("ready")));
+        assert!(line_texts
+            .iter()
+            .any(|line| line.contains("assigned_pane") && line.ends_with("│")));
+        assert!(line_texts
+            .iter()
+            .any(|line| line.contains("url") && line.contains("https://example.test/a:b")));
+        assert!(line_texts
+            .iter()
+            .any(|line| line.contains("label") && line.contains("alpha|beta")));
+        assert!(line_texts.iter().any(|line| line == "Objective"));
+        assert!(!line_texts.iter().any(|line| line == &"─".repeat(40)));
+    }
+
+    #[test]
+    fn test_frontmatter_requires_closing_delimiter() {
+        let palette = test_palette();
+        let lines = parse_markdown_with_links("---\nowner_role: worker", &palette);
+        let line_texts: Vec<String> = lines.iter().map(markdown_line_text).collect();
+
+        assert_eq!(line_texts[0], "─".repeat(40));
+        assert_eq!(line_texts[1], "owner_role: worker");
+        assert!(!lines[1].is_table_row);
+    }
+
+    #[test]
+    fn test_horizontal_rule_after_first_line_stays_horizontal_rule() {
+        let palette = test_palette();
+        let lines = parse_markdown_with_links("## Objective\n\n---\nBody", &palette);
+        let line_texts: Vec<String> = lines.iter().map(markdown_line_text).collect();
+
+        assert_eq!(line_texts[0], "Objective");
+        assert!(line_texts.iter().any(|line| line == &"─".repeat(40)));
+        assert!(!lines[2].is_table_row);
     }
 
     #[test]

@@ -12,10 +12,11 @@ Review against the card contract. If the card is underspecified or wrong, send i
 ## Workflow
 
 1. List `reviewing` cards, which are ready for or already owned by a review agent.
-2. Inspect the card, attached pane, pushed branch, implementation diff, and validation evidence.
-3. Compare results to acceptance criteria.
-4. Update the card with review notes.
-5. Route the card.
+2. Confirm the dispatcher-attached review pane owns the card.
+3. Inspect the card, attached pane, pushed branch, implementation diff, and validation evidence.
+4. Compare results to acceptance criteria.
+5. Update the card with review notes.
+6. Route the card.
 
 ## Outcomes
 

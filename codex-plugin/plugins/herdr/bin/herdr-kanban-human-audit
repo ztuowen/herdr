@@ -9,10 +9,10 @@ source "$script_dir/herdr-kanban-lib"
 kanban_require_runtime
 kanban_need "$CODEX_BIN"
 
-cards_json="$("$HERDR_BIN" kanban list --status reviewing)"
+cards_json="$("$HERDR_BIN" kanban list --status blocked)"
 panes_json="$("$HERDR_BIN" pane list)"
 
-selection_json="$(python3 - "$cards_json" "$panes_json" "$HERDR_KANBAN_MAX_REVIEWERS" <<'PY'
+selection_json="$(python3 - "$cards_json" "$panes_json" <<'PY'
 import json
 import pathlib
 import re
@@ -20,15 +20,15 @@ import sys
 
 cards = json.loads(sys.argv[1]).get("result", {}).get("items", [])
 panes = json.loads(sys.argv[2]).get("result", {}).get("panes", [])
-max_reviewers = int(sys.argv[3])
-pane_status = {pane.get("pane_id"): pane.get("agent_status") for pane in panes if pane.get("pane_id")}
+live_panes = {pane.get("pane_id") for pane in panes if pane.get("pane_id")}
+audit_states = {
+    "human-review-required",
+    "triage-question-required",
+    "design-decision-required",
+}
 
-active = 0
-capacity = max(0, max_reviewers - active)
 selected = []
 for card in cards:
-    if capacity <= 0:
-        break
     path_value = card.get("description") or ""
     if not path_value:
         continue
@@ -36,31 +36,28 @@ for card in cards:
     if not path.is_file():
         continue
     text = path.read_text(encoding="utf-8")
-    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
-    owner = re.search(r"^owner_role:[ \t]*(\S+)", text, re.MULTILINE)
-    if assigned and owner and owner.group(1) == "reviewer":
-        status = pane_status.get(assigned.group(1))
-        if status and status not in {"idle", "done"}:
-            active += 1
+    review_state = re.search(r"^review_state:[ \t]*(\S+)", text, re.MULTILINE)
+    if not review_state or review_state.group(1) not in audit_states:
         continue
-    if "## Validation Evidence" not in text:
+    owner = re.search(r"^owner_role:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned_pane = assigned.group(1) if assigned else ""
+    if owner or assigned_pane:
         continue
     selected.append(card)
-    capacity -= 1
 
-capacity = max(0, max_reviewers - active)
-print(json.dumps(selected[:capacity]))
+print(json.dumps(selected))
 PY
 )"
 
 while IFS=$'\t' read -r uuid title description_path; do
   [ -n "${uuid:-}" ] || continue
   short="$(kanban_short_uuid "$uuid")"
-  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX reviewer $short"
-  prompt="$(kanban_prompt_reviewer "$uuid" "$description_path")"
-  codex_command="$(kanban_codex_command "$prompt" "$HERDR_KANBAN_REVIEWER_CODEX_MODE")"
+  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX human-audit $short"
+  prompt="$(kanban_prompt_human_audit "$uuid" "$description_path")"
+  codex_command="$(kanban_codex_command "$prompt" "$HERDR_KANBAN_HUMAN_AUDIT_CODEX_MODE")"
 
-  kanban_log "route reviewer: $uuid $title"
+  kanban_log "route human audit: $uuid $title"
   if kanban_is_dry_run; then
     kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
     kanban_log "dry-run: HERDR_PANE_ID=<root-pane> $HERDR_BIN kanban attach $uuid"
@@ -77,7 +74,7 @@ print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
 PY
 )
   HERDR_PANE_ID="$pane_id" "$HERDR_BIN" kanban attach "$uuid" >/dev/null
-  kanban_update_card_meta "$description_path" "reviewer" "$pane_id" "$workspace_id" "dispatcher"
+  kanban_update_card_meta "$description_path" "human-audit" "$pane_id" "$workspace_id" "dispatcher"
   "$HERDR_BIN" pane run "$pane_id" "$codex_command"
 done < <(python3 - "$selection_json" <<'PY'
 import json

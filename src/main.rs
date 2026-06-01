@@ -418,6 +418,7 @@ fn main() -> io::Result<()> {
         println!("       herdr update [--handoff]");
         println!("       herdr server stop");
         println!("       herdr server reload-config");
+        println!("       herdr app <subcommand> ...");
         println!("       herdr config <subcommand> ...");
         println!("       herdr workspace <subcommand> ...");
         println!("       herdr worktree <subcommand> ...");
@@ -449,6 +450,10 @@ fn main() -> io::Result<()> {
             (
                 "herdr config reset-keys",
                 "Back up config.toml and remove custom keybindings",
+            ),
+            (
+                "herdr app <subcommand>",
+                "Aggregate app state helpers over the socket API",
             ),
             (
                 "herdr workspace <subcommand>",
@@ -548,6 +553,7 @@ fn main() -> io::Result<()> {
                 "remote-client-bridge",
                 "update",
                 "status",
+                "app",
                 "config",
                 "workspace",
                 "worktree",

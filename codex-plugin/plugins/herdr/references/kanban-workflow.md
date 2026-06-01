@@ -26,7 +26,7 @@ herdr kanban attach <uuid>
 herdr kanban detach <uuid>
 ```
 
-`herdr kanban attach` must be run inside the pane that owns the work.
+For automation-launched worker and reviewer panes, the dispatcher runs `herdr kanban attach` with `HERDR_PANE_ID` set to the new pane before starting the agent. Manually claimed work should still run `herdr kanban attach` inside the pane that owns the work.
 
 ## Plugin Automation Scripts
 
@@ -37,11 +37,13 @@ herdr-kanban-card-check <uuid>
 herdr-kanban-install
 herdr-kanban-sweep
 herdr-kanban-review
+herdr-kanban-human-audit
 herdr-kanban-dispatch
 herdr-kanban-run
 ```
 
 They default to dry-run mode. Set `HERDR_KANBAN_DRY_RUN=0` to let them create Herdr workspaces, spawn Codex panes, write assignment metadata, and close disposable panes.
+Dispatch, review, and human-audit launchers attach newly created panes before starting Codex so the sweeper can protect freshly launched work from early cleanup.
 
 Spawned Codex panes use YOLO mode:
 
@@ -60,6 +62,14 @@ See `kanban-automation-scripts.md` and `kanban-orchestration-flow.html` for the 
 - `done`: accepted by reviewer or human.
 
 Because the current Herdr Kanban status set has no dedicated `human-review` column, encode human presentation review as `blocked` plus metadata.
+
+Blocked cards that require interactive human resolution should use one of:
+
+- `review_state: human-review-required`
+- `review_state: triage-question-required`
+- `review_state: design-decision-required`
+
+The human-audit launcher owns these cards when they have no active assignment.
 
 ## Title Prefixes
 
@@ -111,7 +121,7 @@ last_actor: triage
 ## Handoff Rules
 - Update this card before changing status.
 - Attach the active Herdr pane before work starts.
-- Move to reviewing only after validation evidence is recorded and the work is committed and pushed to `branch_name` at `commit_sha`.
+- Move to reviewing only after validation evidence is recorded, the work is committed and pushed to `branch_name` at `commit_sha`, and worker assignment metadata is cleared.
 ```
 
 ## Coordinator Hooks
@@ -127,21 +137,31 @@ last_actor: triage
 
 ## Worker Hooks
 
-- `worker.assigned`: read card and claim it.
+- `worker.assigned`: read the already attached card.
 - `worker.claimed`: move to `ongoing`.
 - `worker.progress`: update card only for meaningful checkpoints.
 - `worker.blocked`: write concrete blocker and move to `blocked` only when human/manual intervention is required.
 - `worker.validation_complete`: record evidence.
-- `worker.finished`: commit and push the task branch, record `branch_name` and `commit_sha`, then move to `reviewing`.
+- `worker.finished`: commit and push the task branch, record `branch_name` and `commit_sha`, clear assignment metadata, then move to `reviewing`.
 
 ## Reviewer Hooks
 
-- `reviewer.assigned`: inspect a `reviewing` card.
+- `reviewer.assigned`: inspect the `reviewing` card from the already attached reviewer pane.
 - `reviewer.accepted`: merge or fast-forward the reviewed branch, push the integration branch when allowed, then move to `done`.
 - `reviewer.rejected`: record findings, clear assignment metadata, and move to `todo`.
 - `reviewer.invalid_handoff`: record missing branch/commit/evidence, clear assignment metadata, and move to `todo`.
 - `reviewer.needs_human_review`: move to `blocked`, set `review_state: human-review-required`, and write the human review request.
 - `reviewer.invalid_card`: send back to triage.
+
+## Human Audit Hooks
+
+- `human_audit.assigned`: inspect the already attached blocked card.
+- `human_audit.context_loaded`: read card, blocked reason, review notes, human request, branch/commit, validation, and relevant local files before asking.
+- `human_audit.checklist_created`: snapshot every original blocker and ambiguity into `## Human Audit Checklist`.
+- `human_audit.question`: ask one focused question at a time with a recommended answer.
+- `human_audit.followup_created`: create child `clarify:` blocker cards immediately when separate grilling is needed; default children are not parent-blocking.
+- `human_audit.resolved`: write `## Human Audit Decision`, run brushup handoff, clear assignment, move the parent to `reviewing` or `todo`, detach, and exit.
+- `human_audit.unresolved`: keep the parent `blocked`, keep the audit assignment, and record the unresolved checklist item.
 
 ## Sweeper Hooks
 

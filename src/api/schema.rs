@@ -20,6 +20,8 @@ pub enum Method {
     ServerLiveHandoff(ServerLiveHandoffParams),
     #[serde(rename = "server.reload_config")]
     ServerReloadConfig(EmptyParams),
+    #[serde(rename = "app.snapshot")]
+    AppSnapshot(EmptyParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]
@@ -477,6 +479,21 @@ pub enum Subscription {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_status: Option<AgentStatus>,
     },
+    #[serde(rename = "kanban.added")]
+    KanbanAdded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
+    #[serde(rename = "kanban.updated")]
+    KanbanUpdated {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
+    #[serde(rename = "kanban.deleted")]
+    KanbanDeleted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -595,6 +612,18 @@ pub enum EventMatch {
         pane_id: String,
         agent_status: AgentStatus,
     },
+    KanbanAdded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
+    KanbanUpdated {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
+    KanbanDeleted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -616,6 +645,9 @@ pub enum EventKind {
     PaneExited,
     PaneAgentDetected,
     PaneAgentStatusChanged,
+    KanbanAdded,
+    KanbanUpdated,
+    KanbanDeleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -639,6 +671,24 @@ pub struct ErrorBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerCapabilities {
     pub live_handoff: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSnapshotServerInfo {
+    pub version: String,
+    pub protocol: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ServerCapabilities>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSnapshot {
+    pub server: AppSnapshotServerInfo,
+    pub workspaces: Vec<WorkspaceInfo>,
+    pub tabs: Vec<TabInfo>,
+    pub panes: Vec<PaneInfo>,
+    pub agents: Vec<AgentInfo>,
+    pub kanban_items: Vec<KanbanItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -741,6 +791,9 @@ pub enum ResponseResult {
     KanbanList {
         items: Vec<KanbanItem>,
     },
+    AppSnapshot {
+        snapshot: AppSnapshot,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -799,6 +852,56 @@ pub struct TabInfo {
     pub focused: bool,
     pub pane_count: usize,
     pub agent_status: AgentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<TabLayoutInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabLayoutInfo {
+    pub tab_id: String,
+    pub workspace_id: String,
+    pub focused_pane_id: String,
+    pub zoomed: bool,
+    pub root: LayoutNode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LayoutNode {
+    Pane {
+        pane_id: String,
+    },
+    Split {
+        direction: LayoutSplitDirection,
+        ratio: SplitRatio,
+        first: Box<LayoutNode>,
+        second: Box<LayoutNode>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutSplitDirection {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SplitRatio(pub f64);
+
+impl PartialEq for SplitRatio {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for SplitRatio {}
+
+impl From<f32> for SplitRatio {
+    fn from(value: f32) -> Self {
+        Self(((value as f64) * 1_000_000.0).round() / 1_000_000.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1015,6 +1118,15 @@ pub enum EventData {
         custom_status: Option<String>,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         state_labels: HashMap<String, String>,
+    },
+    KanbanAdded {
+        item: KanbanItem,
+    },
+    KanbanUpdated {
+        item: KanbanItem,
+    },
+    KanbanDeleted {
+        item: KanbanItem,
     },
 }
 
@@ -1329,6 +1441,19 @@ mod tests {
     }
 
     #[test]
+    fn request_round_trips_for_app_snapshot() {
+        let request = Request {
+            id: "req_snapshot".into(),
+            method: Method::AppSnapshot(EmptyParams::default()),
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["method"], "app.snapshot");
+        let restored: Request = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, request);
+    }
+
+    #[test]
     fn unknown_method_is_rejected() {
         let json = r#"{"id":"req_1","method":"nope","params":{}}"#;
         let err = serde_json::from_str::<Request>(json)
@@ -1425,6 +1550,28 @@ mod tests {
     }
 
     #[test]
+    fn kanban_event_envelope_round_trips() {
+        let event = EventEnvelope {
+            event: EventKind::KanbanUpdated,
+            data: EventData::KanbanUpdated {
+                item: KanbanItem {
+                    uuid: "card-1".into(),
+                    title: "Update docs".into(),
+                    description: "docs.md".into(),
+                    status: KanbanStatus::Reviewing,
+                    terminal_id: Some("term_1".into()),
+                },
+            },
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"kanban_updated\""));
+        assert!(json.contains("\"type\":\"kanban_updated\""));
+        let restored: EventEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, event);
+    }
+
+    #[test]
     fn subscribe_request_parses_parameterized_subscriptions() {
         let json = r#"
         {
@@ -1443,6 +1590,10 @@ mod tests {
                         "type": "pane.agent_status_changed",
                         "pane_id": "p_1_1",
                         "agent_status": "done"
+                    },
+                    {
+                        "type": "kanban.updated",
+                        "uuid": "card-1"
                     }
                 ]
             }
@@ -1453,7 +1604,7 @@ mod tests {
         let Method::EventsSubscribe(params) = request.method else {
             panic!("wrong method parsed");
         };
-        assert_eq!(params.subscriptions.len(), 2);
+        assert_eq!(params.subscriptions.len(), 3);
         assert!(matches!(
             &params.subscriptions[0],
             Subscription::PaneOutputMatched {
@@ -1470,6 +1621,10 @@ mod tests {
                 pane_id,
                 agent_status: Some(AgentStatus::Done),
             } if pane_id == "p_1_1"
+        ));
+        assert!(matches!(
+            &params.subscriptions[2],
+            Subscription::KanbanUpdated { uuid: Some(uuid) } if uuid == "card-1"
         ));
     }
 
@@ -1511,6 +1666,75 @@ mod tests {
         };
 
         let json = serde_json::to_string(&response).unwrap();
+        let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, response);
+    }
+
+    #[test]
+    fn app_snapshot_response_round_trips() {
+        let response = SuccessResponse {
+            id: "req_snapshot".into(),
+            result: ResponseResult::AppSnapshot {
+                snapshot: AppSnapshot {
+                    server: AppSnapshotServerInfo {
+                        version: "0.1.2".into(),
+                        protocol: 6,
+                        capabilities: Some(ServerCapabilities { live_handoff: true }),
+                    },
+                    workspaces: vec![WorkspaceInfo {
+                        workspace_id: "w_1".into(),
+                        number: 1,
+                        label: "main".into(),
+                        focused: true,
+                        pane_count: 1,
+                        tab_count: 1,
+                        active_tab_id: "w_1:1".into(),
+                        agent_status: AgentStatus::Unknown,
+                        worktree: None,
+                    }],
+                    tabs: vec![TabInfo {
+                        tab_id: "w_1:1".into(),
+                        workspace_id: "w_1".into(),
+                        number: 1,
+                        label: "main".into(),
+                        focused: true,
+                        pane_count: 1,
+                        agent_status: AgentStatus::Unknown,
+                        layout: None,
+                    }],
+                    panes: vec![PaneInfo {
+                        pane_id: "w_1-1".into(),
+                        terminal_id: "term_1".into(),
+                        workspace_id: "w_1".into(),
+                        tab_id: "w_1:1".into(),
+                        focused: true,
+                        cwd: None,
+                        foreground_cwd: None,
+                        label: None,
+                        agent: None,
+                        title: None,
+                        display_agent: None,
+                        agent_status: AgentStatus::Unknown,
+                        custom_status: None,
+                        state_labels: HashMap::new(),
+                        agent_session: None,
+                        revision: 0,
+                    }],
+                    agents: Vec::new(),
+                    kanban_items: vec![KanbanItem {
+                        uuid: "card-1".into(),
+                        title: "Snapshot".into(),
+                        description: "snapshot.md".into(),
+                        status: KanbanStatus::Todo,
+                        terminal_id: None,
+                    }],
+                },
+            },
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"type\":\"app_snapshot\""));
+        assert!(json.contains("\"kanban_items\""));
         let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(restored, response);
     }
@@ -1559,6 +1783,7 @@ mod tests {
                     focused: true,
                     pane_count: 1,
                     agent_status: AgentStatus::Unknown,
+                    layout: None,
                 },
                 root_pane: PaneInfo {
                     pane_id: "w_1-1".into(),
@@ -1610,6 +1835,15 @@ mod tests {
                     focused: false,
                     pane_count: 1,
                     agent_status: AgentStatus::Unknown,
+                    layout: Some(TabLayoutInfo {
+                        tab_id: "w_1:2".into(),
+                        workspace_id: "w_1".into(),
+                        focused_pane_id: "w_1-3".into(),
+                        zoomed: false,
+                        root: LayoutNode::Pane {
+                            pane_id: "w_1-3".into(),
+                        },
+                    }),
                 },
                 root_pane: PaneInfo {
                     pane_id: "w_1-3".into(),
@@ -1637,6 +1871,44 @@ mod tests {
         assert!(json.contains("\"root_pane\""));
         let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(restored, response);
+    }
+
+    #[test]
+    fn tab_info_round_trips_with_public_layout_tree() {
+        let tab = TabInfo {
+            tab_id: "w_1:1".into(),
+            workspace_id: "w_1".into(),
+            number: 1,
+            label: "1".into(),
+            focused: true,
+            pane_count: 2,
+            agent_status: AgentStatus::Unknown,
+            layout: Some(TabLayoutInfo {
+                tab_id: "w_1:1".into(),
+                workspace_id: "w_1".into(),
+                focused_pane_id: "w_1-2".into(),
+                zoomed: true,
+                root: LayoutNode::Split {
+                    direction: LayoutSplitDirection::Horizontal,
+                    ratio: SplitRatio(0.65),
+                    first: Box::new(LayoutNode::Pane {
+                        pane_id: "w_1-1".into(),
+                    }),
+                    second: Box::new(LayoutNode::Pane {
+                        pane_id: "w_1-2".into(),
+                    }),
+                },
+            }),
+        };
+
+        let json = serde_json::to_value(&tab).unwrap();
+        assert_eq!(json["layout"]["root"]["type"], "split");
+        assert_eq!(json["layout"]["root"]["direction"], "horizontal");
+        assert_eq!(json["layout"]["root"]["ratio"], serde_json::json!(0.65));
+        assert_eq!(json["layout"]["root"]["first"]["pane_id"], "w_1-1");
+
+        let restored: TabInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, tab);
     }
 
     #[test]

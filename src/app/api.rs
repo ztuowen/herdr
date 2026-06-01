@@ -6,6 +6,7 @@ mod integrations;
 mod kanban;
 mod panes;
 mod responses;
+mod snapshot;
 mod tabs;
 mod workspaces;
 mod worktrees;
@@ -538,6 +539,7 @@ impl App {
                     },
                 }
             }
+            Method::AppSnapshot(_) => return self.handle_app_snapshot(request.id),
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),
             Method::WorkspaceCreate(params) => {

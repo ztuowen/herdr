@@ -12,6 +12,7 @@ kanban_log "set HERDR_KANBAN_DRY_RUN=0 to create/close Herdr panes and workspace
 while true; do
   "$script_dir/herdr-kanban-sweep"
   "$script_dir/herdr-kanban-review"
+  "$script_dir/herdr-kanban-human-audit"
   "$script_dir/herdr-kanban-dispatch"
   sleep "$HERDR_KANBAN_INTERVAL"
 done

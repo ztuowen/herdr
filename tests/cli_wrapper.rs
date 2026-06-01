@@ -828,6 +828,7 @@ fn help_commands_exit_successfully() {
         &["--help"],
         &["status", "-h"],
         &["server", "-h"],
+        &["app", "-h"],
         &["workspace", "-h"],
         &["worktree", "-h"],
         &["tab", "-h"],
@@ -853,6 +854,88 @@ fn help_commands_exit_successfully() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn app_snapshot_cli_invokes_snapshot_endpoint() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let socket_path = base.join("herdr.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        let response = serde_json::json!({
+            "id": req["id"],
+            "result": {
+                "type": "app_snapshot",
+                "snapshot": {
+                    "server": {
+                        "version": "0.1.0",
+                        "protocol": 1
+                    },
+                    "workspaces": [
+                        {
+                            "workspace_id": "w_1",
+                            "number": 1,
+                            "label": "main",
+                            "focused": true,
+                            "pane_count": 1,
+                            "tab_count": 1,
+                            "active_tab_id": "w_1:1",
+                            "agent_status": "unknown"
+                        }
+                    ],
+                    "tabs": [
+                        {
+                            "tab_id": "w_1:1",
+                            "workspace_id": "w_1",
+                            "number": 1,
+                            "label": "main",
+                            "focused": true,
+                            "pane_count": 1,
+                            "agent_status": "unknown"
+                        }
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w_1-1",
+                            "terminal_id": "term_1",
+                            "workspace_id": "w_1",
+                            "tab_id": "w_1:1",
+                            "focused": true,
+                            "agent_status": "unknown",
+                            "revision": 0
+                        }
+                    ],
+                    "agents": [],
+                    "kanban_items": []
+                }
+            }
+        });
+        writeln!(stream, "{}", serde_json::to_string(&response).unwrap()).unwrap();
+        req
+    });
+
+    let response = run_cli_json(&socket_path, &["app", "snapshot"]);
+    let request = server.join().unwrap();
+    assert_eq!(request["method"], "app.snapshot");
+    assert_eq!(request["params"], serde_json::json!({}));
+    assert_eq!(response["result"]["type"], "app_snapshot");
+    assert_eq!(
+        response["result"]["snapshot"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    cleanup_test_base(&base);
 }
 
 #[test]

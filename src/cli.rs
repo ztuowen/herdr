@@ -9,6 +9,7 @@ use crate::api::schema::{
 };
 
 mod agent;
+mod app;
 mod integration;
 mod kanban;
 mod md;
@@ -36,6 +37,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
             };
             exit_code
         }
+        "app" => app::run_app_command(&args[2..])?,
         "status" => status::run_status_command(&args[2..])?,
         "config" => run_config_command(&args[2..])?,
         "workspace" => workspace::run_workspace_command(&args[2..])?,

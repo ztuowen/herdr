@@ -9,6 +9,7 @@ force="${HERDR_KANBAN_INSTALL_FORCE:-0}"
 commands=(
   herdr-kanban-card-check
   herdr-kanban-dispatch
+  herdr-kanban-human-audit
   herdr-kanban-review
   herdr-kanban-run
   herdr-kanban-sweep

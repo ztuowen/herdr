@@ -3014,6 +3014,49 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn tab_get_exposes_public_split_layout_tree() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("api-tab-layout");
+        let root_pane = workspace.tabs[0].root_pane;
+        let split_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.set_ratio_at(&[], 0.65);
+        workspace.tabs[0].zoomed = true;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let tab_id = app.public_tab_id(0, 0).unwrap();
+        let root_public_id = app.public_pane_id(0, root_pane).unwrap();
+        let split_public_id = app.public_pane_id(0, split_pane).unwrap();
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_tab_layout".into(),
+            method: crate::api::schema::Method::TabGet(crate::api::schema::TabTarget {
+                tab_id: tab_id.clone(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "tab_info");
+        assert_eq!(response["result"]["tab"]["layout"]["tab_id"], tab_id);
+        assert_eq!(
+            response["result"]["tab"]["layout"]["workspace_id"],
+            app.public_workspace_id(0)
+        );
+        assert_eq!(
+            response["result"]["tab"]["layout"]["focused_pane_id"],
+            split_public_id
+        );
+        assert_eq!(response["result"]["tab"]["layout"]["zoomed"], true);
+        let root = &response["result"]["tab"]["layout"]["root"];
+        assert_eq!(root["type"], "split");
+        assert_eq!(root["direction"], "horizontal");
+        assert_eq!(root["ratio"], serde_json::json!(0.65));
+        assert_eq!(root["first"]["pane_id"], root_public_id);
+        assert_eq!(root["second"]["pane_id"], split_public_id);
+    }
+
+    #[tokio::test]
     async fn pane_split_request_focuses_new_pane_when_requested() {
         let _guard = config_env_lock().lock().unwrap();
         let original_shell = std::env::var_os("SHELL");

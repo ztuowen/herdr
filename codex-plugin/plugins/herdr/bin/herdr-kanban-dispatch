@@ -83,11 +83,12 @@ while IFS=$'\t' read -r uuid title description_path; do
   short="$(kanban_short_uuid "$uuid")"
   workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX worker $short"
   prompt="$(kanban_prompt_worker "$uuid" "$description_path")"
-  codex_command="$(kanban_codex_command "$prompt")"
+  codex_command="$(kanban_codex_command "$prompt" "$HERDR_KANBAN_WORKER_CODEX_MODE")"
 
   kanban_log "dispatch worker: $uuid $title"
   if kanban_is_dry_run; then
     kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
+    kanban_log "dry-run: HERDR_PANE_ID=<root-pane> $HERDR_BIN kanban attach $uuid"
     kanban_log "dry-run: $HERDR_BIN pane run <root-pane> '$codex_command'"
     continue
   fi
@@ -100,6 +101,7 @@ result = json.loads(sys.argv[1])["result"]
 print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
 PY
 )
+  HERDR_PANE_ID="$pane_id" "$HERDR_BIN" kanban attach "$uuid" >/dev/null
   kanban_update_card_meta "$description_path" "worker" "$pane_id" "$workspace_id" "dispatcher"
   "$HERDR_BIN" pane run "$pane_id" "$codex_command"
 done < <(python3 - "$selection_json" <<'PY'

@@ -57,8 +57,20 @@ workspaces = json.loads(sys.argv[3]).get("result", {}).get("workspaces", [])
 workspace_prefix = sys.argv[4]
 
 panes = {pane.get("pane_id") for pane in panes_list if pane.get("pane_id")}
-pane_status = {pane.get("pane_id"): pane.get("agent_status") for pane in panes_list if pane.get("pane_id")}
 assigned_panes = set()
+protected_panes = set()
+protected_terminal_ids = set()
+disposable_workspaces = {
+    workspace.get("workspace_id")
+    for workspace in workspaces
+    if (workspace.get("label") or "").startswith(
+        (
+            f"{workspace_prefix} worker ",
+            f"{workspace_prefix} reviewer ",
+            f"{workspace_prefix} human-audit ",
+        )
+    )
+}
 
 for card in cards:
     path_value = card.get("description") or ""
@@ -70,12 +82,19 @@ for card in cards:
     text = path.read_text(encoding="utf-8")
     assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
     workspace = re.search(r"^assigned_workspace:[ \t]*(\S+)", text, re.MULTILINE)
+    owner = re.search(r"^owner_role:[ \t]*(\S+)", text, re.MULTILINE)
     assigned_pane = assigned.group(1) if assigned else ""
     assigned_workspace = workspace.group(1) if workspace else ""
+    owner_role = owner.group(1) if owner else ""
     status = card.get("status")
     if assigned_pane:
         assigned_panes.add(assigned_pane)
-    if assigned_pane and assigned_pane not in panes and status in {"todo", "ongoing", "reviewing"}:
+        if status in {"todo", "ongoing"} or (status == "blocked" and owner_role == "human-audit"):
+            protected_panes.add(assigned_pane)
+    terminal_id = card.get("terminal_id")
+    if terminal_id and status in {"todo", "ongoing"}:
+        protected_terminal_ids.add(terminal_id)
+    if assigned_pane and assigned_pane not in panes and status in {"todo", "ongoing", "reviewing", "blocked"}:
         print("\t".join(["clear-card", card["uuid"], str(path), assigned_pane, assigned_workspace]))
     if status == "reviewing" and "## Validation Evidence" not in text:
         print("\t".join(["warn", card["uuid"], "reviewing without Validation Evidence"]))
@@ -85,9 +104,16 @@ for card in cards:
 for pane in panes_list:
     status = pane.get("agent_status")
     pane_id = pane.get("pane_id") or ""
+    terminal_id = pane.get("terminal_id") or ""
     workspace_id = pane.get("workspace_id") or ""
-    if pane_id in assigned_panes and status in {"idle", "done"}:
+    if status not in {"idle", "done"}:
+        continue
+    if pane_id in protected_panes or terminal_id in protected_terminal_ids:
+        continue
+    if pane_id in assigned_panes:
         print("\t".join(["close-pane", pane_id, "assigned", workspace_id, status or ""]))
+    elif workspace_id in disposable_workspaces:
+        print("\t".join(["close-pane", pane_id, "disposable-workspace", workspace_id, status or ""]))
 
 for workspace in workspaces:
     label = workspace.get("label") or ""

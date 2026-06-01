@@ -1,6 +1,6 @@
 ---
 name: herdr-kanban-worker
-description: Use when an agent is assigned a Herdr Kanban card to implement routine work after triage. The worker attaches its pane, executes the card scope, records validation evidence, and moves the card to review or records a blocker.
+description: Use when an agent is assigned a Herdr Kanban card to implement routine work after triage. The worker verifies the launcher-attached card, executes the card scope, records validation evidence, and moves the card to review or records a blocker.
 ---
 
 # Herdr Kanban Worker
@@ -12,11 +12,10 @@ Workers do not clarify with the human and do not research beyond the card's stat
 ## Claim
 
 ```bash
-herdr kanban attach <uuid>
 herdr kanban update <uuid> --status ongoing
 ```
 
-Attach from the pane doing the work. Do not claim more than one card.
+The dispatcher attaches the launched pane before starting the worker. Do not claim more than one card.
 
 ## Execute
 
@@ -29,6 +28,7 @@ Attach from the pane doing the work. Do not claim more than one card.
 7. Commit the completed work on the task branch.
 8. Push the task branch when the repo allows it.
 9. Record `branch_name` and `commit_sha` in the description front matter.
+10. Clear `owner_role`, `assigned_pane`, and `assigned_workspace` before moving the card to review.
 
 Do not move a card to review while the implementation is only a dirty working tree or an unpushed local commit. If repo rules or credentials block commit/push, record the blocker and move the card to `blocked`.
 
@@ -39,6 +39,8 @@ Move to review only after validation evidence is recorded and the reviewed work 
 ```bash
 herdr kanban update <uuid> --status reviewing
 ```
+
+The worker must unassign before review handoff. Reviewer dispatch owns assigning the next pane.
 
 If blocked by missing human input, approval, or manual intervention, keep the board routable by updating the description with a concrete blocker and moving the card to `blocked`. Do not ask the human directly unless triage delegated that action.
 

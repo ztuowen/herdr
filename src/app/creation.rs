@@ -229,7 +229,54 @@ impl App {
             focused: self.state.active == Some(ws_idx) && ws.active_tab == tab_idx,
             pane_count: tab.panes.len(),
             agent_status: pane_agent_status(agg_state, seen),
+            layout: self.tab_layout_info(ws_idx, tab_idx),
         })
+    }
+
+    pub(super) fn tab_layout_info(
+        &self,
+        ws_idx: usize,
+        tab_idx: usize,
+    ) -> Option<crate::api::schema::TabLayoutInfo> {
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let tab = ws.tabs.get(tab_idx)?;
+        Some(crate::api::schema::TabLayoutInfo {
+            tab_id: self.public_tab_id(ws_idx, tab_idx)?,
+            workspace_id: self.public_workspace_id(ws_idx),
+            focused_pane_id: self.public_pane_id(ws_idx, tab.layout.focused())?,
+            zoomed: tab.zoomed,
+            root: self.layout_node_info(ws_idx, tab.layout.root())?,
+        })
+    }
+
+    fn layout_node_info(
+        &self,
+        ws_idx: usize,
+        node: &crate::layout::Node,
+    ) -> Option<crate::api::schema::LayoutNode> {
+        match node {
+            crate::layout::Node::Pane(pane_id) => Some(crate::api::schema::LayoutNode::Pane {
+                pane_id: self.public_pane_id(ws_idx, *pane_id)?,
+            }),
+            crate::layout::Node::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => Some(crate::api::schema::LayoutNode::Split {
+                direction: match direction {
+                    ratatui::layout::Direction::Horizontal => {
+                        crate::api::schema::LayoutSplitDirection::Horizontal
+                    }
+                    ratatui::layout::Direction::Vertical => {
+                        crate::api::schema::LayoutSplitDirection::Vertical
+                    }
+                },
+                ratio: (*ratio).into(),
+                first: Box::new(self.layout_node_info(ws_idx, first)?),
+                second: Box::new(self.layout_node_info(ws_idx, second)?),
+            }),
+        }
     }
 
     pub(super) fn workspace_created_result(

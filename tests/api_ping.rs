@@ -1123,6 +1123,73 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
 
 #[cfg(not(target_os = "macos"))]
 #[test]
+fn events_subscribe_streams_kanban_mutation_events() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let mut reader = open_subscription(
+        &socket_path,
+        r#"{"id":"sub_kanban","method":"events.subscribe","params":{"subscriptions":[{"type":"kanban.added"},{"type":"kanban.updated"},{"type":"kanban.deleted"}]}}"#,
+    );
+    let ack = reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(ack["id"], "sub_kanban");
+    assert_eq!(ack["result"]["type"], "subscription_started");
+
+    let added = send_request(
+        &socket_path,
+        r#"{"id":"kanban_add","method":"kanban.add","params":{"title":"Stream card","status":"todo"}}"#,
+    );
+    assert_eq!(added["result"]["type"], "kanban_item");
+    let uuid = added["result"]["item"]["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let add_event = wait_for_event(&mut reader, "kanban_added", Duration::from_secs(2));
+    assert_eq!(add_event["data"]["type"], "kanban_added");
+    assert_eq!(add_event["data"]["item"]["uuid"], uuid);
+    assert_eq!(add_event["data"]["item"]["title"], "Stream card");
+    assert_eq!(add_event["data"]["item"]["status"], "todo");
+
+    let updated = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"kanban_update","method":"kanban.update","params":{{"uuid":"{}","title":"Stream card updated","status":"reviewing"}}}}"#,
+            uuid
+        ),
+    );
+    assert_eq!(updated["result"]["type"], "kanban_item");
+
+    let update_event = wait_for_event(&mut reader, "kanban_updated", Duration::from_secs(2));
+    assert_eq!(update_event["data"]["type"], "kanban_updated");
+    assert_eq!(update_event["data"]["item"]["uuid"], uuid);
+    assert_eq!(update_event["data"]["item"]["title"], "Stream card updated");
+    assert_eq!(update_event["data"]["item"]["status"], "reviewing");
+
+    let deleted = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"kanban_delete","method":"kanban.delete","params":{{"uuid":"{}"}}}}"#,
+            uuid
+        ),
+    );
+    assert_eq!(deleted["result"]["type"], "kanban_item");
+
+    let delete_event = wait_for_event(&mut reader, "kanban_deleted", Duration::from_secs(2));
+    assert_eq!(delete_event["data"]["type"], "kanban_deleted");
+    assert_eq!(delete_event["data"]["item"]["uuid"], uuid);
+
+    cleanup_spawned_herdr(child, base);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
 fn events_subscribe_streams_pane_split_and_close_events() {
     let _lock = test_lock();
     let base = unique_test_dir();

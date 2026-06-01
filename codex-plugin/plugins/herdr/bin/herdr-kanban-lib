@@ -12,6 +12,10 @@ HERDR_KANBAN_INTERVAL="${HERDR_KANBAN_INTERVAL:-10}"
 HERDR_KANBAN_AGENT_PREFIX="${HERDR_KANBAN_AGENT_PREFIX:-kanban}"
 HERDR_KANBAN_WORKSPACE_PREFIX="${HERDR_KANBAN_WORKSPACE_PREFIX:-kanban}"
 HERDR_KANBAN_WAIT_TIMEOUT_MS="${HERDR_KANBAN_WAIT_TIMEOUT_MS:-1000}"
+HERDR_KANBAN_CODEX_MODE="${HERDR_KANBAN_CODEX_MODE:-interactive}"
+HERDR_KANBAN_WORKER_CODEX_MODE="${HERDR_KANBAN_WORKER_CODEX_MODE:-$HERDR_KANBAN_CODEX_MODE}"
+HERDR_KANBAN_REVIEWER_CODEX_MODE="${HERDR_KANBAN_REVIEWER_CODEX_MODE:-interactive}"
+HERDR_KANBAN_HUMAN_AUDIT_CODEX_MODE="${HERDR_KANBAN_HUMAN_AUDIT_CODEX_MODE:-interactive}"
 
 kanban_log() {
   printf '%s\n' "$*" >&2
@@ -51,19 +55,24 @@ kanban_sanitize_name() {
 
 kanban_codex_command() {
   local prompt="$1"
-  python3 - "$CODEX_BIN" "$HERDR_KANBAN_WORKTREE" "$prompt" <<'PY'
+  local mode="${2:-interactive}"
+  python3 - "$CODEX_BIN" "$HERDR_KANBAN_WORKTREE" "$prompt" "$mode" <<'PY'
 import shlex
 import sys
 
-codex_bin, worktree, prompt = sys.argv[1:4]
-argv = [
-    codex_bin,
-    "exec",
+codex_bin, worktree, prompt, mode = sys.argv[1:5]
+if mode not in {"exec", "interactive"}:
+    raise SystemExit(f"unsupported HERDR_KANBAN_CODEX_MODE: {mode}")
+
+argv = [codex_bin]
+if mode == "exec":
+    argv.append("exec")
+argv.extend([
     "--dangerously-bypass-approvals-and-sandbox",
     "--cd",
     worktree,
     prompt,
-]
+])
 print(" ".join(shlex.quote(arg) for arg in argv))
 PY
 }
@@ -77,11 +86,7 @@ Use the herdr-kanban-worker skill.
 Card: $uuid
 Description file: $description_path
 
-Read the card from Herdr Kanban and use the description file above as the handoff document to update. First attach this pane with:
-
-herdr kanban attach $uuid
-
-Then move the card to ongoing, implement only the scoped work on a task branch, update the description file with implementation notes and validation evidence, commit the completed work, push the task branch, record branch_name and commit_sha in the description front matter, and move it to reviewing. Do not move dirty or unpushed work to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked. After moving the card to reviewing or blocked, exit this Codex session so the dispatcher can reclaim the pane.
+Read the card from Herdr Kanban and use the description file above as the handoff document to update. The dispatcher has already attached this pane to the card. Move the card to ongoing, implement only the scoped work on a task branch, update the description file with implementation notes and validation evidence, commit the completed work, push the task branch, record branch_name and commit_sha in the description front matter, clear owner_role, assigned_pane, and assigned_workspace, and move it to reviewing. Do not move dirty or unpushed work to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked. After moving the card to reviewing or blocked, exit this Codex session so the dispatcher can reclaim the pane.
 EOF
 }
 
@@ -96,9 +101,26 @@ Description file: $description_path
 
 Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria, validation evidence, and the pushed branch recorded in branch_name and commit_sha. If accepted, merge or fast-forward the reviewed branch according to repo rules, push the integration branch when allowed, record the merge result in ## Review Notes, and move it to done. If changes are required, record findings in ## Review Notes, clear owner_role, assigned_pane, and assigned_workspace in the description front matter, and move it back to todo for a fresh worker. Do not move rejected work to ongoing.
 
-If review needs human input, do not ask the human directly. Update the description file with review notes, set review_state to human-review-required or triage-question-required, set blocked_reason with a short reason, fill ## Human Review Request with the exact question or artifact to inspect, and move the card to blocked.
+The dispatcher has already attached this pane to the card. If review needs human input, do not ask the human directly. Update the description file with review notes, set review_state to human-review-required or triage-question-required, set blocked_reason with a short reason, fill ## Human Review Request with the exact question or artifact to inspect, and move the card to blocked.
 
 After moving the card to done, todo, or blocked, exit this Codex session so the dispatcher can reclaim the pane.
+EOF
+}
+
+kanban_prompt_human_audit() {
+  local uuid="$1"
+  local description_path="$2"
+  cat <<EOF
+Use the herdr-kanban-human-audit skill.
+
+Card: $uuid
+Description file: $description_path
+
+Read the card from Herdr Kanban and use the description file above as the audit handoff document. The dispatcher has already attached this pane to the card. Before asking the human anything, inspect the card, blocked_reason, review_state, Review Notes, Human Review Request, branch/commit evidence, and relevant local files, diffs, docs, or artifacts. Build a Human Audit Checklist from every original blocker and ambiguity.
+
+Ask one focused clarification question at a time, with your recommended answer. Do not mark the parent resolved until every original checklist item is addressed. If follow-up work needs separate grilling, create follow-up blocker cards immediately with seed context and link them from the parent; these follow-up cards are not parent-blocking unless you explicitly mark them parent_blocking.
+
+When the parent is resolved, use the herdr-kanban-brushup-handoff skill to update the parent card, clear owner_role, assigned_pane, assigned_workspace, blocked_reason, and review_state, move it to reviewing, detach it, and exit so the sweeper can reclaim the pane. If unresolved, keep the parent blocked and keep this pane assigned.
 EOF
 }
 

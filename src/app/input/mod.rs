@@ -57,6 +57,10 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
+        if key.kind != crossterm::event::KeyEventKind::Release {
+            self.state.extensions.pending_enter = None;
+        }
+
         if key.kind == crossterm::event::KeyEventKind::Release {
             self.release_events_supported = true;
         }

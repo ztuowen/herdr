@@ -880,79 +880,75 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         }
         KeyCode::Left
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Desktop =>
+                && board_layout == crate::kanban::KanbanBoardLayout::Desktop
+                && state.extensions.kanban.shift_selected_item_for_layout(
+                    board_layout,
+                    crate::kanban::KanbanBoardDirection::Left,
+                ) =>
         {
-            if state.extensions.kanban.shift_selected_item_for_layout(
-                board_layout,
-                crate::kanban::KanbanBoardDirection::Left,
-            ) {
-                state.mark_session_dirty();
-            }
+            state.mark_session_dirty();
         }
-        KeyCode::Char('H') => {
+        KeyCode::Char('H')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
                 crate::kanban::KanbanBoardDirection::Left,
-            ) {
-                state.mark_session_dirty();
-            }
+            ) =>
+        {
+            state.mark_session_dirty();
         }
         KeyCode::Right
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Desktop =>
+                && board_layout == crate::kanban::KanbanBoardLayout::Desktop
+                && state.extensions.kanban.shift_selected_item_for_layout(
+                    board_layout,
+                    crate::kanban::KanbanBoardDirection::Right,
+                ) =>
         {
-            if state.extensions.kanban.shift_selected_item_for_layout(
-                board_layout,
-                crate::kanban::KanbanBoardDirection::Right,
-            ) {
-                state.mark_session_dirty();
-            }
+            state.mark_session_dirty();
         }
-        KeyCode::Char('L') => {
+        KeyCode::Char('L')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
                 crate::kanban::KanbanBoardDirection::Right,
-            ) {
-                state.mark_session_dirty();
-            }
+            ) =>
+        {
+            state.mark_session_dirty();
         }
         KeyCode::Up
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Mobile =>
+                && board_layout == crate::kanban::KanbanBoardLayout::Mobile
+                && state.extensions.kanban.shift_selected_item_for_layout(
+                    board_layout,
+                    crate::kanban::KanbanBoardDirection::Up,
+                ) =>
         {
-            if state.extensions.kanban.shift_selected_item_for_layout(
-                board_layout,
-                crate::kanban::KanbanBoardDirection::Up,
-            ) {
-                state.mark_session_dirty();
-            }
+            state.mark_session_dirty();
         }
-        KeyCode::Char('K') => {
+        KeyCode::Char('K')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
                 crate::kanban::KanbanBoardDirection::Up,
-            ) {
-                state.mark_session_dirty();
-            }
+            ) =>
+        {
+            state.mark_session_dirty();
         }
         KeyCode::Down
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Mobile =>
+                && board_layout == crate::kanban::KanbanBoardLayout::Mobile
+                && state.extensions.kanban.shift_selected_item_for_layout(
+                    board_layout,
+                    crate::kanban::KanbanBoardDirection::Down,
+                ) =>
         {
-            if state.extensions.kanban.shift_selected_item_for_layout(
-                board_layout,
-                crate::kanban::KanbanBoardDirection::Down,
-            ) {
-                state.mark_session_dirty();
-            }
+            state.mark_session_dirty();
         }
-        KeyCode::Char('J') => {
+        KeyCode::Char('J')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
                 crate::kanban::KanbanBoardDirection::Down,
-            ) {
-                state.mark_session_dirty();
-            }
+            ) =>
+        {
+            state.mark_session_dirty();
         }
         KeyCode::Left | KeyCode::Char('h') => {
             state

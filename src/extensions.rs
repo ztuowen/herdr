@@ -4,6 +4,13 @@ use crate::input::TerminalKey;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
+#[derive(Debug, Clone)]
+pub struct PendingEnter {
+    pub workspace_id: String,
+    pub pane_id: crate::layout::PaneId,
+    pub sequence: u64,
+}
+
 pub struct ExtensionsState {
     pub static_image_placements: std::sync::Mutex<Vec<crate::app::state::StaticImagePlacement>>,
 
@@ -11,6 +18,8 @@ pub struct ExtensionsState {
     pub recording_workspace: Option<String>,
     pub live_transcription: Option<String>,
     pub kanban: crate::kanban::KanbanState,
+    pub pending_enter: Option<PendingEnter>,
+    pub pending_enter_sequence: u64,
 }
 
 impl ExtensionsState {
@@ -24,6 +33,8 @@ impl ExtensionsState {
             recording_workspace: None,
             live_transcription: None,
             kanban: crate::kanban::KanbanState::new(kanban_items),
+            pending_enter: None,
+            pending_enter_sequence: 0,
         }
     }
 }
@@ -222,22 +233,11 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                         .input_state()
                                         .map(|s| s.bracketed_paste)
                                         .unwrap_or(false);
-                                    let mut payload = if bracketed {
+                                    let payload = if bracketed {
                                         format!("\x1b[200~{sanitized}\x1b[201~").into_bytes()
                                     } else {
                                         sanitized.as_bytes().to_vec()
                                     };
-                                    if submit_to_agent {
-                                        payload.extend(
-                                            runtime.encode_terminal_key(
-                                                crossterm::event::KeyEvent::new(
-                                                    crossterm::event::KeyCode::Enter,
-                                                    crossterm::event::KeyModifiers::empty(),
-                                                )
-                                                .into(),
-                                            ),
-                                        );
-                                    }
                                     tracing::info!(
                                         "Speech to text: sending transcription to workspace={}, pane={:?}, bracketed={}, submit_to_agent={}, text={:?}",
                                         workspace_id,
@@ -250,6 +250,31 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                         runtime.try_send_bytes(bytes::Bytes::from(payload))
                                     {
                                         tracing::error!("Speech to text: failed to write transcription to PTY: {:?}", e);
+                                    }
+
+                                    if submit_to_agent {
+                                        app.state.extensions.pending_enter_sequence += 1;
+                                        let current_seq =
+                                            app.state.extensions.pending_enter_sequence;
+                                        app.state.extensions.pending_enter = Some(PendingEnter {
+                                            workspace_id: workspace_id.clone(),
+                                            pane_id: focused_pane_id,
+                                            sequence: current_seq,
+                                        });
+
+                                        let event_tx = app.event_tx.clone();
+                                        let ws_id = workspace_id.clone();
+                                        let p_id = focused_pane_id;
+                                        std::thread::spawn(move || {
+                                            std::thread::sleep(std::time::Duration::from_secs(1));
+                                            let _ = event_tx.blocking_send(
+                                                AppEvent::SpeechSubmitEnter {
+                                                    workspace_id: ws_id,
+                                                    pane_id: p_id,
+                                                    sequence: current_seq,
+                                                },
+                                            );
+                                        });
                                     }
                                 }
                             }
@@ -266,6 +291,54 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                 }
             }
             app.sync_toast_deadline(previous_toast);
+            app.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            app.render_notify.notify_one();
+            true
+        }
+        AppEvent::SpeechSubmitEnter {
+            workspace_id,
+            pane_id,
+            sequence,
+        } => {
+            let matches = if let Some(pending) = &app.state.extensions.pending_enter {
+                pending.workspace_id == *workspace_id
+                    && pending.pane_id == *pane_id
+                    && pending.sequence == *sequence
+            } else {
+                false
+            };
+
+            if matches {
+                app.state.extensions.pending_enter = None;
+                if let Some(ws_idx) = app
+                    .state
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.id == *workspace_id)
+                {
+                    if let Some(runtime) = app.lookup_runtime_sender(ws_idx, *pane_id) {
+                        let enter_bytes = runtime.encode_terminal_key(
+                            crossterm::event::KeyEvent::new(
+                                crossterm::event::KeyCode::Enter,
+                                crossterm::event::KeyModifiers::empty(),
+                            )
+                            .into(),
+                        );
+                        tracing::info!(
+                            "Speech to text: sending delayed Enter to workspace={}, pane={:?}",
+                            workspace_id,
+                            pane_id
+                        );
+                        if let Err(e) = runtime.try_send_bytes(bytes::Bytes::from(enter_bytes)) {
+                            tracing::error!(
+                                "Speech to text: failed to write Enter to PTY: {:?}",
+                                e
+                            );
+                        }
+                    }
+                }
+            }
             app.render_dirty
                 .store(true, std::sync::atomic::Ordering::Release);
             app.render_notify.notify_one();

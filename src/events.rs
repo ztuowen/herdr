@@ -109,6 +109,12 @@ pub enum AppEvent {
         pane_id: Option<PaneId>,
         result: Result<String, String>,
     },
+    /// Delayed Enter submission for speech-to-text.
+    SpeechSubmitEnter {
+        workspace_id: String,
+        pane_id: PaneId,
+        sequence: u64,
+    },
     /// Intermediate/partial speech-to-text transcription update.
     SpeechPartialTranscription { workspace_id: String, text: String },
     /// Signal the client to start recording audio.

@@ -2125,10 +2125,9 @@ impl AppState {
             }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
-            // Intercepted in App::handle_internal_event before reaching this
-            // dispatch; never touches AppState.
             AppEvent::SpeechRawTranscribed { .. } => Vec::new(),
             AppEvent::SpeechTranscribed { .. } => Vec::new(),
+            AppEvent::SpeechSubmitEnter { .. } => Vec::new(),
             AppEvent::SpeechPartialTranscription { .. } => Vec::new(),
             AppEvent::SpeechStartRecording { .. } => Vec::new(),
             AppEvent::SpeechStopRecording { .. } => Vec::new(),

@@ -1255,6 +1255,9 @@ impl App {
         for event in events {
             match event {
                 crate::raw_input::RawInputEvent::Key(key) => {
+                    if key.kind != crossterm::event::KeyEventKind::Release {
+                        self.state.extensions.pending_enter = None;
+                    }
                     if key.kind == crossterm::event::KeyEventKind::Release {
                         self.release_events_supported = true;
                     }
@@ -4084,8 +4087,25 @@ last_pane = "prefix+tab"
 
         assert_eq!(
             rx.recv().await.unwrap(),
-            bytes::Bytes::from_static(b"hello agent\r")
+            bytes::Bytes::from_static(b"hello agent")
         );
+
+        // Sleep to let the background thread post the delayed enter event
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let event = app
+            .event_rx
+            .try_recv()
+            .expect("should have received SpeechSubmitEnter event");
+        assert!(matches!(
+            event,
+            crate::events::AppEvent::SpeechSubmitEnter { .. }
+        ));
+
+        // Manually process the delayed event
+        app.handle_internal_event(event);
+
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"\r"));
         assert!(rx.try_recv().is_err());
     }
 
@@ -4223,5 +4243,63 @@ last_pane = "prefix+tab"
             result: Ok("hello".to_string()),
         });
         assert!(app.state.extensions.recording_workspace.is_none());
+    }
+
+    #[tokio::test]
+    async fn speech_transcribed_event_cancelled_by_keypress_does_not_submit_enter() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(focused)
+            .unwrap()
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Codex), AgentState::Idle);
+        let workspace_id = app.state.workspaces[0].id.clone();
+
+        app.handle_internal_event(crate::events::AppEvent::SpeechTranscribed {
+            workspace_id,
+            pane_id: Some(focused),
+            result: Ok("hello agent".to_string()),
+        });
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"hello agent")
+        );
+
+        // Simulate a key press during the 1-second delay
+        app.handle_key(crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::empty(),
+        ))
+        .await;
+
+        // Verify that pending_enter has been cleared/cancelled
+        assert!(app.state.extensions.pending_enter.is_none());
+
+        // Sleep to let the background thread post the delayed enter event
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let event = app
+            .event_rx
+            .try_recv()
+            .expect("should have received SpeechSubmitEnter event");
+
+        // Manually process the delayed event (it should NOT submit Enter because it's cancelled)
+        app.handle_internal_event(event);
+
+        assert!(
+            rx.try_recv().is_err(),
+            "Enter key should not be submitted because of cancellation"
+        );
     }
 }

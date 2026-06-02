@@ -86,6 +86,7 @@ pub async fn run_websocket_transcription(
     let mut finalized_text = String::new();
     let mut current_turn_text = String::new();
     let mut recording_stopped = false;
+    let mut turn_completed = true;
     let mut stop_time: Option<std::time::Instant> = None;
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
 
@@ -106,6 +107,10 @@ pub async fn run_websocket_transcription(
                     if !recording_active.load(std::sync::atomic::Ordering::Acquire) {
                         recording_stopped = true;
                         stop_time = Some(std::time::Instant::now());
+
+                        if turn_completed {
+                            break;
+                        }
 
                         let turn_msg = serde_json::json!({
                             "realtimeInput": {
@@ -143,6 +148,7 @@ pub async fn run_websocket_transcription(
                             tracing::error!("Speech to Text: failed to send audio chunk: {}", e);
                             break;
                         }
+                        turn_completed = false;
                     }
                 }
             }
@@ -184,6 +190,7 @@ pub async fn run_websocket_transcription(
                             let _ = event_tx.send(TranscriptionEvent::Partial(full_text)).await;
                         }
                         if turn_complete {
+                            turn_completed = true;
                             if !current_turn_text.is_empty() {
                                 if !finalized_text.is_empty() {
                                     finalized_text.push(' ');
@@ -206,9 +213,9 @@ pub async fn run_websocket_transcription(
 
         if recording_stopped {
             if let Some(t) = stop_time {
-                if t.elapsed() > tokio::time::Duration::from_secs(5) {
+                if t.elapsed() > tokio::time::Duration::from_secs(1) {
                     tracing::warn!(
-                        "Speech to Text: grace period of 5 seconds expired waiting for final transcription"
+                        "Speech to Text: grace period of 1s expired waiting for final transcription"
                     );
                     break;
                 }

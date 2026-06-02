@@ -108,6 +108,22 @@ pub async fn run_websocket_transcription(
                         recording_stopped = true;
                         stop_time = Some(std::time::Instant::now());
 
+                        if let Some(media_msg) =
+                            take_audio_media_message(&buffer, channels, sample_rate)
+                        {
+                            if let Err(e) = write
+                                .send(tokio_tungstenite::tungstenite::Message::Text(media_msg))
+                                .await
+                            {
+                                tracing::error!(
+                                    "Speech to Text: failed to send final audio chunk: {}",
+                                    e
+                                );
+                                break;
+                            }
+                            turn_completed = false;
+                        }
+
                         if turn_completed {
                             break;
                         }
@@ -118,33 +134,22 @@ pub async fn run_websocket_transcription(
                             }
                         });
 
-                        if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(turn_msg.to_string())).await {
+                        if let Err(e) = write
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                turn_msg.to_string(),
+                            ))
+                            .await
+                        {
                             tracing::error!("Speech to Text: failed to send audioStreamEnd message: {}", e);
                         }
                         continue;
                     }
 
-                    let new_samples = {
-                        match buffer.lock() {
-                            Ok(mut buf) => std::mem::take(&mut *buf),
-                            Err(_) => Vec::new(),
-                        }
-                    };
-
-                    if !new_samples.is_empty() {
-                        let raw_bytes = encode_input_audio_chunk(&new_samples, channels, sample_rate);
-                        let base64_audio = base64::prelude::BASE64_STANDARD.encode(&raw_bytes);
-
-                        let media_msg = serde_json::json!({
-                            "realtimeInput": {
-                                "audio": {
-                                    "mimeType": "audio/pcm;rate=16000",
-                                    "data": base64_audio
-                                }
-                            }
-                        });
-
-                        if let Err(e) = write.send(tokio_tungstenite::tungstenite::Message::Text(media_msg.to_string())).await {
+                    if let Some(media_msg) = take_audio_media_message(&buffer, channels, sample_rate) {
+                        if let Err(e) = write
+                            .send(tokio_tungstenite::tungstenite::Message::Text(media_msg))
+                            .await
+                        {
                             tracing::error!("Speech to Text: failed to send audio chunk: {}", e);
                             break;
                         }
@@ -261,6 +266,36 @@ fn encode_input_audio_chunk(samples: &[f32], channels: u16, sample_rate: u32) ->
         raw_bytes.extend_from_slice(&scaled.to_le_bytes());
     }
     raw_bytes
+}
+
+fn take_audio_media_message(
+    buffer: &Arc<std::sync::Mutex<Vec<f32>>>,
+    channels: u16,
+    sample_rate: u32,
+) -> Option<String> {
+    let samples = match buffer.lock() {
+        Ok(mut buf) => std::mem::take(&mut *buf),
+        Err(_) => Vec::new(),
+    };
+
+    if samples.is_empty() {
+        return None;
+    }
+
+    let raw_bytes = encode_input_audio_chunk(&samples, channels, sample_rate);
+    let base64_audio = base64::prelude::BASE64_STANDARD.encode(&raw_bytes);
+
+    Some(
+        serde_json::json!({
+            "realtimeInput": {
+                "audio": {
+                    "mimeType": "audio/pcm;rate=16000",
+                    "data": base64_audio
+                }
+            }
+        })
+        .to_string(),
+    )
 }
 
 /// Parses a JSON frame from the Gemini Live WebSocket, returning the partial transcription
@@ -439,5 +474,34 @@ mod tests {
             r#"{"serverContent": {"turnComplete": true}}"#
         ));
         assert!(!is_setup_complete_frame("{invalid}"));
+    }
+
+    #[test]
+    fn take_audio_media_message_drains_buffer_and_builds_audio_frame() {
+        let buffer = Arc::new(std::sync::Mutex::new(vec![0.25, -0.25]));
+
+        let message = take_audio_media_message(&buffer, 1, 16_000).unwrap();
+
+        assert!(buffer.lock().unwrap().is_empty());
+        let json: serde_json::Value = serde_json::from_str(&message).unwrap();
+        let audio = json
+            .get("realtimeInput")
+            .and_then(|input| input.get("audio"))
+            .unwrap();
+        assert_eq!(
+            audio.get("mimeType").and_then(|value| value.as_str()),
+            Some("audio/pcm;rate=16000")
+        );
+        assert!(audio
+            .get("data")
+            .and_then(|value| value.as_str())
+            .is_some_and(|data| !data.is_empty()));
+    }
+
+    #[test]
+    fn take_audio_media_message_returns_none_for_empty_buffer() {
+        let buffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        assert!(take_audio_media_message(&buffer, 1, 16_000).is_none());
     }
 }

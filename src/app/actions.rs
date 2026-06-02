@@ -2134,6 +2134,8 @@ impl AppState {
             AppEvent::SpeechStopRecording { .. } => Vec::new(),
             AppEvent::AudioSummaryFinished => Vec::new(),
             AppEvent::AudioSummaryError(_) => Vec::new(),
+            AppEvent::AudioSummaryStart { .. } => Vec::new(),
+            AppEvent::AudioSummaryCancel => Vec::new(),
         }
     }
 

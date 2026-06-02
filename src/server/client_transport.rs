@@ -111,6 +111,10 @@ pub(crate) enum ServerEvent {
         pane_id: Option<crate::layout::PaneId>,
         result: Result<String, String>,
     },
+    /// A client finished audio summary playback.
+    ClientAudioSummaryFinished { client_id: u64 },
+    /// A client encountered an error during audio summary.
+    ClientAudioSummaryError { client_id: u64, error: String },
     /// Ctrl+C or external shutdown signal received.
     QuitSignal,
 }
@@ -499,6 +503,12 @@ fn client_read_loop(
                 pane_id,
                 result,
             },
+            ClientMessage::AudioSummaryFinished => {
+                ServerEvent::ClientAudioSummaryFinished { client_id }
+            }
+            ClientMessage::AudioSummaryError(error) => {
+                ServerEvent::ClientAudioSummaryError { client_id, error }
+            }
             ClientMessage::Hello { .. } => {
                 // Duplicate Hello — ignore.
                 continue;

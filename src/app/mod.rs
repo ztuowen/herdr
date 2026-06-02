@@ -1427,6 +1427,14 @@ impl App {
     }
 
     pub(crate) fn cancel_audio_summary(&mut self) {
+        if !self.no_session {
+            if let Err(e) = self
+                .event_tx
+                .try_send(crate::events::AppEvent::AudioSummaryCancel)
+            {
+                tracing::error!("failed to send AudioSummaryCancel event: {:?}", e);
+            }
+        }
         if let Some(summarizer) = self.extensions.tab_summarizer.take() {
             summarizer.stop();
         }
@@ -1441,6 +1449,39 @@ impl App {
     }
 
     pub(crate) fn trigger_audio_summary(&mut self, ws_idx: usize, tab_idx: usize) {
+        let Some(text_content) =
+            self.state
+                .gather_tab_content(&self.terminal_runtimes, ws_idx, tab_idx)
+        else {
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::NeedsAttention,
+                title: "Audio Summary".into(),
+                context: "No text found to summarize.".into(),
+                target: None,
+            });
+            return;
+        };
+
+        if !self.no_session {
+            self.cancel_audio_summary();
+            self.state.toast = Some(crate::app::state::ToastNotification {
+                kind: crate::app::state::ToastKind::Finished,
+                title: "Audio Summary".into(),
+                context: "Playing audio summary...".into(),
+                target: None,
+            });
+            if let Err(e) = self
+                .event_tx
+                .try_send(crate::events::AppEvent::AudioSummaryStart { text_content })
+            {
+                tracing::error!("failed to send AudioSummaryStart event: {:?}", e);
+            }
+            self.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.render_notify.notify_one();
+            return;
+        }
+
         let Some(api_key) = self.state.extensions.speech_to_text.gemini_api_key.clone() else {
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::NeedsAttention,
@@ -1458,19 +1499,6 @@ impl App {
             .model
             .clone()
             .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
-
-        let Some(text_content) =
-            self.state
-                .gather_tab_content(&self.terminal_runtimes, ws_idx, tab_idx)
-        else {
-            self.state.toast = Some(crate::app::state::ToastNotification {
-                kind: crate::app::state::ToastKind::NeedsAttention,
-                title: "Audio Summary".into(),
-                context: "No text found to summarize.".into(),
-                target: None,
-            });
-            return;
-        };
 
         self.cancel_audio_summary();
 

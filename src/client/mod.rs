@@ -63,6 +63,8 @@ struct ClientState {
     redraw_on_focus_gained: bool,
     /// Active speech-to-text pipeline for client-side microphone capture.
     recording_pipeline: Option<crate::speech::TranscriptionPipeline>,
+    /// Active tab audio summarizer for client-side audio playback.
+    tab_summarizer: Option<crate::speech::summary::TabSummarizer>,
 }
 
 #[derive(Debug, Default)]
@@ -691,6 +693,7 @@ async fn run_client_loop(
         mouse_scroll_lines,
         redraw_on_focus_gained,
         recording_pipeline: None,
+        tab_summarizer: None,
     };
     debug!(?negotiated_encoding, "client render encoding active");
 
@@ -979,6 +982,80 @@ async fn run_client_loop(
                         } else {
                             pipeline.stop();
                         }
+                    }
+                }
+                ServerMessage::StartAudioSummary { text_content } => {
+                    if let Some(summarizer) = state.tab_summarizer.take() {
+                        summarizer.stop();
+                    }
+
+                    // Load config
+                    let loaded_config = match crate::config::load_live_config() {
+                        Ok(loaded) => loaded,
+                        Err(errs) => {
+                            let err_msg =
+                                format!("Failed to load local config: {}", errs.join("; "));
+                            let error_msg = ClientMessage::AudioSummaryError(err_msg);
+                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                                return Err(ClientError::ConnectionLost(e));
+                            }
+                            continue;
+                        }
+                    };
+
+                    let api_key = match loaded_config.config.speech_to_text.gemini_api_key.as_ref()
+                    {
+                        Some(k) if !k.trim().is_empty() => k.clone(),
+                        _ => {
+                            let error_msg = ClientMessage::AudioSummaryError(
+                                "Gemini API key is not configured in local config (~/.config/herdr/config.toml).".to_string()
+                            );
+                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                                return Err(ClientError::ConnectionLost(e));
+                            }
+                            continue;
+                        }
+                    };
+
+                    let model = loaded_config
+                        .config
+                        .speech_to_text
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
+
+                    let system_instruction = loaded_config
+                        .config
+                        .speech_to_text
+                        .summary_system_instruction
+                        .clone()
+                        .unwrap_or_else(|| {
+                            "You are a helpful assistant. You will generate a concise audio summary of the user's terminal session. Focus on key developments, status changes, and any recent errors."
+                                .to_string()
+                        });
+
+                    let summarizer = match crate::speech::summary::start_client_summary(
+                        api_key,
+                        model,
+                        system_instruction,
+                        text_content,
+                        event_tx.clone(),
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let error_msg = ClientMessage::AudioSummaryError(e);
+                            if let Err(err) = write_to_server(&mut write_stream, &error_msg) {
+                                return Err(ClientError::ConnectionLost(err));
+                            }
+                            continue;
+                        }
+                    };
+
+                    state.tab_summarizer = Some(summarizer);
+                }
+                ServerMessage::CancelAudioSummary => {
+                    if let Some(summarizer) = state.tab_summarizer.take() {
+                        summarizer.stop();
                     }
                 }
             },

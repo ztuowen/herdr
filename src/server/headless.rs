@@ -1426,6 +1426,25 @@ impl HeadlessServer {
                 self.app.handle_internal_event(ev);
                 true
             }
+            AppEvent::AudioSummaryStart { text_content } => {
+                if let Some(client_id) = self.foreground_client_id {
+                    self.send_to_client(
+                        client_id,
+                        ServerMessage::StartAudioSummary {
+                            text_content: text_content.clone(),
+                        },
+                    );
+                }
+                self.app.handle_internal_event(ev);
+                true
+            }
+            AppEvent::AudioSummaryCancel => {
+                if let Some(client_id) = self.foreground_client_id {
+                    self.send_to_client(client_id, ServerMessage::CancelAudioSummary);
+                }
+                self.app.handle_internal_event(ev);
+                true
+            }
             _ => {
                 self.app.handle_internal_event(ev);
                 true
@@ -1996,6 +2015,26 @@ impl HeadlessServer {
                         result: result.clone(),
                     }) {
                         tracing::error!("failed to send SpeechTranscribed: {:?}", e);
+                    }
+                }
+                false
+            }
+            ServerEvent::ClientAudioSummaryFinished { client_id } => {
+                if Some(client_id) == self.foreground_client_id {
+                    if let Err(e) = self.app.event_tx.try_send(AppEvent::AudioSummaryFinished) {
+                        tracing::error!("failed to send AudioSummaryFinished: {:?}", e);
+                    }
+                }
+                false
+            }
+            ServerEvent::ClientAudioSummaryError { client_id, error } => {
+                if Some(client_id) == self.foreground_client_id {
+                    if let Err(e) = self
+                        .app
+                        .event_tx
+                        .try_send(AppEvent::AudioSummaryError(error.clone()))
+                    {
+                        tracing::error!("failed to send AudioSummaryError: {:?}", e);
                     }
                 }
                 false

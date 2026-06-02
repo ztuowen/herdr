@@ -123,4 +123,8 @@ pub enum AppEvent {
     AudioSummaryFinished,
     /// Signal that the audio summary playback encountered an error.
     AudioSummaryError(String),
+    /// Signal the client to start audio summary.
+    AudioSummaryStart { text_content: String },
+    /// Signal the client to cancel audio summary.
+    AudioSummaryCancel,
 }

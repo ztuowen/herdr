@@ -146,6 +146,12 @@ pub enum ClientMessage {
         pane_id: Option<crate::layout::PaneId>,
         result: Result<String, String>,
     },
+
+    /// Client-side audio summary finished.
+    AudioSummaryFinished,
+
+    /// Client-side audio summary encountered an error.
+    AudioSummaryError(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -409,6 +415,12 @@ pub enum ServerMessage {
 
     /// Stop client-side speech-to-text audio recording.
     StopRecording { abort: bool },
+
+    /// Start client-side audio summary.
+    StartAudioSummary { text_content: String },
+
+    /// Cancel client-side audio summary.
+    CancelAudioSummary,
 }
 
 // ---------------------------------------------------------------------------

@@ -794,6 +794,7 @@ impl AppState {
     }
 }
 
+#[allow(clippy::collapsible_match)] // Allow nested if in match arm to avoid side-effects in match guards
 pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
     if state.is_prefix_key(key) {
         state.prefix_previous_mode = Some(Mode::Kanban);

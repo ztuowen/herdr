@@ -22,6 +22,12 @@ impl TabSummarizer {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SummaryEvent {
+    Finished,
+    Error(String),
+}
+
 pub fn start_summary(
     api_key: String,
     model: String,
@@ -45,7 +51,6 @@ pub fn start_summary(
 
     let audio_buffer_clone = audio_buffer.clone();
     let active_clone = active.clone();
-    let app_event_tx_clone = app_event_tx.clone();
 
     let err_fn = |err| error!("Audio playback stream error: {}", err);
 
@@ -53,13 +58,7 @@ pub fn start_summary(
         cpal::SampleFormat::F32 => device.build_output_stream(
             &config.into(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                write_output_data(
-                    data,
-                    channels,
-                    &audio_buffer_clone,
-                    &active_clone,
-                    &app_event_tx_clone,
-                );
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
             },
             err_fn,
             None,
@@ -67,13 +66,7 @@ pub fn start_summary(
         cpal::SampleFormat::I16 => device.build_output_stream(
             &config.into(),
             move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                write_output_data(
-                    data,
-                    channels,
-                    &audio_buffer_clone,
-                    &active_clone,
-                    &app_event_tx_clone,
-                );
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
             },
             err_fn,
             None,
@@ -81,13 +74,7 @@ pub fn start_summary(
         cpal::SampleFormat::U16 => device.build_output_stream(
             &config.into(),
             move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                write_output_data(
-                    data,
-                    channels,
-                    &audio_buffer_clone,
-                    &active_clone,
-                    &app_event_tx_clone,
-                );
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
             },
             err_fn,
             None,
@@ -100,6 +87,8 @@ pub fn start_summary(
         .play()
         .map_err(|e| format!("Failed to start output stream: {}", e))?;
 
+    let (summary_event_tx, mut summary_event_rx) = mpsc::channel::<SummaryEvent>(10);
+
     let active_task = active.clone();
     tokio::spawn(async move {
         run_websocket_summary(
@@ -110,9 +99,125 @@ pub fn start_summary(
             audio_buffer,
             sample_rate,
             active_task,
-            app_event_tx,
+            summary_event_tx,
         )
         .await;
+    });
+
+    tokio::spawn(async move {
+        while let Some(event) = summary_event_rx.recv().await {
+            match event {
+                SummaryEvent::Finished => {
+                    let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
+                }
+                SummaryEvent::Error(err) => {
+                    let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
+                }
+            }
+        }
+    });
+
+    Ok(TabSummarizer {
+        _stream: stream,
+        active,
+    })
+}
+
+pub fn start_client_summary(
+    api_key: String,
+    model: String,
+    system_instruction: String,
+    text_content: String,
+    event_tx: mpsc::Sender<crate::client::ClientLoopEvent>,
+) -> Result<TabSummarizer, String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| "No default output device found.".to_string())?;
+
+    let config = summary_output_config(&device)?;
+
+    let sample_rate = config.sample_rate().0;
+    let channels = config.channels();
+    let sample_format = config.sample_format();
+
+    let audio_buffer = Arc::new(Mutex::new(VecDeque::<f32>::new()));
+    let active = Arc::new(AtomicBool::new(true));
+
+    let audio_buffer_clone = audio_buffer.clone();
+    let active_clone = active.clone();
+
+    let err_fn = |err| error!("Audio playback stream error: {}", err);
+
+    let stream = match sample_format {
+        cpal::SampleFormat::F32 => device.build_output_stream(
+            &config.into(),
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
+            },
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::I16 => device.build_output_stream(
+            &config.into(),
+            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
+            },
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::U16 => device.build_output_stream(
+            &config.into(),
+            move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
+                write_output_data(data, channels, &audio_buffer_clone, &active_clone);
+            },
+            err_fn,
+            None,
+        ),
+        _ => return Err("Unsupported sample format.".to_string()),
+    }
+    .map_err(|e| format!("Failed to build output stream: {}", e))?;
+
+    stream
+        .play()
+        .map_err(|e| format!("Failed to start output stream: {}", e))?;
+
+    let (summary_event_tx, mut summary_event_rx) = mpsc::channel::<SummaryEvent>(10);
+
+    let active_task = active.clone();
+    tokio::spawn(async move {
+        run_websocket_summary(
+            api_key,
+            model,
+            system_instruction,
+            text_content,
+            audio_buffer,
+            sample_rate,
+            active_task,
+            summary_event_tx,
+        )
+        .await;
+    });
+
+    tokio::spawn(async move {
+        while let Some(event) = summary_event_rx.recv().await {
+            match event {
+                SummaryEvent::Finished => {
+                    let _ = event_tx
+                        .send(crate::client::ClientLoopEvent::ClientMessageToSend(
+                            crate::protocol::ClientMessage::AudioSummaryFinished,
+                        ))
+                        .await;
+                }
+                SummaryEvent::Error(err) => {
+                    let _ = event_tx
+                        .send(crate::client::ClientLoopEvent::ClientMessageToSend(
+                            crate::protocol::ClientMessage::AudioSummaryError(err),
+                        ))
+                        .await;
+                }
+            }
+        }
     });
 
     Ok(TabSummarizer {
@@ -171,7 +276,6 @@ fn write_output_data<T>(
     channels: u16,
     buffer: &Arc<Mutex<VecDeque<f32>>>,
     active: &Arc<AtomicBool>,
-    _app_event_tx: &mpsc::Sender<AppEvent>,
 ) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
@@ -200,10 +304,6 @@ fn write_output_data<T>(
             }
         }
     }
-
-    // If active is still true but the WebSocket task has set a sentinel (e.g., active task sets stream_finished)
-    // we can signal completion, but for simplicity we will handle the completion signal from the WebSocket task
-    // once it receives the end of model turn and the queue is completely drained.
 }
 
 async fn run_websocket_summary(
@@ -214,7 +314,7 @@ async fn run_websocket_summary(
     audio_buffer: Arc<Mutex<VecDeque<f32>>>,
     output_sample_rate: u32,
     active: Arc<AtomicBool>,
-    app_event_tx: mpsc::Sender<AppEvent>,
+    summary_event_tx: mpsc::Sender<SummaryEvent>,
 ) {
     let model_name = if model.starts_with("models/") {
         model
@@ -231,8 +331,8 @@ async fn run_websocket_summary(
         Ok((stream, _)) => stream,
         Err(e) => {
             error!("Audio Summary: failed to connect to Gemini Live: {}", e);
-            let _ = app_event_tx
-                .send(AppEvent::AudioSummaryError(format!(
+            let _ = summary_event_tx
+                .send(SummaryEvent::Error(format!(
                     "WebSocket connection failed: {}",
                     e
                 )))
@@ -274,8 +374,8 @@ async fn run_websocket_summary(
         .await
     {
         error!("Audio Summary: failed to send setup message: {}", e);
-        let _ = app_event_tx
-            .send(AppEvent::AudioSummaryError(format!(
+        let _ = summary_event_tx
+            .send(SummaryEvent::Error(format!(
                 "Failed to send setup message: {}",
                 e
             )))
@@ -285,7 +385,7 @@ async fn run_websocket_summary(
     }
 
     if let Err(err) = wait_for_summary_setup_complete(&mut read).await {
-        let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
+        let _ = summary_event_tx.send(SummaryEvent::Error(err)).await;
         active.store(false, Ordering::Release);
         return;
     }
@@ -303,8 +403,8 @@ async fn run_websocket_summary(
         .await
     {
         error!("Audio Summary: failed to send content message: {}", e);
-        let _ = app_event_tx
-            .send(AppEvent::AudioSummaryError(format!(
+        let _ = summary_event_tx
+            .send(SummaryEvent::Error(format!(
                 "Failed to send content message: {}",
                 e
             )))
@@ -365,7 +465,6 @@ async fn run_websocket_summary(
                 }
 
                 // Look for inline output audio data
-                // In Gemini Live Bidi API, serverContent contains parts, which can have inlineData
                 if let Some(server_content) = json_val
                     .get("serverContent")
                     .or_else(|| json_val.get("server_content"))
@@ -393,7 +492,6 @@ async fn run_websocket_summary(
                                                         .decode(base64_data)
                                                 {
                                                     has_audio.store(true, Ordering::Release);
-                                                    // Gemini Live outputs 24kHz, 1-channel, 16-bit PCM little-endian.
                                                     let mut raw_samples = Vec::new();
                                                     for chunk in raw_bytes.chunks_exact(2) {
                                                         let sample_i16 = i16::from_le_bytes([
@@ -404,7 +502,6 @@ async fn run_websocket_summary(
                                                         raw_samples.push(sample_f32);
                                                     }
 
-                                                    // Resample to output sample rate
                                                     let resampled = crate::speech::resample(
                                                         &raw_samples,
                                                         24000,
@@ -447,11 +544,11 @@ async fn run_websocket_summary(
     if !was_cancelled {
         if let Some(err) = server_error_message {
             active.store(false, Ordering::Release);
-            let _ = app_event_tx.send(AppEvent::AudioSummaryError(err)).await;
+            let _ = summary_event_tx.send(SummaryEvent::Error(err)).await;
         } else if !has_audio.load(Ordering::Acquire) {
             active.store(false, Ordering::Release);
-            let _ = app_event_tx
-                .send(AppEvent::AudioSummaryError(
+            let _ = summary_event_tx
+                .send(SummaryEvent::Error(
                     "WebSocket connection closed by server before audio was received.".to_string(),
                 ))
                 .await;
@@ -463,7 +560,7 @@ async fn run_websocket_summary(
             )
             .await;
             active.store(false, Ordering::Release);
-            let _ = app_event_tx.send(AppEvent::AudioSummaryFinished).await;
+            let _ = summary_event_tx.send(SummaryEvent::Finished).await;
         }
     }
 }

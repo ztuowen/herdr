@@ -10,6 +10,37 @@ use super::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
+pub enum UpdateChannelConfig {
+    #[default]
+    Stable,
+    Preview,
+}
+
+impl UpdateChannelConfig {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Preview => "preview",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    pub channel: UpdateChannelConfig,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            channel: UpdateChannelConfig::Stable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum ToastDelivery {
     #[default]
     Off,
@@ -137,12 +168,20 @@ pub struct TerminalConfig {
     pub new_cwd: NewTerminalCwdConfig,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct SessionConfig {
     /// Resume supported AI-agent panes into their native conversation sessions
-    /// when restoring a Herdr session. Default: false.
+    /// when restoring a Herdr session. Default: true.
     pub resume_agents_on_restore: bool,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            resume_agents_on_restore: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -179,12 +218,14 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,
     pub worktrees: WorktreesConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub speech_to_text: SpeechToTextConfig,
+    pub remote: RemoteConfig,
 }
 
 #[derive(Debug)]
@@ -395,6 +436,22 @@ pub struct AdvancedConfig {
     pub scrollback_limit_bytes: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct RemoteConfig {
+    /// Add a keepalive fallback under the user's ssh config for the `--remote`
+    /// bridge. Set false to run plain ssh unchanged. Default: true.
+    pub manage_ssh_config: bool,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            manage_ssh_config: true,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ExperimentalConfig {
@@ -583,6 +640,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn update_channel_defaults_stable_and_parses() {
+        let default_config = Config::default();
+        assert_eq!(default_config.update.channel, UpdateChannelConfig::Stable);
+
+        let toml = r#"
+[update]
+channel = "preview"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.update.channel, UpdateChannelConfig::Preview);
+        assert_eq!(config.update.channel.as_str(), "preview");
+    }
+
+    #[test]
     fn terminal_default_shell_defaults_empty_and_parses() {
         let default_config = Config::default();
         assert!(default_config.terminal.default_shell.is_empty());
@@ -629,16 +700,16 @@ new_cwd = "~/Projects"
     }
 
     #[test]
-    fn resume_agents_on_restore_defaults_off_and_parses() {
+    fn resume_agents_on_restore_defaults_on_and_parses() {
         let default_config = Config::default();
-        assert!(!default_config.session.resume_agents_on_restore);
+        assert!(default_config.session.resume_agents_on_restore);
 
         let toml = r#"
 [session]
-resume_agents_on_restore = true
+resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert!(config.session.resume_agents_on_restore);
+        assert!(!config.session.resume_agents_on_restore);
     }
 
     #[test]

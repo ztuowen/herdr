@@ -7,6 +7,7 @@ on:
     branches: [master]
     paths-ignore:
       - "website/**"
+      - ".github/APPROVED_CONTRIBUTORS"
 
 permissions:
   contents: read
@@ -16,12 +17,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate commit subjects
+        if: github.event_name == 'push'
+        run: python3 scripts/conventional_commits.py --range "${{ github.event.before }}..${{ github.event.after }}"
+
+      - name: Validate PR title
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/conventional_commits.py "${{ github.event.pull_request.title }}"
+
   check:
     name: check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            nextest_filter: all()
+          - os: macos-latest
+            nextest_filter: not binary(live_handoff)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -53,4 +75,4 @@ jobs:
           cache-bin: false
 
       - name: Run checks
-        run: just ci
+        run: just ci '${{ matrix.nextest_filter }}'

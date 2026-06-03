@@ -12,17 +12,17 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 
-const UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
+const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
+const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
-const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const FAKE_UPDATE_VERSION_ENV: &str = "HERDR_FAKE_UPDATE_VERSION";
 const FAKE_UPDATE_NOTES_VERSION_ENV: &str = "HERDR_FAKE_UPDATE_NOTES_VERSION";
 const DEFAULT_FAKE_UPDATE_NOTES_VERSION: &str = "0.3.0";
@@ -30,12 +30,6 @@ const SERVER_STOP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 const SERVER_HANDOFF_REQUEST_TIMEOUT: Duration = Duration::from_secs(240);
 const SERVER_HANDOFF_CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const STAR_PROMPT_REPO: &str = "ogulcancelik/herdr";
-const STAR_PROMPT_STATE_FILE: &str = "github-star-prompt.json";
-const STAR_PROMPT_MAX_PROMPTS: u32 = 5;
-const STAR_PROMPT_INTERVAL_UPDATES: [u32; 4] = [2, 3, 5, 7];
-const GH_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
-
 fn fake_release_notes_body(version: &str) -> String {
     let notes_version = env::var(FAKE_UPDATE_NOTES_VERSION_ENV)
         .ok()
@@ -79,7 +73,7 @@ impl Version {
     }
 
     pub fn current() -> Self {
-        Self::parse(CURRENT_VERSION).expect("invalid CARGO_PKG_VERSION")
+        Self::parse(crate::build_info::BASE_VERSION).expect("invalid CARGO_PKG_VERSION")
     }
 }
 
@@ -93,13 +87,75 @@ impl std::fmt::Display for Version {
 // Update manifest
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateChannel {
+    Stable,
+    Preview,
+}
+
+impl UpdateChannel {
+    fn configured() -> Self {
+        match crate::config::Config::load().config.update.channel {
+            crate::config::UpdateChannelConfig::Stable => Self::Stable,
+            crate::config::UpdateChannelConfig::Preview => Self::Preview,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Preview => "preview",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AssetRef {
+    url: String,
+    sha256: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for AssetRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(url) if !url.trim().is_empty() => Ok(Self {
+                url: url.trim().to_string(),
+                sha256: None,
+            }),
+            serde_json::Value::Object(mut object) => {
+                let url = object
+                    .remove("url")
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .ok_or_else(|| serde::de::Error::custom("asset object is missing url"))?;
+                let sha256 = object
+                    .remove("sha256")
+                    .and_then(|value| value.as_str().map(str::to_string));
+                if url.trim().is_empty() {
+                    return Err(serde::de::Error::custom("asset url must not be empty"));
+                }
+                Ok(Self {
+                    url: url.trim().to_string(),
+                    sha256: sha256.filter(|value| !value.trim().is_empty()),
+                })
+            }
+            _ => Err(serde::de::Error::custom(
+                "asset must be a URL string or object with url",
+            )),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct UpdateManifest {
     version: String,
     /// Thin-client protocol spoken by this release, when advertised by the manifest.
     protocol: Option<u32>,
     notes: String,
-    assets: BTreeMap<String, String>,
+    assets: BTreeMap<String, AssetRef>,
     announcement: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_manifest_releases")]
     releases: BTreeMap<String, serde_json::Value>,
@@ -125,6 +181,29 @@ struct ManifestReleaseMetadata {
 }
 
 #[derive(Deserialize)]
+struct PreviewManifest {
+    channel: String,
+    base_version: String,
+    build_id: String,
+    commit: String,
+    built_at: String,
+    protocol: u32,
+    notes: String,
+    assets: BTreeMap<String, AssetRef>,
+    #[serde(default)]
+    builds: BTreeMap<String, PreviewBuildMetadata>,
+}
+
+#[derive(Deserialize)]
+struct PreviewBuildMetadata {
+    base_version: String,
+    commit: String,
+    built_at: String,
+    protocol: u32,
+    assets: BTreeMap<String, AssetRef>,
+}
+
+#[derive(Deserialize)]
 struct HomebrewFormula {
     versions: HomebrewFormulaVersions,
 }
@@ -135,8 +214,11 @@ struct HomebrewFormulaVersions {
 }
 
 impl UpdateManifest {
+    #[cfg(test)]
     fn download_url_for(&self, os: &str, arch: &str) -> Option<String> {
-        self.assets.get(&format!("{os}-{arch}")).cloned()
+        self.assets
+            .get(&format!("{os}-{arch}"))
+            .map(|asset| asset.url.clone())
     }
 
     fn metadata_for_version(&self, version: &Version) -> Option<ManifestReleaseMetadata> {
@@ -170,12 +252,34 @@ impl ManifestReleaseMetadata {
 #[derive(Debug, Clone)]
 struct ReleaseInfo {
     version: Version,
+    identity: String,
+    channel: UpdateChannel,
+    build_id: Option<String>,
+    commit: Option<String>,
     target_protocol: Option<u32>,
     download_url: String,
+    sha256: Option<String>,
     notes_body: String,
 }
 
+impl ReleaseInfo {
+    fn label(&self) -> &str {
+        &self.identity
+    }
+}
+
 fn fetch_update_manifest() -> Result<UpdateManifest, String> {
+    fetch_json_manifest(STABLE_UPDATE_MANIFEST_URL)
+}
+
+fn fetch_preview_manifest() -> Result<PreviewManifest, String> {
+    fetch_json_manifest(PREVIEW_UPDATE_MANIFEST_URL)
+}
+
+fn fetch_json_manifest<T>(url: &str) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
     let output = Command::new("curl")
         .args([
             "-sfL",
@@ -185,7 +289,7 @@ fn fetch_update_manifest() -> Result<UpdateManifest, String> {
             "10",
             "--max-time",
             "20",
-            UPDATE_MANIFEST_URL,
+            url,
         ])
         .output()
         .map_err(|e| format!("curl failed: {e}"))?;
@@ -225,7 +329,7 @@ fn release_info_from_manifest(manifest: &UpdateManifest) -> Result<Option<Releas
     let latest = Version::parse(&manifest.version)
         .ok_or_else(|| format!("invalid version in update manifest: {}", manifest.version))?;
 
-    if latest <= current {
+    if !stable_channel_should_install(&latest, &current, crate::build_info::is_preview()) {
         return Ok(None); // up to date
     }
 
@@ -238,20 +342,117 @@ fn release_info_from_manifest(manifest: &UpdateManifest) -> Result<Option<Releas
     }
 
     let (os, arch) = platform_target();
-    let download_url = manifest
-        .download_url_for(os, arch)
-        .ok_or_else(|| format!("no binary for {os}-{arch} in update manifest"))?;
+    let asset_key = format!("{os}-{arch}");
+    let asset = manifest
+        .assets
+        .get(&asset_key)
+        .ok_or_else(|| format!("no binary for {asset_key} in update manifest"))?;
+    let download_url = asset.url.clone();
 
     Ok(Some(ReleaseInfo {
+        identity: latest.to_string(),
         version: latest,
+        channel: UpdateChannel::Stable,
+        build_id: None,
+        commit: None,
         target_protocol: manifest.protocol,
         download_url,
+        sha256: asset.sha256.clone(),
+        notes_body,
+    }))
+}
+
+fn stable_channel_should_install(
+    latest: &Version,
+    current: &Version,
+    installed_is_preview: bool,
+) -> bool {
+    installed_is_preview || latest > current
+}
+
+fn preview_display_version(base_version: &str, build_id: &str) -> String {
+    format!(
+        "{}-preview.{}",
+        base_version.trim_start_matches('v'),
+        build_id
+    )
+}
+
+fn release_info_from_preview_manifest(
+    manifest: &PreviewManifest,
+) -> Result<Option<ReleaseInfo>, String> {
+    if manifest.channel != "preview" {
+        return Err(format!(
+            "invalid preview manifest channel: {}",
+            manifest.channel
+        ));
+    }
+    let build_id = manifest.build_id.trim();
+    if build_id.is_empty() {
+        return Err("preview manifest build_id is empty".into());
+    }
+    if crate::build_info::is_preview()
+        && crate::build_info::build_id().is_some_and(|current| current == build_id)
+    {
+        return Ok(None);
+    }
+
+    let version = Version::parse(&manifest.base_version).ok_or_else(|| {
+        format!(
+            "invalid base_version in preview manifest: {}",
+            manifest.base_version
+        )
+    })?;
+    let notes_body = manifest.notes.trim().to_string();
+    if notes_body.is_empty() {
+        return Err("preview manifest notes are empty".into());
+    }
+    let (os, arch) = platform_target();
+    let asset_key = format!("{os}-{arch}");
+    if let Some(archived) = manifest.builds.get(build_id) {
+        if archived.base_version != manifest.base_version
+            || archived.commit != manifest.commit
+            || archived.built_at != manifest.built_at
+            || archived.protocol != manifest.protocol
+        {
+            tracing::warn!(
+                build_id,
+                "preview manifest archived build metadata differs from top-level metadata"
+            );
+        }
+    }
+    let asset = manifest
+        .assets
+        .get(&asset_key)
+        .or_else(|| {
+            manifest
+                .builds
+                .get(build_id)
+                .and_then(|build| build.assets.get(&asset_key))
+        })
+        .ok_or_else(|| format!("no binary for {asset_key} in preview manifest"))?;
+    let download_url = asset.url.clone();
+
+    Ok(Some(ReleaseInfo {
+        identity: preview_display_version(&manifest.base_version, build_id),
+        version,
+        channel: UpdateChannel::Preview,
+        build_id: Some(build_id.to_string()),
+        commit: Some(manifest.commit.clone()),
+        target_protocol: Some(manifest.protocol),
+        download_url,
+        sha256: asset.sha256.clone(),
         notes_body,
     }))
 }
 
 /// Check the hosted update manifest for the latest release. Returns release info if newer.
 fn check_latest() -> Result<Option<ReleaseInfo>, String> {
+    let channel = UpdateChannel::configured();
+    if channel == UpdateChannel::Preview {
+        return release_info_from_preview_manifest(&fetch_preview_manifest()?);
+    }
+
     let manifest = fetch_update_manifest()?;
     let release = release_info_from_manifest(&manifest)?;
     if let Some(release) = &release {
@@ -363,6 +564,16 @@ fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
         return Err("download failed".into());
     }
 
+    if let Some(expected) = &release.sha256 {
+        if let Err(e) = crate::checksum::verify_sha256(&tmp_path, expected) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!(
+                "downloaded update checksum verification failed: {e}"
+            ));
+        }
+        tracing::info!(sha256 = %expected, "downloaded update checksum verified");
+    }
+
     // Make executable
     #[cfg(unix)]
     {
@@ -420,12 +631,6 @@ fn client_protocol_server_is_running() -> bool {
     client_protocol_server_is_running_at(&crate::server::socket_paths::client_socket_path())
 }
 
-fn protocol_label(protocol: Option<u32>) -> String {
-    protocol
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
 fn version_label(version: Option<&str>) -> &str {
     version.unwrap_or("unknown")
 }
@@ -447,10 +652,11 @@ fn server_supports_live_handoff(server: &crate::api::RuntimeStatus) -> bool {
         .is_some_and(|capabilities| capabilities.live_handoff)
 }
 
-fn parse_live_handoff_before_update_response(input: &str) -> Option<bool> {
+fn parse_stop_old_servers_after_update_response(input: &str, default_yes: bool) -> Option<bool> {
     let trimmed = input.trim().to_ascii_lowercase();
     match trimmed.as_str() {
-        "" | "y" | "yes" => Some(true),
+        "" => Some(default_yes),
+        "y" | "yes" => Some(true),
         "n" | "no" => Some(false),
         _ => None,
     }
@@ -520,7 +726,6 @@ struct RunningSessionUpdateOutcome {
     stop_command: String,
     attach_command: Option<String>,
     server_version: Option<String>,
-    server_protocol: Option<u32>,
     outcome: RunningServerUpdateOutcome,
 }
 
@@ -709,28 +914,22 @@ fn prompt_to_stop_old_servers_before_update(
 ) -> Result<bool, String> {
     if !io::stdin().is_terminal() {
         return Err(
-            "one or more Herdr sessions must restart for this update. Stop the old server to use the new version, then run `herdr update` again from an interactive terminal."
+            "one or more Herdr sessions must stop for this update. Stop running Herdr sessions when ready, then run `herdr update` again from an interactive terminal."
                 .to_string(),
         );
     }
 
     eprintln!(
-        "This update changes Herdr's client/server protocol.\n\nRunning sessions that must restart to use v{}:",
-        release.version
+        "Running sessions that must stop to use {}:",
+        release.label()
     );
     for plan in plans {
         eprintln!(
-            "  {}: server v{} protocol {}",
+            "  {}: server v{}",
             plan.label(),
-            version_label(plan.server.version.as_deref()),
-            protocol_label(plan.server.protocol)
+            version_label(plan.server.version.as_deref())
         );
     }
-    eprintln!(
-        "  update: v{} protocol {}",
-        release.version,
-        protocol_label(release.target_protocol)
-    );
     eprintln!();
     eprintln!("If you choose no, these sessions keep using the old server until you stop them.");
     eprintln!("Stop the old server after installing? Stopping exits pane processes.");
@@ -769,47 +968,19 @@ fn confirm_running_server_update_action(
     print_running_session_update_summary(&plans, release, options);
 
     if !options.live_handoff {
-        let restart_required: Vec<RunningServerUpdatePlan> = plans
-            .iter()
-            .filter(|plan| plan.requires_server_restart)
-            .cloned()
-            .collect();
-        let stop_restart_required = if restart_required.is_empty() {
-            false
-        } else {
-            prompt_to_stop_old_servers_before_update(&restart_required, release)?
-        };
         return Ok(plans
             .into_iter()
-            .map(|plan| {
-                let action = if plan.requires_server_restart && stop_restart_required {
-                    RunningServerUpdateAction::StopOldServer
-                } else {
-                    RunningServerUpdateAction::None
-                };
-                RunningServerUpdateDecision { plan, action }
+            .map(|plan| RunningServerUpdateDecision {
+                plan,
+                action: RunningServerUpdateAction::None,
             })
             .collect());
     }
 
-    let handoff_supported: Vec<&RunningServerUpdatePlan> = plans
-        .iter()
-        .filter(|plan| server_supports_live_handoff(&plan.server))
-        .collect();
     let handoff_unsupported_requiring_update: Vec<&RunningServerUpdatePlan> = plans
         .iter()
         .filter(|plan| !server_supports_live_handoff(&plan.server) && plan.requires_server_restart)
         .collect();
-
-    let live_handoff = if handoff_supported.is_empty() {
-        false
-    } else {
-        prompt_to_live_handoff_sessions_before_update(
-            &handoff_supported,
-            release,
-            plans.iter().any(|plan| plan.requires_server_restart),
-        )?
-    };
 
     let stop_unsupported = if handoff_unsupported_requiring_update.is_empty() {
         false
@@ -823,7 +994,7 @@ fn confirm_running_server_update_action(
 
     let mut decisions = Vec::new();
     for plan in plans {
-        let action = if server_supports_live_handoff(&plan.server) && live_handoff {
+        let action = if server_supports_live_handoff(&plan.server) {
             RunningServerUpdateAction::LiveHandoff
         } else if !server_supports_live_handoff(&plan.server)
             && plan.requires_server_restart
@@ -837,6 +1008,86 @@ fn confirm_running_server_update_action(
     }
 
     Ok(decisions)
+}
+
+fn target_group_nouns(plans: &[&RunningServerUpdatePlan]) -> (&'static str, &'static str) {
+    let all_sessions = plans.iter().all(|plan| plan.target_noun() == "session");
+    let all_servers = plans.iter().all(|plan| plan.target_noun() == "server");
+    if all_sessions {
+        ("session", "sessions")
+    } else if all_servers {
+        ("server", "servers")
+    } else {
+        ("target", "targets")
+    }
+}
+
+fn prompt_to_complete_plain_update(
+    decisions: &[RunningServerUpdateDecision],
+    release: &ReleaseInfo,
+) -> Result<bool, String> {
+    if decisions.is_empty() {
+        return Ok(true);
+    }
+
+    if !io::stdin().is_terminal() {
+        return Ok(false);
+    }
+
+    let plans: Vec<&RunningServerUpdatePlan> =
+        decisions.iter().map(|decision| &decision.plan).collect();
+    let (singular, plural) = target_group_nouns(&plans);
+    let noun = if plans.len() == 1 { singular } else { plural };
+    eprintln!(
+        "To complete the update, Herdr must stop {} running {}.",
+        plans.len(),
+        noun
+    );
+    eprintln!("This stops active pane processes, including shells, dev servers, and tests.");
+    for plan in plans {
+        eprintln!(
+            "  {} {}: server v{}",
+            plan.target_noun(),
+            plan.label(),
+            version_label(plan.server.version.as_deref())
+        );
+    }
+
+    loop {
+        eprint!(
+            "Stop running {} and install {} now? [y/N] ",
+            noun,
+            release.label()
+        );
+        io::stderr()
+            .flush()
+            .map_err(|e| format!("failed to flush prompt: {e}"))?;
+
+        let mut input = String::new();
+        let read = io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("failed to read prompt response: {e}"))?;
+        if read == 0 {
+            return Ok(false);
+        }
+
+        if let Some(answer) = parse_stop_old_servers_after_update_response(&input, false) {
+            return Ok(answer);
+        }
+        eprintln!("please answer y or n");
+    }
+}
+
+fn mark_plain_update_stop_decisions(
+    decisions: Vec<RunningServerUpdateDecision>,
+) -> Vec<RunningServerUpdateDecision> {
+    decisions
+        .into_iter()
+        .map(|mut decision| {
+            decision.action = RunningServerUpdateAction::StopOldServer;
+            decision
+        })
+        .collect()
 }
 
 fn print_running_session_update_summary(
@@ -853,79 +1104,21 @@ fn print_running_session_update_summary(
                 "too old for handoff"
             };
             eprintln!(
-                "  {}: v{} protocol {} ({})",
+                "  {}: server v{} ({})",
                 plan.label(),
                 version_label(plan.server.version.as_deref()),
-                protocol_label(plan.server.protocol),
                 capability
             );
         } else {
             eprintln!(
-                "  {}: v{} protocol {}",
+                "  {}: server v{}",
                 plan.label(),
-                version_label(plan.server.version.as_deref()),
-                protocol_label(plan.server.protocol)
+                version_label(plan.server.version.as_deref())
             );
         }
     }
-    eprintln!(
-        "  update: v{} protocol {}",
-        release.version,
-        protocol_label(release.target_protocol)
-    );
+    eprintln!("  update: {}", release.label());
     eprintln!();
-}
-
-fn prompt_to_live_handoff_sessions_before_update(
-    plans: &[&RunningServerUpdatePlan],
-    release: &ReleaseInfo,
-    requires_live_handoff: bool,
-) -> Result<bool, String> {
-    if !io::stdin().is_terminal() {
-        if requires_live_handoff {
-            return Err(format!(
-                "one or more herdr targets are running and updating to v{} requires live server handoff; run `herdr update` from an interactive terminal, or stop those targets and run `herdr update` again",
-                release.version
-            ));
-        }
-        eprintln!(
-            "herdr targets are running. updating the binary will not affect them until they restart."
-        );
-        return Ok(false);
-    }
-
-    eprintln!(
-        "herdr can hand off {} running target{} to the new server so pane processes keep running.",
-        plans.len(),
-        if plans.len() == 1 { "" } else { "s" }
-    );
-    eprintln!("connected clients will disconnect during handoff and can attach again afterward.");
-
-    loop {
-        let prompt = if requires_live_handoff {
-            "update and live-handoff supported targets to the new server? [Y/n] "
-        } else {
-            "live-handoff supported running targets after updating? [Y/n] "
-        };
-        eprint!("{prompt}");
-        io::stderr()
-            .flush()
-            .map_err(|e| format!("failed to flush prompt: {e}"))?;
-
-        let mut input = String::new();
-        let read = io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| format!("failed to read prompt response: {e}"))?;
-        if read == 0 {
-            return Ok(false);
-        }
-
-        if let Some(answer) = parse_live_handoff_before_update_response(&input) {
-            return Ok(answer);
-        }
-
-        eprintln!("please answer y or n");
-    }
 }
 
 fn live_handoff_running_server_for_update(
@@ -952,7 +1145,7 @@ fn runtime_matches_release(status: &crate::api::RuntimeStatus, release: &Release
     let protocol_matches = release
         .target_protocol
         .is_none_or(|protocol| status.protocol == Some(protocol));
-    let version_matches = status.version.as_deref() == Some(release.version.to_string()).as_deref();
+    let version_matches = status.version.as_deref() == Some(release.label());
     protocol_matches && version_matches
 }
 
@@ -980,19 +1173,11 @@ fn prompt_to_stop_old_server_after_failed_handoff(
         plan.target_noun(),
         plan.label()
     );
+    eprintln!("  server: v{}", version_label(status.version.as_deref()));
+    eprintln!("  installed: {}", release.label());
     eprintln!(
-        "  server: v{} protocol {}",
-        version_label(status.version.as_deref()),
-        protocol_label(status.protocol)
-    );
-    eprintln!(
-        "  installed: v{} protocol {}",
-        release.version,
-        protocol_label(release.target_protocol)
-    );
-    eprintln!(
-        "you can keep using the old server, or stop it now so the next `herdr` start uses v{}.",
-        release.version
+        "you can keep using the old server, or stop it now so the next `herdr` start uses {}.",
+        release.label()
     );
     eprintln!("stopping the old server will exit its pane processes.");
 
@@ -1057,15 +1242,15 @@ fn recover_failed_live_handoff_for_update(
         FailedHandoffServerState::NoServerResponding => {
             if let Some(command) = plan.attach_command() {
                 eprintln!(
-                    "no herdr server is responding for session {}. the binary was updated; run `{command}` to start v{}.",
+                    "no herdr server is responding for session {}. the binary was updated; run `{command}` to start {}.",
                     plan.label(),
-                    release.version
+                    release.label()
                 );
             } else {
                 eprintln!(
-                    "no herdr server is responding at {}. the binary was updated; restart with the same socket override to use v{}.",
+                    "no herdr server is responding at {}. the binary was updated; restart with the same socket override to use {}.",
                     plan.socket_path().display(),
-                    release.version
+                    release.label()
                 );
             }
             Ok(RunningServerUpdateOutcome::FailedHandoffNoServer)
@@ -1187,7 +1372,7 @@ fn live_handoff_server_via_api_for_release_at(
     let params = ServerLiveHandoffParams {
         import_exe: Some(updated_exe.display().to_string()),
         expected_protocol: release.target_protocol,
-        expected_version: Some(release.version.to_string()),
+        expected_version: Some(release.label().to_string()),
     };
 
     send_server_update_method_at(
@@ -1269,7 +1454,7 @@ fn wait_for_server_handoff_at(
         socket_path,
         timeout,
         release.target_protocol,
-        Some(&release.version.to_string()),
+        Some(release.label()),
     )
 }
 
@@ -1335,7 +1520,6 @@ fn apply_running_session_update_decisions(
             stop_command,
             attach_command: decision.plan.attach_command(),
             server_version: decision.plan.server.version.clone(),
-            server_protocol: decision.plan.server.protocol,
             outcome,
         });
     }
@@ -1345,7 +1529,7 @@ fn apply_running_session_update_decisions(
 
 fn print_running_session_update_outcomes(
     outcomes: &[RunningSessionUpdateOutcome],
-    _release: &ReleaseInfo,
+    release: &ReleaseInfo,
 ) {
     if outcomes.is_empty() {
         eprintln!("run herdr again.");
@@ -1369,19 +1553,22 @@ fn print_running_session_update_outcomes(
             }
             RunningServerUpdateOutcome::RestartDeferred => {
                 eprintln!(
-                    "{} {} is still running v{} protocol {}.",
-                    outcome.target_noun,
-                    outcome.session_label,
-                    version_label(outcome.server_version.as_deref()),
-                    protocol_label(outcome.server_protocol)
+                    "{} {} kept running.",
+                    outcome.target_noun, outcome.session_label
                 );
-                eprintln!(
-                    "{}",
-                    crate::session::restart_after_update_guidance(
-                        &outcome.stop_command,
-                        outcome.attach_command.as_deref()
-                    )
-                );
+                eprintln!("Stopping exits active pane processes.");
+                match &outcome.attach_command {
+                    Some(command) => eprintln!(
+                        "Run `{}`, then run `{command}` when ready to use {}.",
+                        outcome.stop_command,
+                        release.label()
+                    ),
+                    None => eprintln!(
+                        "Run `{}`, then restart Herdr with the same socket override when ready to use {}.",
+                        outcome.stop_command,
+                        release.label()
+                    ),
+                }
             }
             RunningServerUpdateOutcome::Stopped
             | RunningServerUpdateOutcome::FailedHandoffOldServerStopped
@@ -1400,11 +1587,10 @@ fn print_running_session_update_outcomes(
             }
             RunningServerUpdateOutcome::FailedHandoffOldServerKept => {
                 eprintln!(
-                    "{} {} is still running v{} protocol {}.",
+                    "{} {} is still running server v{}.",
                     outcome.target_noun,
                     outcome.session_label,
-                    version_label(outcome.server_version.as_deref()),
-                    protocol_label(outcome.server_protocol)
+                    version_label(outcome.server_version.as_deref())
                 );
                 eprintln!(
                     "{}",
@@ -1528,304 +1714,29 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub star prompt
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-struct StarPromptState {
-    #[serde(default)]
-    prompts_shown: u32,
-    #[serde(default)]
-    successful_updates_since_prompt: u32,
-    #[serde(default)]
-    known_starred: bool,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum GithubStarStatus {
-    Starred,
-    NotStarred,
-    Unknown,
-}
-
-fn star_prompt_state_path() -> PathBuf {
-    crate::config::state_dir().join(STAR_PROMPT_STATE_FILE)
-}
-
-fn load_star_prompt_state_from_path(path: &Path) -> StarPromptState {
-    let Ok(content) = fs::read_to_string(path) else {
-        return StarPromptState::default();
-    };
-    serde_json::from_str(&content).unwrap_or_default()
-}
-
-fn save_star_prompt_state_to_path(path: &Path, state: &StarPromptState) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let json = serde_json::to_string_pretty(state).map_err(io::Error::other)?;
-    let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
-    fs::write(&tmp_path, json)?;
-    if let Err(err) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn star_prompt_due(state: &StarPromptState) -> bool {
-    if state.known_starred {
-        return false;
-    }
-    if state.prompts_shown == 0 {
-        return true;
-    }
-    if state.prompts_shown >= STAR_PROMPT_MAX_PROMPTS {
-        return false;
-    }
-
-    let interval_index = state.prompts_shown.saturating_sub(1) as usize;
-    let Some(interval) = STAR_PROMPT_INTERVAL_UPDATES.get(interval_index) else {
-        return false;
-    };
-    state.successful_updates_since_prompt.saturating_add(1) >= *interval
-}
-
-fn record_successful_update_without_star_prompt(state: &mut StarPromptState) {
-    state.successful_updates_since_prompt = state.successful_updates_since_prompt.saturating_add(1);
-}
-
-fn record_star_prompt_shown(state: &mut StarPromptState) {
-    state.prompts_shown = state.prompts_shown.saturating_add(1);
-    state.successful_updates_since_prompt = 0;
-}
-
-fn command_status_succeeds_with_timeout(command: &mut Command, timeout: Duration) -> bool {
-    let Ok(mut child) = command.spawn() else {
-        return false;
-    };
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-            Err(_) => return false,
-        }
-    }
-}
-
-fn command_output_with_timeout(
-    command: &mut Command,
-    timeout: Duration,
-) -> io::Result<Option<std::process::Output>> {
-    let mut child = command.spawn()?;
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        match child.try_wait()? {
-            Some(_) => return child.wait_with_output().map(Some),
-            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Ok(None);
-            }
-        }
-    }
-}
-
-fn command_succeeds(command: &str, args: &[&str]) -> bool {
-    let mut command = Command::new(command);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command_status_succeeds_with_timeout(&mut command, GH_COMMAND_TIMEOUT)
-}
-
-fn gh_cli_available() -> bool {
-    command_succeeds("gh", &["--version"])
-}
-
-fn gh_auth_succeeds() -> bool {
-    command_succeeds("gh", &["auth", "status", "--hostname", "github.com"])
-}
-
-fn gh_viewer_login() -> Option<String> {
-    let mut command = Command::new("gh");
-    command
-        .args(["api", "user", "--jq", ".login"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let Ok(Some(output)) = command_output_with_timeout(&mut command, GH_COMMAND_TIMEOUT) else {
-        return None;
-    };
-    if !output.status.success() {
-        return None;
-    }
-
-    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!login.is_empty()).then_some(login)
-}
-
-fn gh_viewer_star_status() -> GithubStarStatus {
-    let mut command = Command::new("gh");
-    command
-        .args([
-            "repo",
-            "view",
-            STAR_PROMPT_REPO,
-            "--json",
-            "viewerHasStarred",
-            "--jq",
-            ".viewerHasStarred",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    let Ok(Some(output)) = command_output_with_timeout(&mut command, GH_COMMAND_TIMEOUT) else {
-        return GithubStarStatus::Unknown;
-    };
-    if !output.status.success() {
-        return GithubStarStatus::Unknown;
-    }
-
-    match String::from_utf8_lossy(&output.stdout).trim() {
-        "true" => GithubStarStatus::Starred,
-        "false" => GithubStarStatus::NotStarred,
-        _ => GithubStarStatus::Unknown,
-    }
-}
-
-fn parse_star_prompt_response(input: &str) -> Option<bool> {
-    match input.trim().to_ascii_lowercase().as_str() {
-        "" | "y" | "yes" => Some(true),
-        "n" | "no" => Some(false),
-        _ => None,
-    }
-}
-
-fn star_prompt_message(viewer_login: &str) -> String {
-    format!("If herdr has been useful, star it using gh account {viewer_login}? [Y/n] ")
-}
-
-fn prompt_to_star_repository(viewer_login: &str) -> io::Result<bool> {
-    let prompt = star_prompt_message(viewer_login);
-    loop {
-        eprint!("{prompt}");
-        io::stderr().flush()?;
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input)? == 0 {
-            return Ok(false);
-        }
-        if let Some(answer) = parse_star_prompt_response(&input) {
-            return Ok(answer);
-        }
-        eprintln!("please answer y or n.");
-    }
-}
-
-fn star_repository_with_gh() -> bool {
-    let endpoint = format!("/user/starred/{STAR_PROMPT_REPO}");
-    let mut command = Command::new("gh");
-    command
-        .args(["api", "--method", "PUT", endpoint.as_str(), "--silent"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    if command_status_succeeds_with_timeout(&mut command, GH_COMMAND_TIMEOUT) {
-        eprintln!("starred {STAR_PROMPT_REPO}. thank you.");
-        true
-    } else {
-        false
-    }
-}
-
-fn maybe_offer_star_after_successful_update() {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return;
-    }
-
-    let path = star_prompt_state_path();
-    let mut state = load_star_prompt_state_from_path(&path);
-    if state.known_starred {
-        return;
-    }
-    if !star_prompt_due(&state) {
-        record_successful_update_without_star_prompt(&mut state);
-        if let Err(err) = save_star_prompt_state_to_path(&path, &state) {
-            tracing::warn!(err = %err, "failed to save GitHub star prompt state");
-        }
-        return;
-    }
-
-    if !gh_cli_available() || !gh_auth_succeeds() {
-        return;
-    }
-    match gh_viewer_star_status() {
-        GithubStarStatus::NotStarred => {}
-        GithubStarStatus::Starred => {
-            state.known_starred = true;
-            if let Err(err) = save_star_prompt_state_to_path(&path, &state) {
-                tracing::warn!(err = %err, "failed to save GitHub star prompt state");
-            }
-            return;
-        }
-        GithubStarStatus::Unknown => return,
-    }
-
-    let Some(viewer_login) = gh_viewer_login() else {
-        return;
-    };
-
-    record_star_prompt_shown(&mut state);
-    if let Err(err) = save_star_prompt_state_to_path(&path, &state) {
-        tracing::warn!(err = %err, "failed to save GitHub star prompt state");
-        return;
-    }
-
-    match prompt_to_star_repository(&viewer_login) {
-        Ok(true) => {
-            if star_repository_with_gh() {
-                state.known_starred = true;
-                if let Err(err) = save_star_prompt_state_to_path(&path, &state) {
-                    tracing::warn!(err = %err, "failed to save GitHub star prompt state");
-                }
-            }
-        }
-        Ok(false) => {}
-        Err(err) => tracing::warn!(err = %err, "failed to read GitHub star prompt response"),
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    let channel = UpdateChannel::configured();
     if is_homebrew_managed_install() {
+        if channel == UpdateChannel::Preview {
+            return Err(
+                "self-update is disabled for Homebrew installs; preview is only available for direct Herdr installs".into(),
+            );
+        }
         return Err(format!(
             "self-update is disabled for Homebrew installs; run `{HOMEBREW_UPDATE_COMMAND}`"
         ));
     }
 
     if is_nix_managed_install() {
+        if channel == UpdateChannel::Preview {
+            return Err(
+                "self-update is disabled for Nix installs; preview is only available for direct Herdr installs".into(),
+            );
+        }
         return Err(
             "self-update is disabled for Nix installs; update with `nix profile upgrade` or update the flake input that provides Herdr".into(),
         );
@@ -1835,14 +1746,14 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
         return Err("run `herdr update` outside herdr after detaching from the session".into());
     }
 
-    eprintln!("checking for updates...");
+    eprintln!("checking {} channel for updates...", channel.as_str());
 
     let current = Version::current();
 
     let release = match check_latest()? {
         Some(r) => r,
         None => {
-            eprintln!("already up to date (v{current})");
+            eprintln!("already up to date ({})", crate::build_info::version());
             return Ok(current);
         }
     };
@@ -1851,23 +1762,35 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
     let server_update_decisions =
         confirm_running_server_update_action(running_server_plans, &release, options)?;
 
-    eprintln!("downloading v{}...", release.version);
-    if let Err(e) =
-        crate::release_notes::save_pending(&release.version.to_string(), &release.notes_body)
-    {
+    if let Some(commit) = &release.commit {
+        tracing::info!(commit = %commit, build_id = ?release.build_id, "selected preview update build");
+    }
+    eprintln!("downloading {}...", release.label());
+    if let Err(e) = crate::release_notes::save_pending(release.label(), &release.notes_body) {
         tracing::warn!("failed to save pending release notes: {e}");
     }
     let downloaded_update = download_update(&release)?;
     let updated_exe = downloaded_update.current_exe.clone();
+    eprintln!("downloaded {}", release.label());
+    if !options.live_handoff
+        && !prompt_to_complete_plain_update(&server_update_decisions, &release)?
+    {
+        eprintln!("Herdr was not updated.");
+        eprintln!("Stop running Herdr sessions when ready, then run `herdr update` again.");
+        return Ok(current);
+    }
     install_downloaded_update(downloaded_update)?;
+    eprintln!("installed {}", release.label());
+    let server_update_decisions = if options.live_handoff {
+        server_update_decisions
+    } else {
+        mark_plain_update_stop_decisions(server_update_decisions)
+    };
     let server_update_outcomes =
         apply_running_session_update_decisions(&release, &updated_exe, server_update_decisions)?;
-    eprintln!("updated to v{}", release.version);
     print_outdated_integration_notice_with_updated_binary(&updated_exe);
 
     print_running_session_update_outcomes(&server_update_outcomes, &release);
-
-    maybe_offer_star_after_successful_update();
 
     Ok(release.version)
 }
@@ -1907,12 +1830,23 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
         return;
     }
 
+    let configured_channel = UpdateChannel::configured();
     if is_homebrew_managed_install() {
+        if configured_channel == UpdateChannel::Preview {
+            crate::logging::update_check_failed(
+                "preview channel is not available for Homebrew installs",
+            );
+            return;
+        }
         auto_update_homebrew(events);
         return;
     }
 
     let nix_managed_install = is_nix_managed_install();
+    if nix_managed_install && configured_channel == UpdateChannel::Preview {
+        crate::logging::update_check_failed("preview channel is not available for Nix installs");
+        return;
+    }
 
     let release = match check_latest() {
         Ok(Some(r)) => r,
@@ -1923,22 +1857,20 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
         }
     };
 
-    crate::logging::update_available(&release.version.to_string());
+    crate::logging::update_available(release.label());
     tracing::info!(
-        "new version v{} available at {}",
-        release.version,
+        "new {} build available at {}",
+        release.channel.as_str(),
         release.download_url
     );
 
-    if let Err(e) =
-        crate::release_notes::save_pending(&release.version.to_string(), &release.notes_body)
-    {
+    if let Err(e) = crate::release_notes::save_pending(release.label(), &release.notes_body) {
         tracing::warn!("failed to save pending release notes: {e}");
     }
 
     tracing::info!(
-        "auto-update check: v{} available, waiting for explicit install",
-        release.version
+        "auto-update check: {} available, waiting for explicit install",
+        release.label()
     );
 
     // Notify the TUI — blocking_send is safe from a std::thread
@@ -1949,7 +1881,7 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
     };
 
     let _ = events.blocking_send(crate::events::AppEvent::UpdateReady {
-        version: release.version.to_string(),
+        version: release.label().to_string(),
         install_command: install_command.to_string(),
     });
 }
@@ -2101,8 +2033,13 @@ mod tests {
     fn fake_release(version: &str, target_protocol: Option<u32>) -> ReleaseInfo {
         ReleaseInfo {
             version: Version::parse(version).unwrap(),
+            identity: version.to_string(),
+            channel: UpdateChannel::Stable,
+            build_id: None,
+            commit: None,
             target_protocol,
             download_url: "https://example.com/herdr".to_string(),
+            sha256: None,
             notes_body: "### Changed\n- One".to_string(),
         }
     }
@@ -2348,14 +2285,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_live_handoff_before_update_response_defaults_yes_for_blank() {
-        assert_eq!(parse_live_handoff_before_update_response(""), Some(true));
-        assert_eq!(parse_live_handoff_before_update_response("\n"), Some(true));
-        assert_eq!(parse_live_handoff_before_update_response("y"), Some(true));
-        assert_eq!(parse_live_handoff_before_update_response("yes"), Some(true));
-        assert_eq!(parse_live_handoff_before_update_response("n"), Some(false));
-        assert_eq!(parse_live_handoff_before_update_response("no"), Some(false));
-        assert_eq!(parse_live_handoff_before_update_response("later"), None);
+    fn parse_stop_old_servers_after_update_response_uses_prompt_default_for_blank() {
+        assert_eq!(
+            parse_stop_old_servers_after_update_response("", true),
+            Some(true)
+        );
+        assert_eq!(
+            parse_stop_old_servers_after_update_response("\n", false),
+            Some(false)
+        );
+        assert_eq!(
+            parse_stop_old_servers_after_update_response("y", false),
+            Some(true)
+        );
+        assert_eq!(
+            parse_stop_old_servers_after_update_response("no", true),
+            Some(false)
+        );
+        assert_eq!(
+            parse_stop_old_servers_after_update_response("later", true),
+            None
+        );
     }
 
     #[test]
@@ -2367,8 +2317,13 @@ mod tests {
         };
         let compatible_release = ReleaseInfo {
             version: Version::parse("0.5.6").unwrap(),
+            identity: "0.5.6".to_string(),
+            channel: UpdateChannel::Stable,
+            build_id: None,
+            commit: None,
             target_protocol: Some(2),
             download_url: "https://example.com/herdr".to_string(),
+            sha256: None,
             notes_body: "### Changed\n- One".to_string(),
         };
         let incompatible_release = ReleaseInfo {
@@ -2392,7 +2347,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_update_requires_restart_for_supported_servers_without_handoff() {
+    fn plain_update_defers_stop_prompt_until_after_install() {
         assert!(
             !io::stdin().is_terminal(),
             "this test relies on noninteractive test stdin"
@@ -2416,17 +2371,18 @@ mod tests {
             },
         };
 
-        let err = confirm_running_server_update_action(
+        let decisions = confirm_running_server_update_action(
             vec![plan],
             &release,
             SelfUpdateOptions {
                 live_handoff: false,
             },
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.contains("must restart"), "unexpected error: {err}");
-        assert!(!err.contains("live handoff"), "unexpected error: {err}");
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].action, RunningServerUpdateAction::None);
+        assert!(decisions[0].plan.requires_server_restart);
     }
 
     #[test]
@@ -2585,7 +2541,7 @@ mod tests {
     }
 
     #[test]
-    fn noninteractive_plain_update_requiring_restart_fails_without_handoff() {
+    fn noninteractive_plain_update_does_not_complete_with_running_server() {
         let _guard = env_lock().lock().unwrap();
         assert!(
             !io::stdin().is_terminal(),
@@ -2600,8 +2556,13 @@ mod tests {
         };
         let release = ReleaseInfo {
             version: Version::parse("0.5.6").unwrap(),
+            identity: "0.5.6".to_string(),
+            channel: UpdateChannel::Stable,
+            build_id: None,
+            commit: None,
             target_protocol: Some(3),
             download_url: "https://example.com/herdr".to_string(),
+            sha256: None,
             notes_body: "### Changed\n- One".to_string(),
         };
         let plan = RunningServerUpdatePlan {
@@ -2618,17 +2579,17 @@ mod tests {
             server,
         };
 
-        let err = confirm_running_server_update_action(
+        let decisions = confirm_running_server_update_action(
             vec![plan],
             &release,
             SelfUpdateOptions {
                 live_handoff: false,
             },
         )
-        .unwrap_err();
+        .unwrap();
+        let complete = prompt_to_complete_plain_update(&decisions, &release).unwrap();
 
-        assert!(err.contains("must restart"), "unexpected error: {err}");
-        assert!(!err.contains("live handoff"), "unexpected error: {err}");
+        assert!(!complete);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
         crate::session::clear_explicit_session_for_test();
     }
@@ -2730,8 +2691,13 @@ mod tests {
         });
         let release = ReleaseInfo {
             version: Version::parse("9.8.7").unwrap(),
+            identity: "9.8.7".to_string(),
+            channel: UpdateChannel::Stable,
+            build_id: None,
+            commit: None,
             target_protocol: Some(77),
             download_url: "https://example.com/herdr".to_string(),
+            sha256: None,
             notes_body: "### Changed\n- One".to_string(),
         };
 
@@ -2826,90 +2792,6 @@ mod tests {
     fn current_version_parses() {
         let v = Version::current();
         assert!(v.major < 100);
-    }
-
-    #[test]
-    fn star_prompt_response_defaults_yes() {
-        assert_eq!(parse_star_prompt_response(""), Some(true));
-        assert_eq!(parse_star_prompt_response("\n"), Some(true));
-        assert_eq!(parse_star_prompt_response("y"), Some(true));
-        assert_eq!(parse_star_prompt_response("yes"), Some(true));
-        assert_eq!(parse_star_prompt_response("n"), Some(false));
-        assert_eq!(parse_star_prompt_response("no"), Some(false));
-        assert_eq!(parse_star_prompt_response("later"), None);
-    }
-
-    #[test]
-    fn star_prompt_mentions_gh_account_when_known() {
-        assert_eq!(
-            star_prompt_message("ogulcancelik"),
-            "If herdr has been useful, star it using gh account ogulcancelik? [Y/n] "
-        );
-    }
-
-    #[test]
-    fn star_prompt_is_due_five_times_with_increasing_intervals() {
-        let mut state = StarPromptState::default();
-
-        assert!(star_prompt_due(&state));
-        record_star_prompt_shown(&mut state);
-        assert_eq!(state.prompts_shown, 1);
-        assert_eq!(state.successful_updates_since_prompt, 0);
-
-        for interval in STAR_PROMPT_INTERVAL_UPDATES {
-            for update in 1..interval {
-                assert!(
-                    !star_prompt_due(&state),
-                    "prompt was early at update {update}/{interval}"
-                );
-                record_successful_update_without_star_prompt(&mut state);
-            }
-
-            assert!(
-                star_prompt_due(&state),
-                "prompt was not due after {interval} updates"
-            );
-            record_star_prompt_shown(&mut state);
-            assert_eq!(state.successful_updates_since_prompt, 0);
-        }
-
-        assert_eq!(state.prompts_shown, STAR_PROMPT_MAX_PROMPTS);
-        for _ in 0..20 {
-            assert!(!star_prompt_due(&state));
-            record_successful_update_without_star_prompt(&mut state);
-        }
-    }
-
-    #[test]
-    fn star_prompt_is_never_due_after_known_starred() {
-        let mut state = StarPromptState {
-            prompts_shown: 1,
-            successful_updates_since_prompt: 99,
-            known_starred: true,
-        };
-
-        assert!(!star_prompt_due(&state));
-        record_successful_update_without_star_prompt(&mut state);
-        assert!(!star_prompt_due(&state));
-    }
-
-    #[test]
-    fn star_prompt_state_round_trips() {
-        let path = std::env::temp_dir().join(format!(
-            "herdr-star-prompt-{}-{}.json",
-            std::process::id(),
-            "round-trip"
-        ));
-        let state = StarPromptState {
-            prompts_shown: 2,
-            successful_updates_since_prompt: 1,
-            known_starred: false,
-        };
-
-        save_star_prompt_state_to_path(&path, &state).unwrap();
-
-        assert_eq!(load_star_prompt_state_from_path(&path), state);
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -3101,6 +2983,69 @@ mod tests {
     }
 
     #[test]
+    fn stable_channel_installs_stable_asset_when_current_binary_is_preview() {
+        let older_stable = Version::parse("0.6.5").unwrap();
+        let preview_base = Version::parse("0.6.6").unwrap();
+        assert!(stable_channel_should_install(
+            &older_stable,
+            &preview_base,
+            true
+        ));
+        assert!(!stable_channel_should_install(
+            &older_stable,
+            &preview_base,
+            false
+        ));
+    }
+
+    #[test]
+    fn preview_manifest_reports_update_when_build_id_differs() {
+        let (os, arch) = platform_target();
+        let asset_key = format!("{os}-{arch}");
+        let json = format!(
+            r####"{{
+                "channel": "preview",
+                "base_version": "9.9.9",
+                "build_id": "2026-06-02-abcdef123456",
+                "commit": "abcdef1234567890",
+                "built_at": "2026-06-02T03:00:00Z",
+                "protocol": 77,
+                "notes": "### Fixed\n- One",
+                "assets": {{
+                    "{asset_key}": {{
+                        "url": "https://example.com/herdr-linux-x86_64",
+                        "sha256": "deadbeef"
+                    }}
+                }},
+                "builds": {{
+                    "2026-06-02-abcdef123456": {{
+                        "base_version": "9.9.9",
+                        "commit": "abcdef1234567890",
+                        "built_at": "2026-06-02T03:00:00Z",
+                        "protocol": 77,
+                        "assets": {{
+                            "{asset_key}": {{
+                                "url": "https://example.com/herdr-linux_x86_64",
+                                "sha256": "deadbeef"
+                            }}
+                        }}
+                    }}
+                }}
+            }}"####
+        );
+        let manifest: PreviewManifest = serde_json::from_str(&json).unwrap();
+
+        let release = release_info_from_preview_manifest(&manifest)
+            .unwrap()
+            .expect("preview update");
+
+        assert_eq!(release.channel, UpdateChannel::Preview);
+        assert_eq!(release.identity, "9.9.9-preview.2026-06-02-abcdef123456");
+        assert_eq!(release.target_protocol, Some(77));
+        assert_eq!(release.sha256.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
     fn checked_in_website_manifest_matches_update_schema() {
         let manifest: UpdateManifest = serde_json::from_str(include_str!("../website/latest.json"))
             .expect("website/latest.json should match updater schema");
@@ -3123,10 +3068,11 @@ mod tests {
             "macos-x86_64",
             "macos-aarch64",
         ] {
-            let url = manifest
+            let url = &manifest
                 .assets
                 .get(target)
-                .unwrap_or_else(|| panic!("missing asset URL for {target}"));
+                .unwrap_or_else(|| panic!("missing asset URL for {target}"))
+                .url;
             assert!(
                 url.contains(&format!("/releases/download/v{}/", manifest.version)),
                 "unexpected release URL for {target}: {url}"

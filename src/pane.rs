@@ -27,8 +27,10 @@ mod kitty_keyboard;
 mod osc;
 mod state;
 mod terminal;
+mod xtgettcap;
 
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
+pub(crate) use self::terminal::{TerminalDirtyPatch, TerminalDirtyPatchOutcome};
 pub use self::{
     state::PaneState,
     terminal::{InputState, ScrollMetrics, TerminalCursorState},
@@ -321,6 +323,29 @@ fn stable_visible_signal_refresh_due(
         })
 }
 
+fn detection_update_for_publish(
+    agent: Option<Agent>,
+    content: &str,
+    process_exited: bool,
+) -> Option<crate::detect::AgentDetection> {
+    if crate::detect::should_skip_state_update(agent, content) {
+        return None;
+    }
+
+    if process_exited {
+        return Some(crate::detect::AgentDetection {
+            state: AgentState::Idle,
+            skip_state_update: false,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+        });
+    }
+
+    let detection = crate::detect::detect_agent(agent, content);
+    (!detection.skip_state_update).then_some(detection)
+}
+
 fn spawn_basic_detection_task(
     pane_id: PaneId,
     child_pid: Arc<AtomicU32>,
@@ -378,6 +403,9 @@ fn spawn_basic_detection_task(
             let mut agent_changed = false;
             let mut agent = agent_presence.current_agent();
             let content = terminal.detection_text();
+            if crate::detect::should_skip_state_update(agent, &content) {
+                continue;
+            }
 
             let foreground_pgid = (pid > 0)
                 .then(|| crate::detect::foreground_process_group_id(pid))
@@ -427,7 +455,9 @@ fn spawn_basic_detection_task(
                 }
             }
 
-            let detection = crate::detect::detect_agent(agent, &content);
+            let Some(detection) = detection_update_for_publish(agent, &content, false) else {
+                continue;
+            };
             let new_state = detection.state;
             let visible_blocker = detection.visible_blocker && new_state == AgentState::Blocked;
             let visible_idle = detection.visible_idle && new_state == AgentState::Idle;
@@ -1149,51 +1179,6 @@ impl PaneRuntime {
         )
     }
 
-    pub fn spawn_agent_restore(
-        pane_id: PaneId,
-        rows: u16,
-        cols: u16,
-        cwd: std::path::PathBuf,
-        launch: crate::agent_resume::AgentResumeLaunch<'_>,
-        scrollback_limit_bytes: usize,
-        host_terminal_theme: crate::terminal_theme::TerminalTheme,
-        events: mpsc::Sender<AppEvent>,
-        render_notify: Arc<Notify>,
-        render_dirty: Arc<AtomicBool>,
-    ) -> std::io::Result<Self> {
-        let Some((program, args)) = launch.plan.argv.split_first() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "restore argv must not be empty",
-            ));
-        };
-
-        let mut cmd = CommandBuilder::new(program);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        cmd.cwd(cwd);
-        cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
-        apply_pane_terminal_env(&mut cmd);
-        crate::integration::apply_pane_env(&mut cmd, pane_id);
-        Self::spawn_command_builder(
-            pane_id,
-            rows,
-            cols,
-            scrollback_limit_bytes,
-            host_terminal_theme,
-            events,
-            render_notify,
-            render_dirty,
-            cmd,
-            "failed to spawn agent restore pane",
-            SpawnInitialState {
-                detected_agent: crate::detect::parse_agent_label(&launch.plan.agent),
-                history_ansi: launch.initial_history_ansi,
-            },
-        )
-    }
-
     #[cfg(unix)]
     pub fn from_handoff_fd(
         import: crate::handoff_runtime::ImportedHandoffRuntime,
@@ -1510,6 +1495,9 @@ impl PaneRuntime {
                     release_was_active = suppressed_agent.is_some();
                     let pid = child_pid.load(Ordering::Acquire);
                     let content = terminal.detection_text();
+                    if detect::should_skip_state_update(agent_presence.current_agent(), &content) {
+                        continue;
+                    }
                     let foreground_pgid = (pid > 0)
                         .then(|| detect::foreground_process_group_id(pid))
                         .flatten();
@@ -1624,15 +1612,10 @@ impl PaneRuntime {
                     let process_exited = pending_foreground_shell_clear
                         && agent.is_some()
                         && !foreground_shell_exit_reported;
-                    let detection = if process_exited {
-                        detect::AgentDetection {
-                            state: AgentState::Idle,
-                            visible_blocker: false,
-                            visible_idle: false,
-                            visible_working: false,
-                        }
-                    } else {
-                        detect::detect_agent(agent, &content)
+                    let Some(detection) =
+                        detection_update_for_publish(agent, &content, process_exited)
+                    else {
+                        continue;
                     };
                     let raw_state = detection.state;
                     let new_state = crate::terminal::state::stabilize_agent_detection(
@@ -1844,6 +1827,14 @@ impl PaneRuntime {
         self.terminal.render(frame, area, show_cursor);
     }
 
+    pub(crate) fn collect_dirty_patch(
+        &self,
+        area_width: u16,
+        area_height: u16,
+    ) -> TerminalDirtyPatchOutcome {
+        self.terminal.collect_dirty_patch(area_width, area_height)
+    }
+
     pub fn visible_hyperlinks(&self, area: Rect) -> Vec<((u16, u16), String, String)> {
         self.terminal.visible_hyperlinks(area)
     }
@@ -1935,6 +1926,17 @@ impl PaneRuntime {
             .encode_mouse_button(kind, column, row, modifiers)
     }
 
+    pub fn encode_mouse_motion(
+        &self,
+        kind: crossterm::event::MouseEventKind,
+        column: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<Vec<u8>> {
+        self.terminal
+            .encode_mouse_motion(kind, column, row, modifiers)
+    }
+
     pub fn encode_mouse_wheel(
         &self,
         kind: crossterm::event::MouseEventKind,
@@ -2017,6 +2019,11 @@ impl PaneRuntime {
 
     pub(crate) fn test_with_screen_bytes(cols: u16, rows: u16, bytes: &[u8]) -> Self {
         Self::test_with_scrollback_bytes(cols, rows, 0, bytes)
+    }
+
+    pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
+        let (tx, _rx) = mpsc::channel(1);
+        let _ = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);
     }
 
     pub(crate) fn test_with_scrollback_bytes(
@@ -2359,116 +2366,6 @@ mod tests {
         assert!(truncated.is_empty());
     }
 
-    fn process_command_name(pid: u32) -> Option<String> {
-        let output = std::process::Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!command.is_empty()).then_some(command)
-    }
-
-    async fn wait_for_child_pid(runtime: &PaneRuntime) -> u32 {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-        while tokio::time::Instant::now() < deadline {
-            let pid = runtime.child_pid.load(Ordering::Acquire);
-            if pid != 0 {
-                return pid;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        panic!("child pid was not published");
-    }
-
-    #[tokio::test]
-    async fn spawn_agent_restore_uses_restore_command_as_pane_child() {
-        let (events, _event_rx) = mpsc::channel(4);
-        let plan = crate::agent_resume::AgentResumePlan {
-            agent: "codex".into(),
-            argv: vec!["/bin/cat".into()],
-            dedupe_key: "test".into(),
-        };
-        let runtime = PaneRuntime::spawn_agent_restore(
-            PaneId::from_raw(7),
-            24,
-            80,
-            std::env::current_dir().unwrap(),
-            crate::agent_resume::AgentResumeLaunch {
-                plan: &plan,
-                initial_history_ansi: None,
-            },
-            0,
-            crate::terminal_theme::TerminalTheme::default(),
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .unwrap();
-
-        let pid = wait_for_child_pid(&runtime).await;
-        let command = process_command_name(pid).expect("child process should be visible to ps");
-
-        assert!(
-            command.ends_with("cat"),
-            "restore command should be the pane child, got {command:?}"
-        );
-        assert!(
-            !command.ends_with("sh"),
-            "restore must not keep a shell wrapper as the pane child"
-        );
-
-        runtime.shutdown();
-    }
-
-    #[tokio::test]
-    async fn spawn_agent_restore_reports_pane_death_after_early_failure() {
-        let (events, mut event_rx) = mpsc::channel(8);
-        let plan = crate::agent_resume::AgentResumePlan {
-            agent: "codex".into(),
-            argv: vec!["/bin/sh".into(), "-c".into(), "exit 7".into()],
-            dedupe_key: "test".into(),
-        };
-        let runtime = PaneRuntime::spawn_agent_restore(
-            PaneId::from_raw(7),
-            24,
-            80,
-            std::env::current_dir().unwrap(),
-            crate::agent_resume::AgentResumeLaunch {
-                plan: &plan,
-                initial_history_ansi: None,
-            },
-            0,
-            crate::terminal_theme::TerminalTheme::default(),
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .unwrap();
-
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut died = false;
-        while tokio::time::Instant::now() < deadline {
-            let Some(event) = tokio::time::timeout(
-                deadline.saturating_duration_since(tokio::time::Instant::now()),
-                event_rx.recv(),
-            )
-            .await
-            .expect("pane death event should arrive") else {
-                break;
-            };
-            if matches!(event, AppEvent::PaneDied { pane_id } if pane_id == PaneId::from_raw(7)) {
-                died = true;
-                break;
-            }
-        }
-
-        assert!(died, "failed direct agent restore should report pane death");
-        runtime.shutdown();
-    }
-
     #[tokio::test]
     async fn focus_events_are_forwarded_when_enabled() {
         let (tx, mut rx) = mpsc::channel(4);
@@ -2551,6 +2448,30 @@ mod tests {
             foreground_shell_agent_action(Some(Agent::Codex), None, true, true),
             ForegroundShellAgentAction::ClearAgent
         );
+    }
+
+    #[test]
+    fn codex_transcript_viewer_suppresses_prompt_idle_publish() {
+        let content = "/ T R A N S C R I P T /\n\n› yeah go ahead\n────────────────────────────────────────────────────────────────────────────────── 100% ─\n ↑/↓ to scroll   pgup/pgdn to page   home/end to jump\n q to quit   esc to edit prev";
+
+        assert!(detection_update_for_publish(Some(Agent::Codex), content, false).is_none());
+    }
+
+    #[test]
+    fn codex_transcript_viewer_suppresses_process_exit_idle_publish() {
+        let content = "/ T R A N S C R I P T /\n\n› yeah go ahead\n────────────────────────────────────────────────────────────────────────────────── 100% ─\n ↑/↓ to scroll   pgup/pgdn to page   home/end to jump\n q to quit   esc to edit prev";
+
+        assert!(detection_update_for_publish(Some(Agent::Codex), content, true).is_none());
+    }
+
+    #[test]
+    fn process_exit_without_transcript_still_reports_idle() {
+        let detection =
+            detection_update_for_publish(Some(Agent::Codex), "Codex finished\n› ", true)
+                .expect("process exit should publish idle outside transcript viewer");
+
+        assert_eq!(detection.state, AgentState::Idle);
+        assert!(!detection.skip_state_update);
     }
 
     #[test]

@@ -183,6 +183,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
     load_live_section(
         table,
+        "update",
+        "update config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.update = section,
+    );
+    load_live_section(
+        table,
         "ui",
         "ui config",
         &mut diagnostics,
@@ -220,6 +228,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.speech_to_text = section,
+    );
+    load_live_section(
+        table,
+        "remote",
+        "remote config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.remote = section,
     );
 
     Ok(LoadedConfig {

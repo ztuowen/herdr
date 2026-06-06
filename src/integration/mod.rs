@@ -25,10 +25,32 @@ const CODEX_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
 const CODEX_HOOK_ASSET: &str = include_str!("assets/codex/herdr-agent-state.sh");
 const CODEX_INTEGRATION_VERSION: u32 = 5;
 const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
+const KIMI_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
+const KIMI_HOOK_ASSET: &str = include_str!("assets/kimi/herdr-agent-state.sh");
+const KIMI_INTEGRATION_VERSION: u32 = 1;
+const KIMI_CODE_HOME_ENV_VAR: &str = "KIMI_CODE_HOME";
+const KIMI_CONFIG_BLOCK_BEGIN: &str = "# >>> herdr kimi integration";
+const KIMI_CONFIG_BLOCK_END: &str = "# <<< herdr kimi integration";
+const KIMI_MIN_VERSION: &str = "0.8.0";
+const KIMI_HOOK_EVENTS: [(&str, &str); 10] = [
+    ("SessionStart", "idle"),
+    ("UserPromptSubmit", "working"),
+    ("PreToolUse", "working"),
+    ("PermissionRequest", "blocked"),
+    ("PermissionResult", "working"),
+    ("PostToolUse", "working"),
+    ("PostToolUseFailure", "working"),
+    ("Stop", "idle"),
+    ("StopFailure", "idle"),
+    ("SessionEnd", "release"),
+];
 const COPILOT_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
 const COPILOT_HOOK_ASSET: &str = include_str!("assets/copilot/herdr-agent-state.sh");
 const COPILOT_INTEGRATION_VERSION: u32 = 1;
 const COPILOT_HOME_ENV_VAR: &str = "COPILOT_HOME";
+const DROID_HOOK_INSTALL_NAME: &str = "herdr-agent-state.sh";
+const DROID_HOOK_ASSET: &str = include_str!("assets/droid/herdr-agent-state.sh");
+const DROID_INTEGRATION_VERSION: u32 = 1;
 const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
 const OPENCODE_INTEGRATION_VERSION: u32 = 4;
@@ -58,9 +80,23 @@ pub(crate) struct CodexInstallPaths {
 }
 
 #[derive(Debug)]
+pub(crate) struct KimiInstallPaths {
+    pub hook_path: PathBuf,
+    pub config_path: PathBuf,
+}
+
+#[derive(Debug)]
 pub(crate) struct CopilotInstallPaths {
     pub hook_path: PathBuf,
     pub settings_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct DroidInstallPaths {
+    pub hook_path: PathBuf,
+    pub hooks_path: PathBuf,
+    pub settings_path: PathBuf,
+    pub updated_legacy_hooks: bool,
 }
 
 #[derive(Debug)]
@@ -166,10 +202,28 @@ pub(crate) struct CodexUninstallResult {
 }
 
 #[derive(Debug)]
+pub(crate) struct KimiUninstallResult {
+    pub hook_path: PathBuf,
+    pub config_path: PathBuf,
+    pub removed_hook_file: bool,
+    pub updated_config: bool,
+}
+
+#[derive(Debug)]
 pub(crate) struct CopilotUninstallResult {
     pub hook_path: PathBuf,
     pub settings_path: PathBuf,
     pub removed_hook_file: bool,
+    pub updated_settings: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct DroidUninstallResult {
+    pub hook_path: PathBuf,
+    pub hooks_path: PathBuf,
+    pub settings_path: PathBuf,
+    pub removed_hook_file: bool,
+    pub updated_hooks: bool,
     pub updated_settings: bool,
 }
 
@@ -257,6 +311,37 @@ pub(crate) fn install_target(
                     installed.settings_path.display()
                 ),
             ]
+        }
+        crate::api::schema::IntegrationTarget::Kimi => {
+            let installed = install_kimi()?;
+            vec![
+                format!(
+                    "installed kimi integration hook to {}",
+                    installed.hook_path.display()
+                ),
+                format!("ensured kimi config at {}", installed.config_path.display()),
+                format!("requires kimi code {KIMI_MIN_VERSION} or newer"),
+            ]
+        }
+        crate::api::schema::IntegrationTarget::Droid => {
+            let installed = install_droid()?;
+            let mut messages = vec![
+                format!(
+                    "installed droid integration hook to {}",
+                    installed.hook_path.display()
+                ),
+                format!(
+                    "ensured droid hooks at {}",
+                    installed.settings_path.display()
+                ),
+            ];
+            if installed.updated_legacy_hooks {
+                messages.push(format!(
+                    "removed legacy herdr droid hook entries from {}",
+                    installed.hooks_path.display()
+                ));
+            }
+            messages
         }
         crate::api::schema::IntegrationTarget::Opencode => {
             let installed = install_opencode()?;
@@ -414,6 +499,71 @@ pub(crate) fn uninstall_target(
             }
             messages
         }
+        crate::api::schema::IntegrationTarget::Kimi => {
+            let result = uninstall_kimi()?;
+            let mut messages = Vec::new();
+            if result.removed_hook_file {
+                messages.push(format!(
+                    "removed kimi hook at {}",
+                    result.hook_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no kimi hook found at {}",
+                    result.hook_path.display()
+                ));
+            }
+            if result.updated_config {
+                messages.push(format!(
+                    "removed herdr kimi hook entries from {}",
+                    result.config_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no herdr kimi hook entries found in {}",
+                    result.config_path.display()
+                ));
+            }
+            messages
+        }
+        crate::api::schema::IntegrationTarget::Droid => {
+            let result = uninstall_droid()?;
+            let mut messages = Vec::new();
+            if result.removed_hook_file {
+                messages.push(format!(
+                    "removed droid hook at {}",
+                    result.hook_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no droid hook found at {}",
+                    result.hook_path.display()
+                ));
+            }
+            if result.updated_hooks {
+                messages.push(format!(
+                    "removed legacy herdr droid hook entries from {}",
+                    result.hooks_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no legacy herdr droid hook entries found in {}",
+                    result.hooks_path.display()
+                ));
+            }
+            if result.updated_settings {
+                messages.push(format!(
+                    "removed herdr droid hook entries from {}",
+                    result.settings_path.display()
+                ));
+            } else {
+                messages.push(format!(
+                    "no herdr droid hook entries found in {}",
+                    result.settings_path.display()
+                ));
+            }
+            messages
+        }
         crate::api::schema::IntegrationTarget::Opencode => {
             let result = uninstall_opencode()?;
             if result.removed_plugin {
@@ -497,6 +647,8 @@ pub(crate) fn integration_target_label(
         crate::api::schema::IntegrationTarget::Claude => "claude",
         crate::api::schema::IntegrationTarget::Codex => "codex",
         crate::api::schema::IntegrationTarget::Copilot => "copilot",
+        crate::api::schema::IntegrationTarget::Droid => "droid",
+        crate::api::schema::IntegrationTarget::Kimi => "kimi",
         crate::api::schema::IntegrationTarget::Opencode => "opencode",
         crate::api::schema::IntegrationTarget::Hermes => "hermes",
         crate::api::schema::IntegrationTarget::Qodercli => "qodercli",
@@ -510,6 +662,8 @@ fn integration_target_command(target: crate::api::schema::IntegrationTarget) -> 
         crate::api::schema::IntegrationTarget::Claude => "claude",
         crate::api::schema::IntegrationTarget::Codex => "codex",
         crate::api::schema::IntegrationTarget::Copilot => "copilot",
+        crate::api::schema::IntegrationTarget::Droid => "droid",
+        crate::api::schema::IntegrationTarget::Kimi => "kimi",
         crate::api::schema::IntegrationTarget::Opencode => "opencode",
         crate::api::schema::IntegrationTarget::Hermes => "hermes",
         crate::api::schema::IntegrationTarget::Qodercli => "qodercli",
@@ -586,7 +740,7 @@ fn integration_specs() -> [(
     crate::api::schema::IntegrationTarget,
     io::Result<PathBuf>,
     u32,
-); 8] {
+); 10] {
     [
         (
             crate::api::schema::IntegrationTarget::Pi,
@@ -612,6 +766,16 @@ fn integration_specs() -> [(
             crate::api::schema::IntegrationTarget::Copilot,
             copilot_dir().map(|dir| dir.join("hooks").join(COPILOT_HOOK_INSTALL_NAME)),
             COPILOT_INTEGRATION_VERSION,
+        ),
+        (
+            crate::api::schema::IntegrationTarget::Droid,
+            droid_dir().map(|dir| dir.join("hooks").join(DROID_HOOK_INSTALL_NAME)),
+            DROID_INTEGRATION_VERSION,
+        ),
+        (
+            crate::api::schema::IntegrationTarget::Kimi,
+            kimi_dir().map(|dir| dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME)),
+            KIMI_INTEGRATION_VERSION,
         ),
         (
             crate::api::schema::IntegrationTarget::Opencode,
@@ -933,6 +1097,39 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
     })
 }
 
+pub(crate) fn install_kimi() -> io::Result<KimiInstallPaths> {
+    let dir = kimi_dir()?;
+    if !dir.is_dir() {
+        return Err(io::Error::other(format!(
+            "kimi code config directory not found at {}. install kimi code first",
+            dir.display()
+        )));
+    }
+
+    let hooks_dir = dir.join("hooks");
+    fs::create_dir_all(&hooks_dir)?;
+
+    let hook_path = hooks_dir.join(KIMI_HOOK_INSTALL_NAME);
+    fs::write(&hook_path, KIMI_HOOK_ASSET)?;
+    make_executable(&hook_path)?;
+
+    let config_path = dir.join("config.toml");
+    let existing_config = if config_path.is_file() {
+        fs::read_to_string(&config_path)?
+    } else {
+        String::new()
+    };
+    let new_config = build_kimi_config_with_hooks(&existing_config, &hook_path);
+    if new_config != existing_config {
+        fs::write(&config_path, new_config)?;
+    }
+
+    Ok(KimiInstallPaths {
+        hook_path,
+        config_path,
+    })
+}
+
 pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
     let dir = copilot_dir()?;
     if !dir.is_dir() {
@@ -992,6 +1189,81 @@ pub(crate) fn install_copilot() -> io::Result<CopilotInstallPaths> {
     Ok(CopilotInstallPaths {
         hook_path,
         settings_path,
+    })
+}
+
+pub(crate) fn install_droid() -> io::Result<DroidInstallPaths> {
+    let dir = droid_dir()?;
+    if !dir.is_dir() {
+        return Err(io::Error::other(format!(
+            "droid config directory not found at {}. install droid first",
+            dir.display()
+        )));
+    }
+
+    let hooks_dir = dir.join("hooks");
+    fs::create_dir_all(&hooks_dir)?;
+
+    let hook_path = hooks_dir.join(DROID_HOOK_INSTALL_NAME);
+    fs::write(&hook_path, DROID_HOOK_ASSET)?;
+    make_executable(&hook_path)?;
+
+    let settings_path = dir.join("settings.json");
+    let mut settings = if settings_path.is_file() {
+        serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?).map_err(|err| {
+            io::Error::other(format!(
+                "failed to parse {}: {err}",
+                settings_path.display()
+            ))
+        })?
+    } else {
+        json!({})
+    };
+
+    let hooks = ensure_hooks_object(
+        &mut settings,
+        &settings_path,
+        "droid settings",
+        "droid settings hooks",
+    )?;
+    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
+    remove_command_hook(hooks, "SessionStart", &format!("bash {quoted_hook_path}"))?;
+    ensure_command_hook(
+        hooks,
+        "SessionStart",
+        format!("bash {quoted_hook_path}"),
+        10,
+        None,
+    )?;
+
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+
+    let hooks_path = dir.join("hooks.json");
+    let mut updated_legacy_hooks = false;
+    if hooks_path.is_file() {
+        let mut hooks_file = serde_json::from_str::<Value>(&fs::read_to_string(&hooks_path)?)
+            .map_err(|err| {
+                io::Error::other(format!("failed to parse {}: {err}", hooks_path.display()))
+            })?;
+        if let Some(hooks) = hooks_object_if_present(
+            &mut hooks_file,
+            &hooks_path,
+            "droid hooks file",
+            "droid hooks file hooks",
+        )? {
+            updated_legacy_hooks =
+                remove_command_hook(hooks, "SessionStart", &format!("bash {quoted_hook_path}"))?;
+        }
+        if updated_legacy_hooks {
+            fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
+        }
+    }
+
+    Ok(DroidInstallPaths {
+        hook_path,
+        hooks_path,
+        settings_path,
+        updated_legacy_hooks,
     })
 }
 
@@ -1220,6 +1492,31 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
     })
 }
 
+pub(crate) fn uninstall_kimi() -> io::Result<KimiUninstallResult> {
+    let kimi_dir = kimi_dir()?;
+    let hook_path = kimi_dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME);
+    let config_path = kimi_dir.join("config.toml");
+    let mut updated_config = false;
+
+    if config_path.is_file() {
+        let existing_config = fs::read_to_string(&config_path)?;
+        let new_config = remove_kimi_config_block(&existing_config);
+        if new_config != existing_config {
+            fs::write(&config_path, new_config)?;
+            updated_config = true;
+        }
+    }
+
+    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+
+    Ok(KimiUninstallResult {
+        hook_path,
+        config_path,
+        removed_hook_file,
+        updated_config,
+    })
+}
+
 pub(crate) fn uninstall_copilot() -> io::Result<CopilotUninstallResult> {
     let copilot_dir = copilot_dir()?;
     let hook_path = copilot_dir.join("hooks").join(COPILOT_HOOK_INSTALL_NAME);
@@ -1267,6 +1564,71 @@ pub(crate) fn uninstall_copilot() -> io::Result<CopilotUninstallResult> {
         hook_path,
         settings_path,
         removed_hook_file,
+        updated_settings,
+    })
+}
+
+pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
+    let droid_dir = droid_dir()?;
+    let hook_path = droid_dir.join("hooks").join(DROID_HOOK_INSTALL_NAME);
+    let hooks_path = droid_dir.join("hooks.json");
+    let settings_path = droid_dir.join("settings.json");
+    let mut updated_hooks = false;
+    let mut updated_settings = false;
+    let quoted_hook_path = shell_single_quote(&hook_path.display().to_string());
+
+    if hooks_path.is_file() {
+        let mut hooks_file = serde_json::from_str::<Value>(&fs::read_to_string(&hooks_path)?)
+            .map_err(|err| {
+                io::Error::other(format!("failed to parse {}: {err}", hooks_path.display()))
+            })?;
+
+        if let Some(hooks) = hooks_object_if_present(
+            &mut hooks_file,
+            &hooks_path,
+            "droid hooks file",
+            "droid hooks file hooks",
+        )? {
+            updated_hooks |=
+                remove_command_hook(hooks, "SessionStart", &format!("bash {quoted_hook_path}"))?;
+        }
+
+        if updated_hooks {
+            fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_file)?)?;
+        }
+    }
+
+    if settings_path.is_file() {
+        let mut settings = serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "failed to parse {}: {err}",
+                    settings_path.display()
+                ))
+            })?;
+        if let Some(hooks) = hooks_object_if_present(
+            &mut settings,
+            &settings_path,
+            "droid settings",
+            "droid settings hooks",
+        )? {
+            updated_settings =
+                remove_command_hook(hooks, "SessionStart", &format!("bash {quoted_hook_path}"))?;
+        }
+
+        if updated_settings {
+            fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+        }
+    }
+
+    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+
+    Ok(DroidUninstallResult {
+        hook_path,
+        hooks_path,
+        settings_path,
+        removed_hook_file,
+        updated_hooks,
         updated_settings,
     })
 }
@@ -1727,9 +2089,15 @@ fn update_hermes_enabled_plugin(content: &str, enabled: bool) -> String {
 
     let plugins_end =
         next_top_level_yaml_key_index(&lines, plugins_index + 1).unwrap_or(lines.len());
+    let plugins_inline_items = yaml_key_value_at_indent(&lines[plugins_index], 0, "plugins")
+        .and_then(yaml_flow_sequence_items);
     let enabled_index = lines[plugins_index + 1..plugins_end]
         .iter()
         .position(|line| yaml_key_at_indent(line, 2) == Some("enabled"))
+        .map(|offset| plugins_index + 1 + offset);
+    let flat_list_start = lines[plugins_index + 1..plugins_end]
+        .iter()
+        .position(|line| yaml_list_item_value_at_indent(line, 2).is_some())
         .map(|offset| plugins_index + 1 + offset);
 
     if let Some(enabled_index) = enabled_index {
@@ -1752,12 +2120,46 @@ fn update_hermes_enabled_plugin(content: &str, enabled: bool) -> String {
             .unwrap_or(plugins_end);
         let existing_item_index = lines[list_start..list_end]
             .iter()
-            .position(|line| yaml_list_item_value(line) == Some(HERMES_PLUGIN_INSTALL_NAME))
+            .position(|line| yaml_list_item_matches(line, HERMES_PLUGIN_INSTALL_NAME))
             .map(|offset| list_start + offset);
 
         match (enabled, existing_item_index) {
             (true, Some(_)) | (false, None) => return content.to_string(),
             (true, None) => lines.insert(list_start, "    - herdr-agent-state".to_string()),
+            (false, Some(index)) => {
+                lines.remove(index);
+            }
+        }
+        return join_yaml_lines(lines, trailing_newline);
+    }
+
+    if let Some(mut items) = plugins_inline_items {
+        let existing_item_index = items
+            .iter()
+            .position(|item| item == HERMES_PLUGIN_INSTALL_NAME);
+
+        match (enabled, existing_item_index) {
+            (true, Some(_)) | (false, None) => return content.to_string(),
+            (true, None) => items.insert(0, HERMES_PLUGIN_INSTALL_NAME.to_string()),
+            (false, Some(index)) => {
+                items.remove(index);
+            }
+        }
+
+        let replacement = hermes_flat_plugin_lines(&items);
+        lines.splice(plugins_index..plugins_end, replacement);
+        return join_yaml_lines(lines, trailing_newline);
+    }
+
+    if let Some(flat_list_start) = flat_list_start {
+        let existing_item_index = lines[plugins_index + 1..plugins_end]
+            .iter()
+            .position(|line| yaml_list_item_matches_at_indent(line, 2, HERMES_PLUGIN_INSTALL_NAME))
+            .map(|offset| plugins_index + 1 + offset);
+
+        match (enabled, existing_item_index) {
+            (true, Some(_)) | (false, None) => return content.to_string(),
+            (true, None) => lines.insert(flat_list_start, "  - herdr-agent-state".to_string()),
             (false, Some(index)) => {
                 lines.remove(index);
             }
@@ -1772,6 +2174,16 @@ fn update_hermes_enabled_plugin(content: &str, enabled: bool) -> String {
     }
 
     content.to_string()
+}
+
+fn hermes_flat_plugin_lines(items: &[String]) -> Vec<String> {
+    if items.is_empty() {
+        return vec!["plugins: []".to_string()];
+    }
+
+    let mut lines = vec!["plugins:".to_string()];
+    lines.extend(items.iter().map(|item| format!("  - {item}")));
+    lines
 }
 
 fn top_level_yaml_key_index(lines: &[String], key: &str) -> Option<usize> {
@@ -1794,6 +2206,18 @@ fn yaml_key_at_indent(line: &str, indent: usize) -> Option<&str> {
     yaml_key_name(line)
 }
 
+fn yaml_key_value_at_indent<'a>(line: &'a str, indent: usize, key: &str) -> Option<&'a str> {
+    if yaml_indent(line)? != indent {
+        return None;
+    }
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('-') {
+        return None;
+    }
+    let (line_key, value) = trimmed.split_once(':')?;
+    (line_key.trim() == key).then_some(value.trim())
+}
+
 fn yaml_key_name(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
     if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('-') {
@@ -1814,6 +2238,111 @@ fn yaml_indent(line: &str) -> Option<usize> {
 
 fn yaml_list_item_value(line: &str) -> Option<&str> {
     line.trim().strip_prefix("- ").map(str::trim)
+}
+
+fn yaml_list_item_matches(line: &str, value: &str) -> bool {
+    yaml_list_item_value(line).is_some_and(|item| yaml_scalar_value(item) == value)
+}
+
+fn yaml_list_item_value_at_indent(line: &str, indent: usize) -> Option<&str> {
+    if yaml_indent(line)? != indent {
+        return None;
+    }
+    yaml_list_item_value(line)
+}
+
+fn yaml_list_item_matches_at_indent(line: &str, indent: usize, value: &str) -> bool {
+    yaml_list_item_value_at_indent(line, indent)
+        .is_some_and(|item| yaml_scalar_value(item) == value)
+}
+
+fn yaml_flow_sequence_items(value: &str) -> Option<Vec<String>> {
+    let value = strip_yaml_inline_comment(value).trim();
+    let inner = value.strip_prefix('[')?.strip_suffix(']')?.trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+
+    for ch in inner.chars() {
+        if let Some(quote_char) = quote {
+            current.push(ch);
+            if quote_char == '"' && ch == '\\' && !escaped {
+                escaped = true;
+                continue;
+            }
+            if ch == quote_char && !escaped {
+                quote = None;
+            }
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            ',' => {
+                items.push(yaml_scalar_value(&current));
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if quote.is_some() {
+        return None;
+    }
+
+    items.push(yaml_scalar_value(&current));
+    Some(items)
+}
+
+fn yaml_scalar_value(value: &str) -> String {
+    let value = strip_yaml_inline_comment(value).trim();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        let quoted = (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'');
+        if quoted {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
+}
+
+fn strip_yaml_inline_comment(value: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in value.char_indices() {
+        if let Some(quote_char) = quote {
+            if quote_char == '"' && ch == '\\' && !escaped {
+                escaped = true;
+                continue;
+            }
+            if ch == quote_char && !escaped {
+                quote = None;
+            }
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '#' if index == 0 || value[..index].ends_with(char::is_whitespace) => {
+                return value[..index].trim_end();
+            }
+            _ => {}
+        }
+    }
+
+    value
 }
 
 fn join_yaml_lines(lines: Vec<String>, trailing_newline: bool) -> String {
@@ -1876,6 +2405,95 @@ fn build_codex_config_with_hooks(content: &str) -> String {
     }
 
     join_toml_lines(lines, trailing_newline)
+}
+
+fn build_kimi_config_with_hooks(content: &str, hook_path: &Path) -> String {
+    let mut result = remove_kimi_config_block(content)
+        .trim_end_matches('\n')
+        .to_string();
+    if !result.is_empty() {
+        result.push('\n');
+        result.push('\n');
+    }
+
+    result.push_str(KIMI_CONFIG_BLOCK_BEGIN);
+    result.push('\n');
+    for (event, action) in KIMI_HOOK_EVENTS {
+        result.push_str(&kimi_hook_table(event, hook_path, action));
+    }
+    result.push_str(KIMI_CONFIG_BLOCK_END);
+    result.push('\n');
+    result
+}
+
+fn kimi_hook_table(event: &str, hook_path: &Path, action: &str) -> String {
+    let command = format!(
+        "bash {} {action}",
+        shell_single_quote(&hook_path.display().to_string())
+    );
+    format!(
+        "[[hooks]]\nevent = {}\ncommand = {}\ntimeout = 10\n\n",
+        toml_basic_string(event),
+        toml_basic_string(&command)
+    )
+}
+
+fn remove_kimi_config_block(content: &str) -> String {
+    let trailing_newline = content.ends_with('\n');
+    let mut lines = Vec::new();
+    let mut in_block = false;
+    let mut removed_block = false;
+
+    for line in content.lines() {
+        if line.trim() == KIMI_CONFIG_BLOCK_BEGIN {
+            in_block = true;
+            removed_block = true;
+            continue;
+        }
+        if in_block {
+            if line.trim() == KIMI_CONFIG_BLOCK_END {
+                in_block = false;
+            }
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+
+    if !removed_block {
+        return content.to_string();
+    }
+
+    let mut result = join_toml_lines(lines, trailing_newline);
+    while result.ends_with("\n\n") {
+        result.pop();
+    }
+    if result == "\n" {
+        String::new()
+    } else {
+        result
+    }
+}
+
+fn toml_basic_string(value: &str) -> String {
+    let mut result = String::with_capacity(value.len() + 2);
+    result.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\u{08}' => result.push_str("\\b"),
+            '\t' => result.push_str("\\t"),
+            '\n' => result.push_str("\\n"),
+            '\u{0c}' => result.push_str("\\f"),
+            '\r' => result.push_str("\\r"),
+            ch if ch <= '\u{1f}' || ch == '\u{7f}' => {
+                result.push_str(&format!("\\u{:04X}", ch as u32));
+            }
+            ch => result.push(ch),
+        }
+    }
+    result.push('"');
+    result
 }
 
 fn join_toml_lines(lines: Vec<String>, trailing_newline: bool) -> String {
@@ -1954,8 +2572,16 @@ fn codex_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(CODEX_HOME_ENV_VAR, &[".codex"])
 }
 
+fn kimi_dir() -> io::Result<PathBuf> {
+    config_dir_from_env_or_home(KIMI_CODE_HOME_ENV_VAR, &[".kimi-code"])
+}
+
 fn copilot_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(COPILOT_HOME_ENV_VAR, &[".copilot"])
+}
+
+fn droid_dir() -> io::Result<PathBuf> {
+    Ok(home_dir()?.join(".factory"))
 }
 
 fn config_dir_from_env_or_home(
@@ -2032,7 +2658,37 @@ mod tests {
         std::env::remove_var(CLAUDE_CONFIG_DIR_ENV_VAR);
         std::env::remove_var(CODEX_HOME_ENV_VAR);
         std::env::remove_var(COPILOT_HOME_ENV_VAR);
+        std::env::remove_var(KIMI_CODE_HOME_ENV_VAR);
         std::env::remove_var(QODERCLI_CONFIG_DIR_ENV_VAR);
+    }
+
+    fn kimi_hook_command(hook_path: &Path, action: &str) -> String {
+        format!(
+            "bash {} {action}",
+            shell_single_quote(&hook_path.display().to_string())
+        )
+    }
+
+    fn kimi_config_hooks(config: &str) -> Vec<toml::Value> {
+        let parsed: toml::Value = toml::from_str(config).unwrap();
+        parsed
+            .get("hooks")
+            .and_then(toml::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn assert_kimi_hook(config: &str, hook_path: &Path, event: &str, action: &str) {
+        let command = kimi_hook_command(hook_path, action);
+        let hooks = kimi_config_hooks(config);
+        assert!(
+            hooks.iter().any(|hook| {
+                hook.get("event").and_then(toml::Value::as_str) == Some(event)
+                    && hook.get("command").and_then(toml::Value::as_str) == Some(command.as_str())
+                    && hook.get("timeout").and_then(toml::Value::as_integer) == Some(10)
+            }),
+            "missing kimi hook for {event} -> {action}"
+        );
     }
 
     fn unique_base() -> PathBuf {
@@ -2875,6 +3531,143 @@ mod tests {
     }
 
     #[test]
+    fn install_kimi_writes_hook_and_updates_config() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let kimi_dir = home.join(".kimi-code");
+        fs::create_dir_all(&kimi_dir).unwrap();
+        fs::write(
+            kimi_dir.join("config.toml"),
+            "default_model = \"moonshot\"\n\n[[hooks]]\nevent = \"Notification\"\nmatcher = \"task.completed\"\ncommand = \"echo keep\"\ntimeout = 3\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let installed = install_kimi().unwrap();
+        let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
+        let config = fs::read_to_string(&installed.config_path).unwrap();
+        let hooks = kimi_config_hooks(&config);
+
+        assert_eq!(
+            installed.hook_path,
+            kimi_dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME)
+        );
+        assert_eq!(installed.config_path, kimi_dir.join("config.toml"));
+        assert_eq!(hook_content, KIMI_HOOK_ASSET);
+        assert_eq!(hooks.len(), 11);
+        assert!(config.contains("default_model = \"moonshot\""));
+        assert!(config.contains("command = \"echo keep\""));
+        assert!(config.contains(KIMI_CONFIG_BLOCK_BEGIN));
+        assert!(config.contains(KIMI_CONFIG_BLOCK_END));
+        for (event, action) in KIMI_HOOK_EVENTS {
+            assert_kimi_hook(&config, &installed.hook_path, event, action);
+        }
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_kimi_uses_kimi_code_home_env() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let kimi_dir = base.join("custom-kimi");
+        fs::create_dir_all(&kimi_dir).unwrap();
+        std::env::set_var(KIMI_CODE_HOME_ENV_VAR, &kimi_dir);
+
+        let installed = install_kimi().unwrap();
+
+        assert_eq!(
+            installed.hook_path,
+            kimi_dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME)
+        );
+        assert_eq!(installed.config_path, kimi_dir.join("config.toml"));
+
+        clear_integration_path_env();
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_kimi_is_idempotent_for_config_block() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let kimi_dir = home.join(".kimi-code");
+        fs::create_dir_all(&kimi_dir).unwrap();
+        std::env::set_var("HOME", &home);
+
+        install_kimi().unwrap();
+        install_kimi().unwrap();
+
+        let config = fs::read_to_string(kimi_dir.join("config.toml")).unwrap();
+        let hooks = kimi_config_hooks(&config);
+
+        assert_eq!(config.matches(KIMI_CONFIG_BLOCK_BEGIN).count(), 1);
+        assert_eq!(config.matches(KIMI_CONFIG_BLOCK_END).count(), 1);
+        assert_eq!(hooks.len(), KIMI_HOOK_EVENTS.len());
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn uninstall_kimi_removes_hook_and_config_block_preserves_other_hooks() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let kimi_dir = home.join(".kimi-code");
+        fs::create_dir_all(&kimi_dir).unwrap();
+        std::env::set_var("HOME", &home);
+
+        let installed = install_kimi().unwrap();
+        fs::write(
+            &installed.config_path,
+            format!(
+                "default_model = \"moonshot\"\n\n[[hooks]]\nevent = \"Notification\"\ncommand = \"echo keep\"\n\n{}",
+                fs::read_to_string(&installed.config_path).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let result = uninstall_kimi().unwrap();
+        let config = fs::read_to_string(kimi_dir.join("config.toml")).unwrap();
+        let hooks = kimi_config_hooks(&config);
+
+        assert!(result.removed_hook_file);
+        assert!(result.updated_config);
+        assert!(!result.hook_path.exists());
+        assert!(config.contains("default_model = \"moonshot\""));
+        assert!(config.contains("command = \"echo keep\""));
+        assert!(!config.contains(KIMI_CONFIG_BLOCK_BEGIN));
+        assert!(!config.contains(KIMI_CONFIG_BLOCK_END));
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(
+            hooks[0].get("event").and_then(toml::Value::as_str),
+            Some("Notification")
+        );
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_kimi_errors_when_config_dir_missing() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("HOME", &home);
+
+        let err = install_kimi().unwrap_err().to_string();
+
+        assert!(err.contains("kimi code config directory not found"));
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn install_copilot_writes_hook_and_updates_settings() {
         let _lock = integration_env_lock();
         let base = unique_base();
@@ -3061,6 +3854,197 @@ mod tests {
     }
 
     #[test]
+    fn install_droid_writes_hook_to_settings_and_cleans_legacy_hooks_json() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let droid_dir = home.join(".factory");
+        let legacy_hook_path = droid_dir.join("hooks").join(DROID_HOOK_INSTALL_NAME);
+        fs::create_dir_all(legacy_hook_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&droid_dir).unwrap();
+        let legacy_command = format!(
+            "bash {}",
+            shell_single_quote(&legacy_hook_path.display().to_string())
+        );
+        fs::write(
+            droid_dir.join("hooks.json"),
+            format!(
+                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}}]}}],"PreToolUse":[{{"matcher":"Read","hooks":[{{"type":"command","command":"echo keep","timeout":10}}]}}]}}}}"#,
+                legacy_command,
+            ),
+        )
+        .unwrap();
+        fs::write(
+            droid_dir.join("settings.json"),
+            r#"{"theme":"factory-dark"}"#,
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let installed = install_droid().unwrap();
+        let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
+        let legacy_hooks: Value =
+            serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
+
+        assert_eq!(
+            installed.hook_path,
+            droid_dir.join("hooks").join(DROID_HOOK_INSTALL_NAME)
+        );
+        assert_eq!(installed.hooks_path, droid_dir.join("hooks.json"));
+        assert_eq!(installed.settings_path, droid_dir.join("settings.json"));
+        assert!(installed.updated_legacy_hooks);
+        assert_eq!(hook_content, DROID_HOOK_ASSET);
+        assert_eq!(settings["theme"], "factory-dark");
+        assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains(DROID_HOOK_INSTALL_NAME));
+        assert!(settings["hooks"]["SessionStart"][0]
+            .get("matcher")
+            .is_none());
+        assert_eq!(legacy_hooks["hooks"]["PreToolUse"][0]["matcher"], "Read");
+        assert!(legacy_hooks["hooks"].get("SessionStart").is_none());
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_droid_is_idempotent_for_hook_entries() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let droid_dir = home.join(".factory");
+        fs::create_dir_all(&droid_dir).unwrap();
+        std::env::set_var("HOME", &home);
+
+        install_droid().unwrap();
+        install_droid().unwrap();
+
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(droid_dir.join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            settings["hooks"]["SessionStart"].as_array().unwrap().len(),
+            1
+        );
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn droid_v1_integration_status_is_current() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let droid_hooks_dir = home.join(".factory").join("hooks");
+        fs::create_dir_all(&droid_hooks_dir).unwrap();
+        let hook_path = droid_hooks_dir.join(DROID_HOOK_INSTALL_NAME);
+        fs::write(
+            &hook_path,
+            "#!/bin/sh\n# HERDR_INTEGRATION_ID=droid\n# HERDR_INTEGRATION_VERSION=1\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let statuses = installed_integration_statuses();
+        let droid = statuses
+            .iter()
+            .find(|status| status.target == crate::api::schema::IntegrationTarget::Droid)
+            .unwrap();
+
+        assert_eq!(droid.path, hook_path);
+        assert_eq!(droid.installed_version, Some(1));
+        assert_eq!(droid.expected_version, 1);
+        assert_eq!(droid.state, IntegrationStatusKind::Current);
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn uninstall_droid_removes_herdr_hooks_and_preserves_others() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let droid_dir = home.join(".factory");
+        let hooks_dir = droid_dir.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join(DROID_HOOK_INSTALL_NAME);
+        fs::write(&hook_path, DROID_HOOK_ASSET).unwrap();
+        let command = format!(
+            "bash {}",
+            shell_single_quote(&hook_path.display().to_string())
+        );
+        fs::write(
+            droid_dir.join("hooks.json"),
+            format!(
+                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}},{{"type":"command","command":"echo keep","timeout":10}}]}}],"PreToolUse":[{{"matcher":"Read","hooks":[{{"type":"command","command":"echo read","timeout":10}}]}}]}}}}"#,
+                command,
+            ),
+        )
+        .unwrap();
+        fs::write(
+            droid_dir.join("settings.json"),
+            format!(
+                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}}]}}],"PostToolUse":[{{"matcher":"Edit","hooks":[{{"type":"command","command":"echo post","timeout":10}}]}}]}}}}"#,
+                command,
+            ),
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let result = uninstall_droid().unwrap();
+        let hooks: Value =
+            serde_json::from_str(&fs::read_to_string(droid_dir.join("hooks.json")).unwrap())
+                .unwrap();
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(droid_dir.join("settings.json")).unwrap())
+                .unwrap();
+
+        assert!(result.removed_hook_file);
+        assert!(result.updated_hooks);
+        assert!(result.updated_settings);
+        assert!(!result.hook_path.exists());
+        assert_eq!(
+            hooks["hooks"]["SessionStart"][0]["hooks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "echo keep"
+        );
+        assert_eq!(hooks["hooks"]["PreToolUse"][0]["matcher"], "Read");
+        assert!(settings["hooks"].get("SessionStart").is_none());
+        assert_eq!(settings["hooks"]["PostToolUse"][0]["matcher"], "Edit");
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_droid_errors_when_config_dir_missing() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("HOME", &home);
+
+        let err = install_droid().unwrap_err().to_string();
+
+        assert!(err.contains("droid config directory not found"));
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn install_opencode_writes_plugin_to_plugins_dir() {
         let _lock = integration_env_lock();
         let base = unique_base();
@@ -3181,6 +4165,84 @@ mod tests {
     }
 
     #[test]
+    fn install_hermes_preserves_flat_plugin_list() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        fs::create_dir_all(&hermes_dir).unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins:\n  - platforms/discord\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        install_hermes().unwrap();
+
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+        assert_eq!(
+            config,
+            "plugins:\n  - herdr-agent-state\n  - platforms/discord\n"
+        );
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_hermes_converts_flow_plugin_list_to_block_list() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        fs::create_dir_all(&hermes_dir).unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins: [platforms/discord]\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        install_hermes().unwrap();
+
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+        assert_eq!(
+            config,
+            "plugins:\n  - herdr-agent-state\n  - platforms/discord\n"
+        );
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn install_hermes_is_idempotent_for_quoted_flat_plugin_entry() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        fs::create_dir_all(&hermes_dir).unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins:\n  - \"herdr-agent-state\" # installed by herdr\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        install_hermes().unwrap();
+
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+        assert_eq!(
+            config,
+            "plugins:\n  - \"herdr-agent-state\" # installed by herdr\n"
+        );
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn uninstall_hermes_removes_plugin_and_enabled_entry() {
         let _lock = integration_env_lock();
         let base = unique_base();
@@ -3208,6 +4270,99 @@ mod tests {
         assert!(!plugin_dir.exists());
         assert!(config.contains("    - other-plugin"));
         assert!(!config.contains("herdr-agent-state"));
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn uninstall_hermes_preserves_flat_plugin_list() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
+            HERMES_PLUGIN_INIT_ASSET,
+        )
+        .unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins:\n  - other-plugin\n  - herdr-agent-state\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let result = uninstall_hermes().unwrap();
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+
+        assert!(result.removed_plugin_dir);
+        assert!(result.updated_config);
+        assert_eq!(config, "plugins:\n  - other-plugin\n");
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn uninstall_hermes_removes_flow_plugin_list_entry() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
+            HERMES_PLUGIN_INIT_ASSET,
+        )
+        .unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins: [other-plugin, herdr-agent-state]\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let result = uninstall_hermes().unwrap();
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+
+        assert!(result.removed_plugin_dir);
+        assert!(result.updated_config);
+        assert_eq!(config, "plugins:\n  - other-plugin\n");
+
+        std::env::remove_var("HOME");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn uninstall_hermes_removes_commented_flat_plugin_entry() {
+        let _lock = integration_env_lock();
+        let base = unique_base();
+        let home = base.join("home");
+        let hermes_dir = home.join(".hermes");
+        let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
+            HERMES_PLUGIN_INIT_ASSET,
+        )
+        .unwrap();
+        fs::write(
+            hermes_dir.join("config.yaml"),
+            "plugins:\n  - other-plugin\n  - herdr-agent-state # installed by herdr\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let result = uninstall_hermes().unwrap();
+        let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
+
+        assert!(result.removed_plugin_dir);
+        assert!(result.updated_config);
+        assert_eq!(config, "plugins:\n  - other-plugin\n");
 
         std::env::remove_var("HOME");
         let _ = fs::remove_dir_all(base);
@@ -3243,10 +4398,20 @@ mod tests {
         assert!(CODEX_HOOK_ASSET.contains("pane.report_agent_session"));
         assert!(!CODEX_HOOK_ASSET.contains("\"state\": action"));
         assert!(!CODEX_HOOK_ASSET.contains("pane.release_agent"));
+        assert!(KIMI_HOOK_ASSET.contains("source = \"herdr:kimi\""));
+        assert!(KIMI_HOOK_ASSET.contains("pane.report_agent"));
+        assert!(KIMI_HOOK_ASSET.contains("pane.release_agent"));
+        assert!(!KIMI_HOOK_ASSET.contains("agent_session_id"));
         assert!(COPILOT_HOOK_ASSET.contains("agent_session_id"));
         assert!(COPILOT_HOOK_ASSET.contains("notification_type"));
         assert!(COPILOT_HOOK_ASSET.contains("ask_user"));
         assert!(COPILOT_HOOK_ASSET.contains("exit_plan_mode"));
+        assert!(DROID_HOOK_ASSET.contains("hook_event_name"));
+        assert!(DROID_HOOK_ASSET.contains("SessionStart"));
+        assert!(DROID_HOOK_ASSET.contains("agent_session_id"));
+        assert!(DROID_HOOK_ASSET.contains("pane.report_agent_session"));
+        assert!(!DROID_HOOK_ASSET.contains("\"state\":"));
+        assert!(!DROID_HOOK_ASSET.contains("pane.release_agent"));
         assert!(OPENCODE_PLUGIN_ASSET.contains("properties?.sessionID"));
         assert!(OPENCODE_PLUGIN_ASSET.contains("agent_session_id: sessionID"));
         assert!(OPENCODE_PLUGIN_ASSET.contains("pane.report_agent_session"));

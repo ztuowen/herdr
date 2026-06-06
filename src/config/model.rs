@@ -8,6 +8,8 @@ use super::{
     DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_SCROLLBACK_LIMIT_BYTES,
 };
 
+pub const MAX_TOAST_DELAY_SECONDS: u64 = 3600;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateChannelConfig {
@@ -47,6 +49,28 @@ pub enum ToastDelivery {
     Herdr,
     Terminal,
     System,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToastHerdrPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    #[default]
+    BottomRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToastClipboardPosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    #[default]
+    BottomCenter,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -122,6 +146,22 @@ fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModif
 #[derive(Debug, Clone)]
 pub struct ToastConfig {
     pub delivery: ToastDelivery,
+    pub delay_seconds: u64,
+    pub herdr: HerdrToastConfig,
+    pub clipboard: ClipboardToastConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct HerdrToastConfig {
+    pub position: ToastHerdrPosition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ClipboardToastConfig {
+    pub enabled: bool,
+    pub position: ToastClipboardPosition,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -318,6 +358,14 @@ pub struct KeysConfig {
     pub focus_pane_up: BindingConfig,
     /// Focus the pane to the right. Default: "prefix+l".
     pub focus_pane_right: BindingConfig,
+    /// Swap the focused pane with the pane to the left. Default: "prefix+shift+h".
+    pub swap_pane_left: BindingConfig,
+    /// Swap the focused pane with the pane below. Default: "prefix+shift+j".
+    pub swap_pane_down: BindingConfig,
+    /// Swap the focused pane with the pane above. Default: "prefix+shift+k".
+    pub swap_pane_up: BindingConfig,
+    /// Swap the focused pane with the pane to the right. Default: "prefix+shift+l".
+    pub swap_pane_right: BindingConfig,
     /// Cycle to the next pane. Default: "prefix+tab".
     pub cycle_pane_next: BindingConfig,
     /// Cycle to the previous pane. Default: "prefix+shift+tab".
@@ -482,6 +530,12 @@ pub struct ExperimentalConfig {
     /// Cursor shape rendered for the IME anchor when
     /// `reveal_hidden_cursor_for_cjk_ime` is enabled. Default: "steady_block".
     pub cjk_ime_cursor_shape: ImeCursorShape,
+    /// While prefix mode is active, temporarily switch the macOS host input
+    /// source to an ASCII-capable keyboard layout so prefix commands are read
+    /// as ASCII even when a CJK IME is active, then restore the previous input
+    /// source when prefix mode exits. macOS only; a no-op elsewhere and a
+    /// best-effort no-op if the switch fails. Default: false.
+    pub switch_ascii_input_source_in_prefix: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -538,6 +592,10 @@ impl Default for KeysConfig {
             focus_pane_down: BindingConfig::one("prefix+j"),
             focus_pane_up: BindingConfig::one("prefix+k"),
             focus_pane_right: BindingConfig::one("prefix+l"),
+            swap_pane_left: BindingConfig::one("prefix+shift+h"),
+            swap_pane_down: BindingConfig::one("prefix+shift+j"),
+            swap_pane_up: BindingConfig::one("prefix+shift+k"),
+            swap_pane_right: BindingConfig::one("prefix+shift+l"),
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
             last_pane: BindingConfig::empty(),
@@ -601,6 +659,26 @@ impl Default for ToastConfig {
     fn default() -> Self {
         Self {
             delivery: ToastDelivery::Off,
+            delay_seconds: 1,
+            herdr: HerdrToastConfig::default(),
+            clipboard: ClipboardToastConfig::default(),
+        }
+    }
+}
+
+impl Default for HerdrToastConfig {
+    fn default() -> Self {
+        Self {
+            position: ToastHerdrPosition::BottomRight,
+        }
+    }
+}
+
+impl Default for ClipboardToastConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            position: ToastClipboardPosition::BottomCenter,
         }
     }
 }
@@ -615,6 +693,9 @@ impl<'de> Deserialize<'de> for ToastConfig {
         struct RawToastConfig {
             delivery: Option<ToastDelivery>,
             enabled: Option<bool>,
+            delay_seconds: Option<u64>,
+            herdr: HerdrToastConfig,
+            clipboard: ClipboardToastConfig,
         }
 
         let raw = RawToastConfig::deserialize(deserializer)?;
@@ -623,7 +704,19 @@ impl<'de> Deserialize<'de> for ToastConfig {
             Some(false) | None => ToastDelivery::Off,
         };
         let delivery = raw.delivery.unwrap_or(legacy_delivery);
-        Ok(Self { delivery })
+        let default = Self::default();
+        let delay_seconds = raw.delay_seconds.unwrap_or(default.delay_seconds);
+        if delay_seconds > MAX_TOAST_DELAY_SECONDS {
+            return Err(de::Error::custom(format!(
+                "ui.toast.delay_seconds must be between 0 and {MAX_TOAST_DELAY_SECONDS}"
+            )));
+        }
+        Ok(Self {
+            delivery,
+            delay_seconds,
+            herdr: raw.herdr,
+            clipboard: raw.clipboard,
+        })
     }
 }
 
@@ -772,6 +865,23 @@ reveal_hidden_cursor_for_cjk_ime = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.experimental.reveal_hidden_cursor_for_cjk_ime);
+    }
+
+    #[test]
+    fn switch_ascii_input_source_in_prefix_default_off_and_parse() {
+        let default_config = Config::default();
+        assert!(
+            !default_config
+                .experimental
+                .switch_ascii_input_source_in_prefix
+        );
+
+        let toml = r#"
+[experimental]
+switch_ascii_input_source_in_prefix = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.experimental.switch_ascii_input_source_in_prefix);
     }
 
     #[test]
@@ -968,9 +1078,40 @@ mouse_scroll_lines = 0
         let toml = r#"
 [ui.toast]
 delivery = "terminal"
+delay_seconds = 2
+
+[ui.toast.herdr]
+position = "top-left"
+
+[ui.toast.clipboard]
+enabled = false
+position = "top-center"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::Terminal);
+        assert_eq!(config.ui.toast.delay_seconds, 2);
+        assert_eq!(config.ui.toast.herdr.position, ToastHerdrPosition::TopLeft);
+        assert!(!config.ui.toast.clipboard.enabled);
+        assert_eq!(
+            config.ui.toast.clipboard.position,
+            ToastClipboardPosition::TopCenter
+        );
+    }
+
+    #[test]
+    fn toast_config_defaults_preserve_existing_behavior_with_delay() {
+        let config = Config::default();
+        assert_eq!(config.ui.toast.delivery, ToastDelivery::Off);
+        assert_eq!(config.ui.toast.delay_seconds, 1);
+        assert_eq!(
+            config.ui.toast.herdr.position,
+            ToastHerdrPosition::BottomRight
+        );
+        assert!(config.ui.toast.clipboard.enabled);
+        assert_eq!(
+            config.ui.toast.clipboard.position,
+            ToastClipboardPosition::BottomCenter
+        );
     }
 
     #[test]
@@ -1015,6 +1156,21 @@ delivery = "terminal"
     }
 
     #[test]
+    fn toast_config_rejects_unbounded_delay() {
+        let toml = format!(
+            r#"
+[ui.toast]
+delay_seconds = {}
+"#,
+            MAX_TOAST_DELAY_SECONDS + 1
+        );
+
+        let error = toml::from_str::<Config>(&toml).unwrap_err().to_string();
+
+        assert!(error.contains("ui.toast.delay_seconds must be between 0 and 3600"));
+    }
+
+    #[test]
     fn missing_onboarding_shows_setup() {
         let config = Config::default();
         assert!(config.should_show_onboarding());
@@ -1054,10 +1210,12 @@ pane_history = true
 [experimental]
 allow_nested = true
 pane_history = true
+switch_ascii_input_source_in_prefix = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.experimental.allow_nested);
         assert!(config.experimental.pane_history);
+        assert!(config.experimental.switch_ascii_input_source_in_prefix);
     }
 
     #[test]

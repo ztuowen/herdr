@@ -146,9 +146,15 @@ impl PaneTerminal {
             .process_pty_bytes(pane_id, shell_pid, bytes, response_writer)
     }
 
-    pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
+    pub fn resize(
+        &self,
+        rows: u16,
+        cols: u16,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) -> Vec<Bytes> {
         self.ghostty
-            .resize(rows, cols, cell_width_px, cell_height_px);
+            .resize(rows, cols, cell_width_px, cell_height_px)
     }
 
     pub fn scroll_up(&self, lines: usize) {
@@ -662,7 +668,13 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
+    pub fn resize(
+        &self,
+        rows: u16,
+        cols: u16,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) -> Vec<Bytes> {
         if let Ok(mut core) = self.core.lock() {
             let offset_from_bottom = core
                 .terminal
@@ -694,6 +706,7 @@ impl GhosttyPaneTerminal {
             let _ = core
                 .terminal
                 .resize(cols, rows, cell_width_px, cell_height_px);
+            let terminal_responses = self.drain_pending_pty_responses();
 
             let bottom_is_blank = ghostty_detection_text(&core)
                 .map(|text| text.trim().is_empty())
@@ -716,6 +729,9 @@ impl GhosttyPaneTerminal {
                     remaining -= 1;
                 }
             }
+            terminal_responses
+        } else {
+            Vec::new()
         }
     }
 
@@ -1058,7 +1074,7 @@ impl GhosttyPaneTerminal {
                 Ok(rows) => rows,
                 Err(_) => return,
             };
-            let mut grapheme_bytes = Vec::new();
+            let mut grapheme_codepoints = Vec::new();
             let mut symbol_scratch = String::new();
             let mut y = 0u16;
             while y < area.height && rows.next() {
@@ -1081,7 +1097,7 @@ impl GhosttyPaneTerminal {
                         &cells,
                         basic.wide,
                         hide_kitty_placeholders,
-                        &mut grapheme_bytes,
+                        &mut grapheme_codepoints,
                         &mut symbol_scratch,
                     ) {
                         Ok(symbol) => symbol,
@@ -1226,7 +1242,7 @@ fn ghostty_collect_dirty_patch(
     let Ok(mut rows) = render_state.populate_row_iterator(&mut row_iterator) else {
         fallback!("populate_rows_error");
     };
-    let mut grapheme_bytes = Vec::new();
+    let mut grapheme_codepoints = Vec::new();
     let mut symbol_scratch = String::new();
     let mut patch_rows = Vec::new();
     let mut y = 0u16;
@@ -1264,7 +1280,7 @@ fn ghostty_collect_dirty_patch(
                     &cells,
                     basic.wide,
                     hide_kitty_placeholders,
-                    &mut grapheme_bytes,
+                    &mut grapheme_codepoints,
                     &mut symbol_scratch,
                 ) {
                     Ok(symbol) => symbol.to_owned(),
@@ -1539,7 +1555,7 @@ fn ghostty_buffer_symbol_into<'a>(
     cells: &crate::ghostty::RowCellIter<'_>,
     wide: crate::ghostty::CellWide,
     hide_kitty_placeholders: bool,
-    grapheme_bytes: &mut Vec<u8>,
+    grapheme_codepoints: &mut Vec<u32>,
     symbol_scratch: &'a mut String,
 ) -> Result<&'a str, crate::ghostty::Error> {
     symbol_scratch.clear();
@@ -1547,7 +1563,7 @@ fn ghostty_buffer_symbol_into<'a>(
         crate::ghostty::CellWide::SpacerTail => {}
         crate::ghostty::CellWide::SpacerHead => symbol_scratch.push(' '),
         crate::ghostty::CellWide::Narrow | crate::ghostty::CellWide::Wide => {
-            cells.grapheme_text_into(grapheme_bytes, symbol_scratch)?;
+            cells.grapheme_text_into(grapheme_codepoints, symbol_scratch)?;
             let hidden_kitty_placeholder = hide_kitty_placeholders
                 && symbol_scratch.chars().next().map(u32::from)
                     == Some(crate::ghostty::KITTY_UNICODE_PLACEHOLDER);
@@ -2416,6 +2432,8 @@ mod tests {
     #[test]
     fn ghostty_normalize_buffer_symbol_prefers_grapheme_width_when_metadata_disagrees() {
         const WIDE_GRAPHEME: &str = "🙂";
+        const FLAG_GRAPHEME: &str = "🇧🇷";
+        const FAMILY_GRAPHEME: &str = "👨‍👩‍👧";
         const VS16_GRAPHEME: &str = "⚠️";
         const EMOJI_GRAPHEME: &str = "💳";
 
@@ -2426,6 +2444,14 @@ mod tests {
         assert_eq!(
             ghostty_normalize_buffer_symbol("a", crate::ghostty::CellWide::Wide),
             "  "
+        );
+        assert_eq!(
+            ghostty_normalize_buffer_symbol(FLAG_GRAPHEME, crate::ghostty::CellWide::Wide),
+            FLAG_GRAPHEME
+        );
+        assert_eq!(
+            ghostty_normalize_buffer_symbol(FAMILY_GRAPHEME, crate::ghostty::CellWide::Wide),
+            FAMILY_GRAPHEME
         );
         assert_eq!(
             ghostty_normalize_buffer_symbol("⌨️", crate::ghostty::CellWide::Narrow),
@@ -2446,6 +2472,74 @@ mod tests {
         assert_eq!(
             ghostty_normalize_buffer_symbol("xx", crate::ghostty::CellWide::SpacerHead),
             " "
+        );
+    }
+
+    fn render_cells_to_symbols(
+        terminal: &mut crate::ghostty::Terminal,
+    ) -> Vec<(crate::ghostty::CellWide, String)> {
+        let mut render_state = crate::ghostty::RenderState::new().unwrap();
+        render_state.update(terminal).unwrap();
+
+        let mut row_iterator = crate::ghostty::RowIterator::new().unwrap();
+        let mut rows = render_state
+            .populate_row_iterator(&mut row_iterator)
+            .unwrap();
+        let mut row_cells = crate::ghostty::RowCells::new().unwrap();
+        let mut grapheme_codepoints = Vec::new();
+        let mut symbol_scratch = String::new();
+        let mut out = Vec::new();
+
+        if rows.next() {
+            let mut cells = rows.populate_cells(&mut row_cells).unwrap();
+            while cells.next() {
+                let wide = cells.wide().unwrap_or(crate::ghostty::CellWide::Narrow);
+                let symbol = ghostty_buffer_symbol_into(
+                    &cells,
+                    wide,
+                    false,
+                    &mut grapheme_codepoints,
+                    &mut symbol_scratch,
+                )
+                .unwrap()
+                .to_string();
+                out.push((wide, symbol));
+            }
+        }
+
+        out
+    }
+
+    #[test]
+    fn grapheme_cluster_mode_renders_flag_emoji_in_single_wide_cell() {
+        let mut terminal = crate::ghostty::Terminal::new(40, 1, 0).unwrap();
+        terminal.enable_grapheme_cluster_mode().unwrap();
+        terminal.write("🇧🇷".as_bytes());
+
+        let cells = render_cells_to_symbols(&mut terminal);
+
+        assert!(
+            cells
+                .iter()
+                .any(|(wide, symbol)| *wide == crate::ghostty::CellWide::Wide && symbol == "🇧🇷"),
+            "expected a wide cell containing the full flag grapheme, got {cells:?}"
+        );
+    }
+
+    #[test]
+    fn grapheme_cluster_mode_renders_zwj_family_in_single_wide_cell() {
+        let mut terminal = crate::ghostty::Terminal::new(40, 1, 0).unwrap();
+        terminal.enable_grapheme_cluster_mode().unwrap();
+        terminal.write("👨\u{200d}👩\u{200d}👧".as_bytes());
+
+        let cells = render_cells_to_symbols(&mut terminal);
+
+        assert!(
+            cells
+                .iter()
+                .any(|(wide, symbol)| *wide == crate::ghostty::CellWide::Wide
+                    && symbol == "👨\u{200d}👩\u{200d}👧"),
+            "expected a wide cell containing the full ZWJ grapheme, got {cells:?}"
         );
     }
 
@@ -2619,6 +2713,21 @@ mod tests {
 
         assert!(pane.detection_text().trim().is_empty());
         assert!(pane.recent_text(3).trim().is_empty());
+    }
+
+    #[test]
+    fn resize_returns_in_band_size_report_response() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        terminal.mode_set(2048, true).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        let responses = pane.resize(40, 100, 9, 18);
+
+        assert_eq!(
+            responses,
+            vec![Bytes::from_static(b"\x1B[48;40;100;720;900t")]
+        );
     }
 
     #[test]

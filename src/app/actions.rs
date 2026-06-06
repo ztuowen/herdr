@@ -12,8 +12,9 @@ use crate::workspace::WorkspaceGitStatus;
 use unicode_width::UnicodeWidthChar;
 
 use super::state::{
-    text_matches_query, AppState, Mode, NavigatorRow, NavigatorStateFilter, NavigatorTarget,
-    PaneFocusTarget, ToastKind, ToastNotification, ToastTarget, ViewLayout,
+    text_matches_query, AgentNotificationDelivery, AppState, Mode, NavigatorRow,
+    NavigatorStateFilter, NavigatorTarget, PaneFocusTarget, PendingAgentNotification, ToastKind,
+    ToastNotification, ToastTarget, ViewLayout,
 };
 
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
@@ -69,6 +70,27 @@ pub fn notification_toast_for_state_change(
 
 fn toast_agent_label(agent_label: &str) -> &str {
     agent_label
+}
+
+fn toast_event_text(kind: ToastKind) -> &'static str {
+    match kind {
+        ToastKind::NeedsAttention => "needs attention",
+        ToastKind::Finished => "finished",
+        ToastKind::UpdateInstalled => "updated",
+    }
+}
+
+fn sound_for_toast_kind(
+    kind: ToastKind,
+    suppress_active_tab_notifications: bool,
+) -> Option<crate::sound::Sound> {
+    match kind {
+        ToastKind::NeedsAttention => Some(crate::sound::Sound::Request),
+        ToastKind::Finished if !suppress_active_tab_notifications => {
+            Some(crate::sound::Sound::Done)
+        }
+        ToastKind::Finished | ToastKind::UpdateInstalled => None,
+    }
 }
 
 pub fn notification_context(
@@ -182,7 +204,16 @@ impl AppState {
         false
     }
 
+    #[cfg(test)]
     pub(crate) fn open_navigator(&mut self) {
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        self.open_navigator_from(&terminal_runtimes);
+    }
+
+    pub(crate) fn open_navigator_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) {
         self.navigator.query.clear();
         self.navigator.search_focused = false;
         self.navigator.state_filter = None;
@@ -194,17 +225,27 @@ impl AppState {
         }
 
         self.mode = Mode::Navigator;
-        self.navigator.selected = self.current_navigator_row_index().unwrap_or(0);
-        self.ensure_navigator_selection_visible();
+        self.navigator.selected = self
+            .current_navigator_row_index_from(terminal_runtimes)
+            .unwrap_or(0);
+        self.ensure_navigator_selection_visible_from(terminal_runtimes);
     }
 
+    #[cfg(test)]
     pub(crate) fn navigator_rows(&self) -> Vec<NavigatorRow> {
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        self.navigator_rows_from(&terminal_runtimes)
+    }
+
+    pub(crate) fn navigator_rows_from(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) -> Vec<NavigatorRow> {
         let query = self.navigator.query.trim().to_lowercase();
         let query_kind = navigator_query_kind(&query, self.navigator.state_filter);
-        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
         let mut rows = Vec::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            let workspace_label = ws.display_name_from(&self.terminals, &terminal_runtimes);
+            let workspace_label = ws.display_name_from(&self.terminals, terminal_runtimes);
             let activity = workspace_activity_summary(ws, &self.terminals);
             let workspace_search_text = format!("{workspace_label} {activity}").to_lowercase();
             let workspace_matches = match query_kind {
@@ -397,21 +438,27 @@ impl AppState {
         rows
     }
 
-    fn current_navigator_row_index(&self) -> Option<usize> {
-        let rows = self.navigator_rows();
+    fn current_navigator_row_index_from(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) -> Option<usize> {
+        let rows = self.navigator_rows_from(terminal_runtimes);
         rows.iter()
             .position(|row| matches!(row.target, NavigatorTarget::Pane { .. }) && row.is_current)
             .or_else(|| rows.iter().position(|row| row.is_current))
     }
 
-    pub(crate) fn ensure_navigator_selection_visible(&mut self) {
+    pub(crate) fn ensure_navigator_selection_visible_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) {
         let body = self.navigator_body_rect();
         let viewport = body.height as usize;
         if viewport == 0 {
             self.navigator.scroll = 0;
             return;
         }
-        let max_scroll = self.navigator_max_scroll(viewport);
+        let max_scroll = self.navigator_max_scroll_from(terminal_runtimes, viewport);
         if self.navigator.selected < self.navigator.scroll {
             self.navigator.scroll = self.navigator.selected;
         } else if self.navigator.selected >= self.navigator.scroll.saturating_add(viewport) {
@@ -424,15 +471,25 @@ impl AppState {
         self.navigator.scroll = self.navigator.scroll.min(max_scroll);
     }
 
-    pub(crate) fn navigator_max_scroll(&self, viewport: usize) -> usize {
+    pub(crate) fn navigator_max_scroll_from(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        viewport: usize,
+    ) -> usize {
         if viewport == 0 {
             return 0;
         }
-        self.navigator_rows().len().saturating_sub(viewport)
+        self.navigator_rows_from(terminal_runtimes)
+            .len()
+            .saturating_sub(viewport)
     }
 
-    pub(crate) fn move_navigator_selection(&mut self, delta: isize) {
-        let count = self.navigator_rows().len();
+    pub(crate) fn move_navigator_selection_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        delta: isize,
+    ) {
+        let count = self.navigator_rows_from(terminal_runtimes).len();
         if count == 0 {
             self.navigator.selected = 0;
             self.navigator.scroll = 0;
@@ -440,17 +497,27 @@ impl AppState {
         }
         let current = self.navigator.selected.min(count - 1) as isize;
         self.navigator.selected = (current + delta).clamp(0, count as isize - 1) as usize;
-        self.ensure_navigator_selection_visible();
+        self.ensure_navigator_selection_visible_from(terminal_runtimes);
     }
 
-    pub(crate) fn clamp_navigator_selection(&mut self) {
-        let count = self.navigator_rows().len();
+    pub(crate) fn clamp_navigator_selection_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) {
+        let count = self.navigator_rows_from(terminal_runtimes).len();
         self.navigator.selected = self.navigator.selected.min(count.saturating_sub(1));
-        self.ensure_navigator_selection_visible();
+        self.ensure_navigator_selection_visible_from(terminal_runtimes);
     }
 
-    pub(crate) fn toggle_selected_navigator_workspace(&mut self) {
-        let Some(row) = self.navigator_rows().get(self.navigator.selected).cloned() else {
+    pub(crate) fn toggle_selected_navigator_workspace_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) {
+        let Some(row) = self
+            .navigator_rows_from(terminal_runtimes)
+            .get(self.navigator.selected)
+            .cloned()
+        else {
             return;
         };
         let NavigatorTarget::Workspace { ws_idx } = row.target else {
@@ -464,11 +531,24 @@ impl AppState {
         } else {
             self.navigator.expanded_workspaces.insert(workspace_id);
         }
-        self.clamp_navigator_selection();
+        self.clamp_navigator_selection_from(terminal_runtimes);
     }
 
+    #[cfg(test)]
     pub(crate) fn accept_navigator_selection(&mut self) -> bool {
-        let Some(row) = self.navigator_rows().get(self.navigator.selected).cloned() else {
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        self.accept_navigator_selection_from(&terminal_runtimes)
+    }
+
+    pub(crate) fn accept_navigator_selection_from(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) -> bool {
+        let Some(row) = self
+            .navigator_rows_from(terminal_runtimes)
+            .get(self.navigator.selected)
+            .cloned()
+        else {
             return false;
         };
         self.focus_navigator_target(row.target)
@@ -1292,6 +1372,28 @@ impl AppState {
 // Pane operations
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaneZoomCommand {
+    Toggle,
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaneZoomNoopReason {
+    SinglePane,
+    AlreadyZoomed,
+    AlreadyUnzoomed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PaneZoomOutcome {
+    pub changed: bool,
+    pub focus_changed: bool,
+    pub reason: Option<PaneZoomNoopReason>,
+    pub zoomed: bool,
+}
+
 impl AppState {
     pub fn navigate_pane(&mut self, direction: NavDirection) {
         let Some(ws_idx) = self.active else {
@@ -1310,6 +1412,41 @@ impl AppState {
             if let Some(target) = find_in_direction(focused, direction, &panes) {
                 self.focus_pane_in_workspace(ws_idx, target);
             }
+        }
+    }
+
+    pub fn swap_pane(&mut self, direction: NavDirection) -> bool {
+        let Some(ws_idx) = self.active else {
+            return false;
+        };
+        let Some(tab) = self.workspaces.get(ws_idx).and_then(|ws| ws.active_tab()) else {
+            return false;
+        };
+        let panes = if tab.zoomed {
+            tab.layout.panes(self.view.terminal_area)
+        } else {
+            self.view.pane_infos.clone()
+        };
+
+        let Some(focused) = panes.iter().find(|p| p.is_focused) else {
+            return false;
+        };
+        let Some(target) = find_in_direction(focused, direction, &panes) else {
+            return false;
+        };
+        let source = focused.id;
+        let Some(tab) = self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.active_tab_mut())
+        else {
+            return false;
+        };
+        if tab.layout.swap_panes(source, target) {
+            self.mark_session_dirty();
+            true
+        } else {
+            false
         }
     }
 
@@ -1375,17 +1512,72 @@ impl AppState {
         }
     }
 
-    pub fn toggle_zoom(&mut self) {
-        if let Some(tab) = self
-            .active
-            .and_then(|i| self.workspaces.get_mut(i))
-            .and_then(|ws| ws.active_tab_mut())
-        {
-            if tab.layout.pane_count() > 1 {
-                tab.zoomed = !tab.zoomed;
-                self.mark_session_dirty();
-            }
+    pub(crate) fn apply_pane_zoom(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        command: PaneZoomCommand,
+    ) -> Option<PaneZoomOutcome> {
+        let tab_idx = self
+            .workspaces
+            .get(ws_idx)?
+            .find_tab_index_for_pane(pane_id)?;
+        let focus_changed = self.focus_pane_in_workspace(ws_idx, pane_id);
+        let tab = self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))?;
+        if tab.layout.pane_count() <= 1 {
+            return Some(PaneZoomOutcome {
+                changed: false,
+                focus_changed,
+                reason: Some(PaneZoomNoopReason::SinglePane),
+                zoomed: tab.zoomed,
+            });
         }
+
+        let desired = match command {
+            PaneZoomCommand::Toggle => !tab.zoomed,
+            PaneZoomCommand::On => true,
+            PaneZoomCommand::Off => false,
+        };
+        let reason = match (command, tab.zoomed) {
+            (PaneZoomCommand::On, true) => Some(PaneZoomNoopReason::AlreadyZoomed),
+            (PaneZoomCommand::Off, false) => Some(PaneZoomNoopReason::AlreadyUnzoomed),
+            _ => None,
+        };
+        if reason.is_some() {
+            return Some(PaneZoomOutcome {
+                changed: false,
+                focus_changed,
+                reason,
+                zoomed: tab.zoomed,
+            });
+        }
+
+        tab.zoomed = desired;
+        let zoomed = tab.zoomed;
+        self.mark_session_dirty();
+        Some(PaneZoomOutcome {
+            changed: true,
+            focus_changed,
+            reason: None,
+            zoomed,
+        })
+    }
+
+    pub fn toggle_zoom(&mut self) {
+        let Some(ws_idx) = self.active else {
+            return;
+        };
+        let Some(pane_id) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(crate::workspace::Workspace::focused_pane_id)
+        else {
+            return;
+        };
+        self.apply_pane_zoom(ws_idx, pane_id, PaneZoomCommand::Toggle);
     }
 
     pub(crate) fn workspace_close_would_close_worktree_group(&self, ws_idx: usize) -> bool {
@@ -2004,6 +2196,7 @@ impl AppState {
                         kind: ToastKind::UpdateInstalled,
                         title: format!("v{version} available"),
                         context: crate::update::update_install_instruction(&install_command),
+                        position: None,
                         target: None,
                     });
                 }
@@ -2224,12 +2417,149 @@ impl AppState {
         }
         let seen = pane.seen;
 
-        if self.local_sound_playback && self.sound.allows(change.known_agent) {
-            if let Some(sound) = notification_sound_for_state_change(
-                suppress_active_tab_notifications,
-                change.previous_state,
+        if let Some(delivery) = self.record_or_deliver_agent_notification(ws_idx, pane_id, change) {
+            self.apply_agent_notification_delivery(&delivery);
+        }
+
+        Some(seen)
+    }
+
+    fn record_or_deliver_agent_notification(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        change: &EffectiveStateChange,
+    ) -> Option<AgentNotificationDelivery> {
+        self.pending_agent_notifications.remove(&pane_id);
+
+        let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
+        let suppress_active_tab_notifications =
+            active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
+
+        let client_notification_kind = notification_toast_for_state_change(
+            suppress_active_tab_notifications,
+            change.previous_state,
+            change.state,
+        );
+        let sound = notification_sound_for_state_change(
+            suppress_active_tab_notifications,
+            change.previous_state,
+            change.state,
+        );
+        if client_notification_kind.is_none() && sound.is_none() {
+            return None;
+        }
+
+        let agent_label = change.agent_label.clone()?;
+        let kind = client_notification_kind.unwrap_or(match sound {
+            Some(crate::sound::Sound::Request) => ToastKind::NeedsAttention,
+            Some(crate::sound::Sound::Done) | None => ToastKind::Finished,
+        });
+        let workspace_id = self.workspaces[ws_idx].id.clone();
+
+        if self.toast_config.delay_seconds == 0 {
+            return self.agent_notification_delivery(
+                ws_idx,
+                pane_id,
+                workspace_id,
+                agent_label,
+                change.known_agent,
+                kind,
                 change.state,
-            ) {
+            );
+        }
+
+        self.pending_agent_notifications.insert(
+            pane_id,
+            PendingAgentNotification {
+                pane_id,
+                workspace_id,
+                agent_label,
+                known_agent: change.known_agent,
+                kind,
+                state: change.state,
+                deadline: {
+                    let now = std::time::Instant::now();
+                    let delay_seconds = self
+                        .toast_config
+                        .delay_seconds
+                        .min(crate::config::MAX_TOAST_DELAY_SECONDS);
+                    now.checked_add(std::time::Duration::from_secs(delay_seconds))
+                        .unwrap_or(now)
+                },
+            },
+        );
+        None
+    }
+
+    fn agent_notification_delivery(
+        &self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        workspace_id: String,
+        agent_label: String,
+        known_agent: Option<Agent>,
+        kind: ToastKind,
+        expected_state: AgentState,
+    ) -> Option<AgentNotificationDelivery> {
+        let terminal_state = self
+            .workspaces
+            .get(ws_idx)?
+            .pane_state(pane_id)
+            .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))?;
+        if terminal_state.state != expected_state {
+            return None;
+        }
+        if terminal_state.effective_agent_label() != Some(agent_label.as_str()) {
+            return None;
+        }
+
+        let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
+        let suppress_active_tab_notifications =
+            active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
+        let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
+            .filter(|_| self.sound.allows(known_agent));
+        let build_toast = || {
+            let workspace_label = self.workspaces[ws_idx].display_name();
+            let context =
+                notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
+            ToastNotification {
+                kind,
+                title: format!(
+                    "{} {}",
+                    toast_agent_label(&agent_label),
+                    toast_event_text(kind)
+                ),
+                context,
+                position: None,
+                target: Some(ToastTarget {
+                    workspace_id: workspace_id.clone(),
+                    pane_id,
+                }),
+            }
+        };
+        let toast = (!is_active_tab).then(&build_toast);
+        let client_notification = (!suppress_active_tab_notifications).then(build_toast);
+
+        if toast.is_none() && client_notification.is_none() && sound.is_none() {
+            return None;
+        }
+
+        Some(AgentNotificationDelivery {
+            pane_id,
+            workspace_id,
+            agent_label,
+            known_agent,
+            kind,
+            toast,
+            client_notification,
+            sound,
+        })
+    }
+
+    fn apply_agent_notification_delivery(&mut self, delivery: &AgentNotificationDelivery) {
+        if self.local_sound_playback {
+            if let Some(sound) = delivery.sound {
                 crate::sound::play(sound, &self.sound);
             }
         }
@@ -2238,42 +2568,61 @@ impl AppState {
             self.toast_config.delivery,
             crate::config::ToastDelivery::Herdr
         ) {
-            if let (Some(agent_label), Some(kind)) = (
-                change.agent_label.as_deref(),
-                notification_toast_for_state_change(
-                    is_active_tab,
-                    change.previous_state,
-                    change.state,
-                ),
-            ) {
-                let event_text = match kind {
-                    ToastKind::NeedsAttention => "needs attention",
-                    ToastKind::Finished => "finished",
-                    ToastKind::UpdateInstalled => "updated",
-                };
-                let workspace_label = self.workspaces[ws_idx].display_name();
-                let context = notification_context(
-                    &self.workspaces[ws_idx],
-                    &workspace_label,
-                    ws_idx,
-                    pane_id,
-                );
-                self.toast = Some(ToastNotification {
-                    kind,
-                    title: format!("{} {}", toast_agent_label(agent_label), event_text),
-                    context,
-                    target: Some(ToastTarget {
-                        workspace_id: self.workspaces[ws_idx].id.clone(),
-                        pane_id,
-                    }),
-                });
+            if let Some(toast) = delivery.toast.clone() {
+                self.toast = Some(toast);
             }
         }
+    }
 
-        Some(seen)
+    pub fn next_pending_agent_notification_deadline(&self) -> Option<std::time::Instant> {
+        self.pending_agent_notifications
+            .values()
+            .map(|pending| pending.deadline)
+            .min()
+    }
+
+    pub fn drain_due_agent_notifications(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Vec<AgentNotificationDelivery> {
+        let due_panes: Vec<PaneId> = self
+            .pending_agent_notifications
+            .iter()
+            .filter_map(|(&pane_id, pending)| (pending.deadline <= now).then_some(pane_id))
+            .collect();
+        let mut deliveries = Vec::new();
+
+        for pane_id in due_panes {
+            let Some(pending) = self.pending_agent_notifications.remove(&pane_id) else {
+                continue;
+            };
+            let Some(ws_idx) = self
+                .workspaces
+                .iter()
+                .position(|ws| ws.id == pending.workspace_id)
+            else {
+                continue;
+            };
+            let Some(delivery) = self.agent_notification_delivery(
+                ws_idx,
+                pending.pane_id,
+                pending.workspace_id,
+                pending.agent_label,
+                pending.known_agent,
+                pending.kind,
+                pending.state,
+            ) else {
+                continue;
+            };
+            self.apply_agent_notification_delivery(&delivery);
+            deliveries.push(delivery);
+        }
+
+        deliveries
     }
 
     fn handle_pane_died(&mut self, pane_id: PaneId) {
+        self.pending_agent_notifications.remove(&pane_id);
         let ws_idx = self
             .workspaces
             .iter()
@@ -2340,6 +2689,7 @@ mod tests {
 
     fn app_with_workspaces(names: &[&str]) -> AppState {
         let mut state = AppState::test_new();
+        state.toast_config.delay_seconds = 0;
         for name in names {
             let ws = Workspace::test_new(name);
             state.workspaces.push(ws);
@@ -2604,6 +2954,67 @@ mod tests {
                 tab_idx: 1
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn navigator_rows_match_live_root_runtime_cwd_workspace_label() {
+        let unique = format!(
+            "herdr-navigator-runtime-cwd-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let stale_cwd = root.join("issue-264-nix-support");
+        let live_cwd = root.join("herdr");
+        std::fs::create_dir_all(stale_cwd.join(".git")).unwrap();
+        std::fs::create_dir_all(live_cwd.join(".git")).unwrap();
+
+        let mut state = AppState::test_new();
+        let mut workspace = Workspace::test_new("stale-name");
+        workspace.custom_name = None;
+        workspace.identity_cwd = stale_cwd.clone();
+        let pane = workspace.tabs[0].root_pane;
+        state.workspaces = vec![workspace];
+        state.ensure_test_terminals();
+        let terminal_id = state.workspaces[0].terminal_id(pane).cloned().unwrap();
+        state.terminals.get_mut(&terminal_id).unwrap().cwd = stale_cwd;
+
+        let (events, _) = tokio::sync::mpsc::channel(4);
+        let runtime = crate::terminal::TerminalRuntime::spawn(
+            pane,
+            24,
+            80,
+            live_cwd.clone(),
+            0,
+            crate::terminal_theme::TerminalTheme::default(),
+            crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
+            events,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while runtime.cwd() != Some(live_cwd.clone()) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut runtime_registry = crate::terminal::TerminalRuntimeRegistry::new();
+        runtime_registry.insert(terminal_id, runtime);
+        state.open_navigator_from(&runtime_registry);
+        state.navigator.query = "herdr".into();
+        let rows = state.navigator_rows_from(&runtime_registry);
+
+        for (_, runtime) in runtime_registry.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(root);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "herdr (1)");
     }
 
     #[test]
@@ -3564,6 +3975,157 @@ mod tests {
     }
 
     #[test]
+    fn delayed_background_waiting_schedules_before_toast() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.toast_config.delay_seconds = 1;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+
+        assert!(state.toast.is_none());
+        assert!(state.pending_agent_notifications.contains_key(&bg_pane_id));
+
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+        let deliveries = state.drain_due_agent_notifications(deadline);
+        assert_eq!(deliveries.len(), 1);
+
+        let toast = state.toast.as_ref().unwrap();
+        assert_eq!(toast.kind, ToastKind::NeedsAttention);
+        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.context, "background · 2");
+        assert!(state.pending_agent_notifications.is_empty());
+    }
+
+    #[test]
+    fn delayed_background_waiting_cancels_when_agent_resumes_working() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.toast_config.delay_seconds = 1;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Working,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: true,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+
+        assert!(state.pending_agent_notifications.is_empty());
+        assert!(state.drain_due_agent_notifications(deadline).is_empty());
+        assert!(state.toast.is_none());
+    }
+
+    #[test]
+    fn delayed_background_waiting_is_suppressed_if_pane_becomes_active() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.toast_config.delay_seconds = 1;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+        state.active = Some(1);
+
+        assert!(state.drain_due_agent_notifications(deadline).is_empty());
+        assert!(state.toast.is_none());
+    }
+
+    #[test]
+    fn delayed_active_tab_unfocused_keeps_client_notification_available() {
+        let mut state = app_with_workspaces(&["active"]);
+        state.active = Some(0);
+        state.outer_terminal_focus = Some(false);
+        state.toast_config.delivery = crate::config::ToastDelivery::System;
+        state.toast_config.delay_seconds = 1;
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+        let deliveries = state.drain_due_agent_notifications(deadline);
+
+        assert_eq!(deliveries.len(), 1);
+        assert!(deliveries[0].toast.is_none());
+        assert!(deliveries[0].client_notification.is_some());
+        assert!(state.toast.is_none());
+    }
+
+    #[test]
+    fn delayed_background_waiting_is_cleared_when_pane_dies() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.toast_config.delay_seconds = 1;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: false,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+        state.handle_app_event(AppEvent::PaneDied {
+            pane_id: bg_pane_id,
+        });
+
+        assert!(state.pending_agent_notifications.is_empty());
+        assert!(state.drain_due_agent_notifications(deadline).is_empty());
+        assert!(state.toast.is_none());
+    }
+
+    #[test]
     fn hook_reported_unknown_agent_sets_toast_title_from_label() {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.active = Some(0);
@@ -3981,6 +4543,91 @@ mod tests {
         assert_eq!(state.view.pane_infos.len(), 1);
         assert_eq!(state.view.pane_infos[0].id, right);
         assert!(state.view.pane_infos[0].inner_rect.x > state.view.pane_infos[0].rect.x);
+    }
+
+    #[test]
+    fn swap_pane_direction_preserves_focus_and_swaps_layout_cells() {
+        let mut state = app_with_workspaces(&["test"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let right = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].layout.focus_pane(root);
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 100, 20));
+        let before_root_rect = state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == root)
+            .unwrap()
+            .rect;
+        let before_right_rect = state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == right)
+            .unwrap()
+            .rect;
+
+        assert!(state.swap_pane(NavDirection::Right));
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 100, 20));
+
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(root));
+        assert_eq!(
+            state
+                .view
+                .pane_infos
+                .iter()
+                .find(|info| info.id == root)
+                .unwrap()
+                .rect,
+            before_right_rect
+        );
+        assert_eq!(
+            state
+                .view
+                .pane_infos
+                .iter()
+                .find(|info| info.id == right)
+                .unwrap()
+                .rect,
+            before_root_rect
+        );
+    }
+
+    #[test]
+    fn swap_pane_direction_stays_zoomed_and_mutates_hidden_layout() {
+        let mut state = app_with_workspaces(&["test"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let right = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].layout.focus_pane(root);
+        state.workspaces[0].zoomed = true;
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 100, 20));
+
+        assert!(state.swap_pane(NavDirection::Right));
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 100, 20));
+
+        assert!(state.workspaces[0].zoomed);
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(root));
+        assert_eq!(state.view.pane_infos.len(), 1);
+        assert_eq!(state.view.pane_infos[0].id, root);
+
+        state.workspaces[0].zoomed = false;
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 100, 20));
+        let root_rect = state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == root)
+            .unwrap()
+            .rect;
+        let right_rect = state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == right)
+            .unwrap()
+            .rect;
+
+        assert!(root_rect.x > right_rect.x);
     }
 
     #[test]

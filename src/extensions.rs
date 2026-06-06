@@ -130,6 +130,7 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                     kind: crate::app::state::ToastKind::Finished,
                                     title: "Speech to Text".into(),
                                     context: "Refining...".into(),
+                                    position: None,
                                     target: None,
                                 });
 
@@ -184,6 +185,7 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                         kind: crate::app::state::ToastKind::NeedsAttention,
                         title: "Speech to Text Error".into(),
                         context: err.clone(),
+                        position: None,
                         target: None,
                     });
                 }
@@ -209,6 +211,7 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                         kind: crate::app::state::ToastKind::Finished,
                         title: "Speech to Text".into(),
                         context: sanitized.clone(),
+                        position: None,
                         target: None,
                     });
                     if let Some(ws_idx) = app
@@ -286,6 +289,7 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                         kind: crate::app::state::ToastKind::NeedsAttention,
                         title: "Speech to Text Error".into(),
                         context: err.clone(),
+                        position: None,
                         target: None,
                     });
                 }
@@ -362,6 +366,7 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                 kind: crate::app::state::ToastKind::NeedsAttention,
                 title: "Audio Summary Error".into(),
                 context: err.clone(),
+                position: None,
                 target: None,
             });
             app.render_dirty

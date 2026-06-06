@@ -103,7 +103,9 @@ impl App {
                     Mode::Settings => self.handle_settings_key(key_event),
                     Mode::GlobalMenu => handle_global_menu_key(&mut self.state, key_event),
                     Mode::KeybindHelp => handle_keybind_help_key(&mut self.state, key_event),
-                    Mode::Navigator => handle_navigator_key(&mut self.state, key_event),
+                    Mode::Navigator => {
+                        handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
+                    }
                     Mode::Kanban => {}
                     Mode::Terminal => unreachable!(),
                 }
@@ -200,6 +202,7 @@ impl App {
                         kind: crate::app::state::ToastKind::NeedsAttention,
                         title: "Speech to Text".into(),
                         context: "Recording aborted.".into(),
+                        position: None,
                         target: None,
                     });
                     self.sync_toast_deadline(previous_toast);
@@ -396,7 +399,9 @@ impl App {
                     SettingsAction::SavePaneHistory(enabled) => {
                         self.save_pane_history_persistence(enabled)
                     }
-
+                    SettingsAction::SaveSwitchAsciiInputSourceInPrefix(enabled) => {
+                        self.save_switch_ascii_input_source_in_prefix(enabled)
+                    }
                     SettingsAction::InstallRecommendedIntegrations => {
                         self.install_recommended_integrations()
                     }

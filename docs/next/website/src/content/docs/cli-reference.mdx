@@ -43,6 +43,14 @@ herdr server reload-config
 
 `herdr server` runs the headless server explicitly. Use it for supervised or service-style setups. `reload-config` applies reloadable settings without restarting panes.
 
+## App
+
+```bash
+herdr app snapshot
+```
+
+`app snapshot` prints one aggregate JSON response with server version/protocol metadata plus the current workspaces, tabs, panes, agents, and kanban items. Use it when a script needs a single joined view instead of calling each list endpoint separately.
+
 ## Notifications
 
 ```bash

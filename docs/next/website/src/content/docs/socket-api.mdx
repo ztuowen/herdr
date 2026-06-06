@@ -25,6 +25,7 @@ The socket API can:
 - create, list, focus, rename, and close tabs
 - list, inspect, split, swap, focus, resize, rename, read, close, and send input to panes
 - list, inspect, read, send to, rename, focus, start, and attach agents through CLI helpers
+- inspect one aggregate app snapshot for joined workspace, tab, pane, agent, and kanban state
 - report custom agent state from hooks and plugins
 - subscribe to events and wait for output or state changes
 - install and uninstall built-in integrations
@@ -74,6 +75,12 @@ Read pane output:
 herdr pane read 1-2 --source recent --lines 50
 ```
 
+Read a joined app snapshot:
+
+```bash
+herdr app snapshot
+```
+
 ## Raw methods
 
 Raw socket method names use dot notation:
@@ -81,6 +88,7 @@ Raw socket method names use dot notation:
 | Area | Methods |
 | --- | --- |
 | Server | `ping`, `server.stop`, `server.reload_config` |
+| App | `app.snapshot` |
 | Notification | `notification.show` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
@@ -91,6 +99,18 @@ Raw socket method names use dot notation:
 | Integrations | `integration.install`, `integration.uninstall` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
+
+`app.snapshot` returns one joined view of the current server and app state:
+
+```json
+{"id":"req_snapshot","method":"app.snapshot","params":{}}
+```
+
+The response is `type: "app_snapshot"` with `server`, `workspaces`, `tabs`,
+`panes`, `agents`, and `kanban_items`. The `server` object includes Herdr's
+version and client/server protocol number. Use this endpoint when a tool needs
+a consistent top-level inventory; use narrower list/get methods when you only
+need one resource type.
 
 Pane control methods use public pane ids such as `1-1`. Omit `pane_id` to use
 the server's active focused pane.

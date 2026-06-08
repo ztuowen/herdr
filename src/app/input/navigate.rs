@@ -103,6 +103,21 @@ impl App {
             return;
         }
 
+        if self.state.workspaces.is_empty()
+            && matches!(
+                action_for_key(&self.state, raw_key, BindingDispatch::Direct),
+                Some(NavigateAction::NewWorkspace)
+            )
+        {
+            execute_navigate_action_in_context(
+                &mut self.state,
+                &mut self.terminal_runtimes,
+                NavigateAction::NewWorkspace,
+                ActionContext::Direct,
+            );
+            return;
+        }
+
         if let Some(action) = navigate_mode_action_for_key(&self.state, raw_key) {
             if action == NavigateAction::EditScrollback {
                 self.launch_focused_scrollback_editor();
@@ -490,6 +505,21 @@ pub(crate) fn handle_navigate_key(state: &mut AppState, key: KeyEvent) {
             state,
             &mut terminal_runtimes,
             NavigateAction::ToggleKanban,
+            ActionContext::Direct,
+        );
+        return;
+    }
+
+    if state.workspaces.is_empty()
+        && matches!(
+            action_for_key(state, terminal_key, BindingDispatch::Direct),
+            Some(NavigateAction::NewWorkspace)
+        )
+    {
+        execute_navigate_action_in_context(
+            state,
+            &mut terminal_runtimes,
+            NavigateAction::NewWorkspace,
             ActionContext::Direct,
         );
         return;
@@ -1167,6 +1197,37 @@ mod tests {
 
         assert!(state.request_new_workspace);
         assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn empty_landing_direct_new_workspace_key_requests_workspace() {
+        let mut state = crate::app::state::AppState::test_new();
+        state.mode = Mode::Navigate;
+        state.keybinds.new_workspace = crate::config::ActionKeybinds::direct("cmd+n");
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::SUPER),
+        );
+
+        assert!(state.request_new_workspace);
+        assert_eq!(state.mode, Mode::Navigate);
+        assert!(state.workspaces.is_empty());
+    }
+
+    #[test]
+    fn direct_new_workspace_key_is_not_global_in_navigate_mode_with_workspaces() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::Navigate;
+        state.keybinds.new_workspace = crate::config::ActionKeybinds::direct("cmd+n");
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::SUPER),
+        );
+
+        assert!(!state.request_new_workspace);
+        assert_eq!(state.mode, Mode::Navigate);
     }
 
     #[test]

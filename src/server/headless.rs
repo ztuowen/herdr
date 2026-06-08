@@ -520,12 +520,6 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render_cause.config_reload");
             }
 
-            if latest_app_client(&self.clients).is_some() && self.app.ensure_default_workspace() {
-                needs_render = true;
-                needs_full_render = true;
-                crate::render_prof::event("full_render_cause.default_workspace");
-            }
-
             self.drain_client_config_reload_request();
             self.stream_host_mouse_capture_mode();
 
@@ -2419,10 +2413,6 @@ impl HeadlessServer {
         }
 
         let mut changed = api::request_changes_ui(&msg.request);
-        let skip_default_workspace = matches!(
-            &msg.request.method,
-            api::schema::Method::ServerStop(_) | api::schema::Method::ServerLiveHandoff(_)
-        );
         changed |= self.drain_all_internal_events_with_forwarding();
 
         // Capture toast and effective pane states before the API call so we can
@@ -2606,10 +2596,6 @@ impl HeadlessServer {
                     );
                 }
             }
-        }
-
-        if !skip_default_workspace && latest_app_client(&self.clients).is_some() {
-            changed |= self.app.ensure_default_workspace();
         }
 
         changed

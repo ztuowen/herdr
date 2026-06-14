@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=herdr-kanban-lib
+source "$script_dir/herdr-kanban-lib"
+
+kanban_require_runtime
+kanban_need "$CLAUDE_BIN"
+
+cards_json="$("$HERDR_BIN" kanban list --status blocked)"
+panes_json="$("$HERDR_BIN" pane list)"
+
+selection_json="$(python3 - "$cards_json" "$panes_json" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+cards = json.loads(sys.argv[1]).get("result", {}).get("items", [])
+panes = json.loads(sys.argv[2]).get("result", {}).get("panes", [])
+live_panes = {pane.get("pane_id") for pane in panes if pane.get("pane_id")}
+audit_states = {
+    "human-review-required",
+    "triage-question-required",
+    "design-decision-required",
+}
+
+selected = []
+for card in cards:
+    path_value = card.get("description") or ""
+    if not path_value:
+        continue
+    path = pathlib.Path(path_value)
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8")
+    review_state = re.search(r"^review_state:[ \t]*(\S+)", text, re.MULTILINE)
+    if not review_state or review_state.group(1) not in audit_states:
+        continue
+    owner = re.search(r"^owner_role:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned = re.search(r"^assigned_pane:[ \t]*(\S+)", text, re.MULTILINE)
+    assigned_pane = assigned.group(1) if assigned else ""
+    if owner or assigned_pane:
+        continue
+    selected.append(card)
+
+print(json.dumps(selected))
+PY
+)"
+
+audit_rows="$(python3 - "$selection_json" <<'PY'
+import json
+import sys
+
+for card in json.loads(sys.argv[1]):
+    print("\t".join([card["uuid"], card["title"], card.get("description") or ""]))
+PY
+)"
+
+while IFS=$'\t' read -r uuid title description_path; do
+  [ -n "${uuid:-}" ] || continue
+  short="$(kanban_short_uuid "$uuid")"
+  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX human-audit $short"
+  prompt="$(kanban_prompt_human_audit "$uuid" "$description_path")"
+  claude_command="$(kanban_claude_command "$prompt" "$HERDR_KANBAN_HUMAN_AUDIT_CLAUDE_MODE")"
+
+  kanban_log "route human audit: $uuid $title"
+  if kanban_is_dry_run; then
+    kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
+    kanban_log "dry-run: HERDR_PANE_ID=<root-pane> $HERDR_BIN kanban attach $uuid"
+    kanban_log "dry-run: $HERDR_BIN pane run <root-pane> '$claude_command'"
+    continue
+  fi
+
+  workspace_json="$("$HERDR_BIN" workspace create --cwd "$HERDR_KANBAN_WORKTREE" --label "$workspace_label" --no-focus)"
+  workspace_ids="$(python3 - "$workspace_json" <<'PY'
+import json
+import sys
+result = json.loads(sys.argv[1])["result"]
+print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
+PY
+)"
+  read -r workspace_id pane_id <<<"$workspace_ids"
+  HERDR_PANE_ID="$pane_id" "$HERDR_BIN" kanban attach "$uuid" >/dev/null
+  kanban_update_card_meta "$description_path" "human-audit" "$pane_id" "$workspace_id" "dispatcher"
+  "$HERDR_BIN" pane run "$pane_id" "$claude_command"
+done <<<"$audit_rows"

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install_dir="${HERDR_KANBAN_INSTALL_DIR:-$HOME/.local/bin}"
+force="${HERDR_KANBAN_INSTALL_FORCE:-0}"
+
+commands=(
+  herdr-kanban-card-check
+  herdr-kanban-dispatch
+  herdr-kanban-human-audit
+  herdr-kanban-review
+  herdr-kanban-run
+  herdr-kanban-sweep
+  herdr-kanban-install
+  herdr-kanban-lib
+)
+
+mkdir -p "$install_dir"
+
+for command in "${commands[@]}"; do
+  source_path="$script_dir/$command"
+  target_path="$install_dir/$command"
+
+  if [ ! -f "$source_path" ]; then
+    printf 'missing source script: %s\n' "$source_path" >&2
+    exit 1
+  fi
+
+  if [ -e "$target_path" ] && [ ! -L "$target_path" ] && [ "$force" != "1" ]; then
+    printf 'refusing to replace non-symlink: %s\n' "$target_path" >&2
+    printf 'set HERDR_KANBAN_INSTALL_FORCE=1 to replace it\n' >&2
+    exit 1
+  fi
+
+  ln -sfn "$source_path" "$target_path"
+  printf 'linked %s -> %s\n' "$target_path" "$source_path"
+done
+
+case ":$PATH:" in
+  *":$install_dir:"*) ;;
+  *)
+    printf 'note: %s is not on PATH for this shell\n' "$install_dir" >&2
+    ;;
+esac

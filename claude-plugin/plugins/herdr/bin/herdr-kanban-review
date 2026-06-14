@@ -7,7 +7,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/herdr-kanban-lib"
 
 kanban_require_runtime
-kanban_need "$CODEX_BIN"
+kanban_need "$CLAUDE_BIN"
 
 cards_json="$("$HERDR_BIN" kanban list --status reviewing)"
 panes_json="$("$HERDR_BIN" pane list)"
@@ -64,37 +64,40 @@ print(json.dumps(selected))
 PY
 )"
 
-while IFS=$'\t' read -r uuid title description_path; do
-  [ -n "${uuid:-}" ] || continue
-  short="$(kanban_short_uuid "$uuid")"
-  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX reviewer $short"
-  prompt="$(kanban_prompt_reviewer "$uuid" "$description_path")"
-  codex_command="$(kanban_codex_command "$prompt" "$HERDR_KANBAN_REVIEWER_CODEX_MODE")"
-
-  kanban_log "route reviewer: $uuid $title"
-  if kanban_is_dry_run; then
-    kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
-    kanban_log "dry-run: HERDR_PANE_ID=<root-pane> $HERDR_BIN kanban attach $uuid"
-    kanban_log "dry-run: $HERDR_BIN pane run <root-pane> '$codex_command'"
-    continue
-  fi
-
-  workspace_json="$("$HERDR_BIN" workspace create --cwd "$HERDR_KANBAN_WORKTREE" --label "$workspace_label" --no-focus)"
-  read -r workspace_id pane_id < <(python3 - "$workspace_json" <<'PY'
-import json
-import sys
-result = json.loads(sys.argv[1])["result"]
-print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
-PY
-)
-  HERDR_PANE_ID="$pane_id" "$HERDR_BIN" kanban attach "$uuid" >/dev/null
-  kanban_update_card_meta "$description_path" "reviewer" "$pane_id" "$workspace_id" "dispatcher"
-  "$HERDR_BIN" pane run "$pane_id" "$codex_command"
-done < <(python3 - "$selection_json" <<'PY'
+review_rows="$(python3 - "$selection_json" <<'PY'
 import json
 import sys
 
 for card in json.loads(sys.argv[1]):
     print("\t".join([card["uuid"], card["title"], card.get("description") or ""]))
 PY
-)
+)"
+
+while IFS=$'\t' read -r uuid title description_path; do
+  [ -n "${uuid:-}" ] || continue
+  short="$(kanban_short_uuid "$uuid")"
+  workspace_label="$HERDR_KANBAN_WORKSPACE_PREFIX reviewer $short"
+  prompt="$(kanban_prompt_reviewer "$uuid" "$description_path")"
+  claude_command="$(kanban_claude_command "$prompt" "$HERDR_KANBAN_REVIEWER_CLAUDE_MODE")"
+
+  kanban_log "route reviewer: $uuid $title"
+  if kanban_is_dry_run; then
+    kanban_log "dry-run: $HERDR_BIN workspace create --cwd '$HERDR_KANBAN_WORKTREE' --label '$workspace_label' --no-focus"
+    kanban_log "dry-run: HERDR_PANE_ID=<root-pane> $HERDR_BIN kanban attach $uuid"
+    kanban_log "dry-run: $HERDR_BIN pane run <root-pane> '$claude_command'"
+    continue
+  fi
+
+  workspace_json="$("$HERDR_BIN" workspace create --cwd "$HERDR_KANBAN_WORKTREE" --label "$workspace_label" --no-focus)"
+  workspace_ids="$(python3 - "$workspace_json" <<'PY'
+import json
+import sys
+result = json.loads(sys.argv[1])["result"]
+print(result["workspace"]["workspace_id"], result["root_pane"]["pane_id"])
+PY
+)"
+  read -r workspace_id pane_id <<<"$workspace_ids"
+  HERDR_PANE_ID="$pane_id" "$HERDR_BIN" kanban attach "$uuid" >/dev/null
+  kanban_update_card_meta "$description_path" "reviewer" "$pane_id" "$workspace_id" "dispatcher"
+  "$HERDR_BIN" pane run "$pane_id" "$claude_command"
+done <<<"$review_rows"

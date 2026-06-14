@@ -29,11 +29,15 @@ Distinguish a design smell (fair to send back) from an unstated feature (do not 
 Accepted:
 
 ```bash
-# Merge or fast-forward the reviewed branch according to repo rules first.
+# Integrate the reviewed branch per repo rules first (see Integration below).
 herdr kanban update <uuid> --status done
 ```
 
-The reviewer is the merge gate. Do not mark accepted work `done` until the reviewed branch has been merged or fast-forwarded into the repo's integration branch and pushed when repo rules allow it.
+The reviewer is the merge gate. Do not mark accepted work `done` until the reviewed branch has been integrated into the repo's base branch and pushed when repo rules allow it.
+
+## Integration
+
+Follow the repo isolation policy (`CLAUDE.md`, `AGENT.md`, or `AGENTS.md`) if present. When the policy defines an integrate step (e.g. squash-merge the task branch into the base branch from the shared checkout, format, push), perform it from the shared checkout — not from the worker's task worktree. After a successful integrate, run the policy's cleanup (remove the task worktree, delete the task branch locally and remotely) so disposable worktrees do not accumulate. Record the integration result in `## Review Notes`. With no policy, merge or fast-forward into the integration branch and push when allowed.
 
 Rejected:
 
@@ -72,4 +76,4 @@ If review needs human input, do not ask the human directly. Update the card desc
 
 Triage or the coordinator owns surfacing that ask to the human and making the card routable again.
 
-After moving the card to `done`, `todo`, or `blocked`, exit the Codex session. The dispatcher and sweeper own the next pane lifecycle step.
+After moving the card to `done`, `todo`, or `blocked`, stop working and leave the session idle. The dispatcher and sweeper own the next pane lifecycle step — the sweeper reclaims the pane once it reads as idle.

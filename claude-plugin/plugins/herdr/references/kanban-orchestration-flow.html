@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Herdr Kanban Automation Flow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101312;
+      --panel: #181d1a;
+      --panel-2: #202820;
+      --text: #f1f4ed;
+      --muted: #a9b5aa;
+      --line: #5d6a5f;
+      --green: #7cc66a;
+      --yellow: #e2b84c;
+      --red: #e06a5f;
+      --blue: #7eb6d9;
+      --violet: #b994e6;
+      --border: #3a453b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.4;
+    }
+
+    main {
+      width: min(1280px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 22px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      color: #f5ddb0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border: 1px solid #7a6a35;
+      background: #2b2415;
+      color: #f5d36b;
+      font-size: 12px;
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .diagram {
+      display: grid;
+      grid-template-columns: 1.05fr 1.35fr 1.1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .lane {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      min-height: 640px;
+      padding: 14px;
+    }
+
+    .lane h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .node {
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      padding: 12px;
+      min-height: 84px;
+    }
+
+    .node h3 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    .node p,
+    .node li {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .node ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .node.store {
+      border-color: #587252;
+      background: #18251b;
+    }
+
+    .node.coordinator {
+      border-color: #6e865d;
+      background: #1f2c1f;
+    }
+
+    .node.spawn {
+      border-color: #8b7232;
+      background: #2a2317;
+    }
+
+    .node.human {
+      border-color: #82524d;
+      background: #2a1c1b;
+    }
+
+    .node.done {
+      border-color: #426c82;
+      background: #17232b;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .step {
+      border-left: 3px solid var(--line);
+      padding: 8px 10px;
+      background: #151a17;
+      min-height: 74px;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .step span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .green { border-left-color: var(--green); }
+    .yellow { border-left-color: var(--yellow); }
+    .red { border-left-color: var(--red); }
+    .blue { border-left-color: var(--blue); }
+    .violet { border-left-color: var(--violet); }
+
+    .arrow {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      margin: 2px 0;
+    }
+
+    .arrow::before,
+    .arrow::after {
+      content: "";
+      height: 1px;
+      background: var(--line);
+    }
+
+    .command {
+      margin-top: 10px;
+      padding: 10px;
+      background: #0d100f;
+      border: 1px solid #2b332d;
+      overflow-wrap: anywhere;
+    }
+
+    .policy {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .policy .node {
+      min-height: 132px;
+    }
+
+    @media (max-width: 980px) {
+      header,
+      .diagram,
+      .policy {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      header {
+        align-items: start;
+      }
+
+      .lane {
+        min-height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Herdr Kanban Automation Flow</h1>
+        <p>Plugin-side orchestration only. Herdr core already provides the control plane: create workspaces, run commands in panes, wait on status, read output, and close panes.</p>
+      </div>
+      <span class="badge">Spawned Claude runs YOLO</span>
+    </header>
+
+    <section class="diagram" aria-label="Kanban automation orchestration diagram">
+      <div class="lane">
+        <h2>Inputs</h2>
+        <div class="stack">
+          <article class="node store">
+            <h3>Herdr Kanban Board</h3>
+            <p>Cards are the only handoff surface: title, description, status, attached pane, and visible agent state.</p>
+            <ul>
+              <li><code>todo</code> ready work</li>
+              <li><code>ongoing</code> claimed work</li>
+              <li><code>reviewing</code> validated work</li>
+              <li><code>blocked</code> human/manual input</li>
+              <li><code>done</code> accepted work</li>
+            </ul>
+          </article>
+
+          <div class="arrow">poll or subscribe</div>
+
+          <article class="node">
+            <h3>Herdr Control Plane</h3>
+            <p>The coordinator uses existing CLI/socket commands as its automation surface.</p>
+            <ul>
+              <li><code>workspace create|close</code></li>
+              <li><code>tab create|close</code></li>
+              <li><code>pane run|read|close</code></li>
+              <li><code>agent wait|send</code></li>
+            </ul>
+          </article>
+
+          <article class="node">
+            <h3>Ticks</h3>
+            <p>Periodic coordinator and sweeper ticks make the loop recoverable when no event stream is available.</p>
+          </article>
+        </div>
+      </div>
+
+      <div class="lane">
+        <h2>Plugin Runner</h2>
+        <div class="stack">
+          <article class="node coordinator">
+            <h3><code>herdr-kanban-run</code></h3>
+            <p>Long-running shell script that composes one-shot scripts. It keeps no private source of truth.</p>
+            <div class="command"><code>while true; do sweep; review; dispatch; sleep "$interval"; done</code></div>
+          </article>
+
+          <div class="mini-grid">
+            <div class="step red">
+              <strong>Sweep</strong>
+              <span>Repair stale cards, dead panes, missing evidence, and broken ownership.</span>
+            </div>
+            <div class="step blue">
+              <strong>Review Route</strong>
+              <span>Assign <code>reviewing</code> cards before starting more implementation work.</span>
+            </div>
+            <div class="step green">
+              <strong>Dispatch</strong>
+              <span>Assign ready <code>todo</code> cards to idle worker panes.</span>
+            </div>
+            <div class="step yellow">
+              <strong>Human Gate</strong>
+              <span>Surface UI review, release, publish, delete, and credential work.</span>
+            </div>
+          </div>
+
+          <article class="node spawn">
+            <h3>Provision Role Panes</h3>
+            <p>The runner creates a workspace or tab per card, then runs Claude in the root pane Herdr just created. No extra side split is created.</p>
+            <div class="command"><code>herdr pane run &lt;root-pane&gt; "claude --dangerously-skip-permissions '&lt;role prompt&gt;'"</code></div>
+          </article>
+
+          <article class="node">
+            <h3>Role Lifecycle</h3>
+            <p>The runner starts the pane, sends or embeds the card prompt, waits for agent state, reads output when needed, and closes disposable panes after board state is stable.</p>
+          </article>
+        </div>
+      </div>
+
+      <div class="lane">
+        <h2>Outcomes</h2>
+        <div class="stack">
+          <article class="node">
+            <h3>Worker Agent</h3>
+            <p>Uses <code>herdr-kanban-worker</code>, attaches the pane, implements scoped work, records validation evidence, commits and pushes a task branch, then moves the card forward.</p>
+            <div class="command"><code>todo -> ongoing -> branch pushed -> reviewing</code></div>
+          </article>
+
+          <article class="node done">
+            <h3>Reviewer Agent</h3>
+            <p>Uses <code>herdr-kanban-reviewer</code>, checks the pushed branch, acceptance, and validation evidence, then merges accepted work or returns the card.</p>
+            <div class="command"><code>reviewing -> merge -> done | todo | blocked</code></div>
+          </article>
+
+          <article class="node human">
+            <h3>Human Review</h3>
+            <p>Cards that require judgment or irreversible action stop here with explicit metadata and instructions.</p>
+            <ul>
+              <li><code>review_state: human-review-required</code></li>
+              <li><code>blocked_reason:</code> concrete next action</li>
+            </ul>
+          </article>
+
+          <article class="node store">
+            <h3>Recoverable Restart</h3>
+            <p>If the runner exits, restart reads the board and live Herdr panes, sweeps invariants, closes dead disposable panes, and continues from card state.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="policy" aria-label="Automation policy">
+      <article class="node">
+        <h3>Session Policy</h3>
+        <p>Default to disposable spawned Claude panes for routine work. Persistent or manual sessions are optional capacity, not the core automation path.</p>
+      </article>
+      <article class="node">
+        <h3>Default Safety</h3>
+        <p>YOLO applies only inside spawned Claude panes. Workers may push task branches for review; reviewers own merges and integration pushes when repo rules allow them.</p>
+      </article>
+      <article class="node">
+        <h3>Plugin Boundary</h3>
+        <p>No Rust core changes. Scripts use Herdr CLI/socket APIs and store coordinator decisions back into card descriptions.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

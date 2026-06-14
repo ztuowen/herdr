@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=herdr-kanban-lib
+source "$script_dir/herdr-kanban-lib"
+
+kanban_log "herdr-kanban-run starting interval=${HERDR_KANBAN_INTERVAL}s dry_run=${HERDR_KANBAN_DRY_RUN}"
+kanban_log "set HERDR_KANBAN_DRY_RUN=0 to create/close Herdr panes and workspaces"
+
+while true; do
+  "$script_dir/herdr-kanban-sweep"
+  "$script_dir/herdr-kanban-review"
+  "$script_dir/herdr-kanban-human-audit"
+  "$script_dir/herdr-kanban-dispatch"
+  sleep "$HERDR_KANBAN_INTERVAL"
+done

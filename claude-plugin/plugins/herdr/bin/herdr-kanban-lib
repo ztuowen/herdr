@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+HERDR_BIN="${HERDR_BIN:-herdr}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+HERDR_KANBAN_DRY_RUN="${HERDR_KANBAN_DRY_RUN:-1}"
+HERDR_KANBAN_WORKTREE="${HERDR_KANBAN_WORKTREE:-$(pwd)}"
+HERDR_KANBAN_MAX_WORKERS="${HERDR_KANBAN_MAX_WORKERS:-1}"
+HERDR_KANBAN_MAX_REVIEWERS="${HERDR_KANBAN_MAX_REVIEWERS:-1}"
+HERDR_KANBAN_INTERVAL="${HERDR_KANBAN_INTERVAL:-10}"
+HERDR_KANBAN_AGENT_PREFIX="${HERDR_KANBAN_AGENT_PREFIX:-kanban}"
+HERDR_KANBAN_WORKSPACE_PREFIX="${HERDR_KANBAN_WORKSPACE_PREFIX:-kanban}"
+HERDR_KANBAN_WAIT_TIMEOUT_MS="${HERDR_KANBAN_WAIT_TIMEOUT_MS:-1000}"
+# Claude spawn mode: "interactive" (claude seeded with prompt, stays open) or
+# "headless" (claude -p, prints and exits). Interactive is the default because
+# the sweeper closes disposable panes by watching for Herdr-visible idle/done
+# agent states; headless exits the process and can leave the pane in unknown.
+HERDR_KANBAN_CLAUDE_MODE="${HERDR_KANBAN_CLAUDE_MODE:-interactive}"
+HERDR_KANBAN_WORKER_CLAUDE_MODE="${HERDR_KANBAN_WORKER_CLAUDE_MODE:-$HERDR_KANBAN_CLAUDE_MODE}"
+HERDR_KANBAN_REVIEWER_CLAUDE_MODE="${HERDR_KANBAN_REVIEWER_CLAUDE_MODE:-interactive}"
+HERDR_KANBAN_HUMAN_AUDIT_CLAUDE_MODE="${HERDR_KANBAN_HUMAN_AUDIT_CLAUDE_MODE:-interactive}"
+
+kanban_log() {
+  printf '%s\n' "$*" >&2
+}
+
+kanban_is_dry_run() {
+  [ "$HERDR_KANBAN_DRY_RUN" != "0" ]
+}
+
+kanban_run() {
+  if kanban_is_dry_run; then
+    kanban_log "dry-run: $*"
+  else
+    "$@"
+  fi
+}
+
+kanban_need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    kanban_log "missing required command: $1"
+    exit 127
+  fi
+}
+
+kanban_require_runtime() {
+  kanban_need "$HERDR_BIN"
+  kanban_need python3
+}
+
+kanban_short_uuid() {
+  printf '%s' "$1" | cut -c1-8
+}
+
+kanban_sanitize_name() {
+  printf '%s' "$1" | tr -c '[:alnum:]_.-' '-'
+}
+
+kanban_claude_command() {
+  local prompt="$1"
+  local mode="${2:-interactive}"
+  # The pane already runs in $HERDR_KANBAN_WORKTREE because the dispatcher
+  # creates the workspace with `--cwd "$HERDR_KANBAN_WORKTREE"`, so claude needs
+  # no working-directory flag (it has no `--cd` equivalent). claude yolo is
+  # `--dangerously-skip-permissions`; headless adds `-p` (print and exit).
+  python3 - "$CLAUDE_BIN" "$prompt" "$mode" <<'PY'
+import shlex
+import sys
+
+claude_bin, prompt, mode = sys.argv[1:4]
+if mode not in {"headless", "interactive"}:
+    raise SystemExit(f"unsupported HERDR_KANBAN_CLAUDE_MODE: {mode}")
+
+argv = [claude_bin, "--dangerously-skip-permissions"]
+if mode == "headless":
+    argv.append("-p")
+argv.append(prompt)
+print(" ".join(shlex.quote(arg) for arg in argv))
+PY
+}
+
+kanban_prompt_worker() {
+  local uuid="$1"
+  local description_path="$2"
+  cat <<EOF
+Use the herdr-kanban-worker skill.
+
+Card: $uuid
+Description file: $description_path
+
+Read the card from Herdr Kanban and use the description file above as the handoff document to update. The dispatcher has already attached this pane to the card. Move the card to ongoing, implement only the scoped work on a task branch, update the description file with implementation notes and validation evidence, commit the completed work, push the task branch, record branch_name and commit_sha in the description front matter, clear owner_role, assigned_pane, and assigned_workspace, and move it to reviewing. Do not move dirty or unpushed work to reviewing. If human input or manual intervention is required, record the concrete blocker in the description file and move it to blocked. After moving the card to reviewing or blocked, stop working and leave the session idle so the sweeper can reclaim the pane.
+EOF
+}
+
+kanban_prompt_reviewer() {
+  local uuid="$1"
+  local description_path="$2"
+  cat <<EOF
+Use the herdr-kanban-reviewer skill.
+
+Card: $uuid
+Description file: $description_path
+
+Read the card from Herdr Kanban and use the description file above as the review handoff document to update. Review only against its acceptance criteria, validation evidence, and the pushed branch recorded in branch_name and commit_sha. If accepted, merge or fast-forward the reviewed branch according to repo rules, push the integration branch when allowed, record the merge result in ## Review Notes, and move it to done. If changes are required, record findings in ## Review Notes, clear owner_role, assigned_pane, and assigned_workspace in the description front matter, and move it back to todo for a fresh worker. Do not move rejected work to ongoing.
+
+The dispatcher has already attached this pane to the card. If review needs human input, do not ask the human directly. Update the description file with review notes, set review_state to human-review-required or triage-question-required, set blocked_reason with a short reason, fill ## Human Review Request with the exact question or artifact to inspect, and move the card to blocked.
+
+After moving the card to done, todo, or blocked, stop working and leave the session idle so the sweeper can reclaim the pane.
+EOF
+}
+
+kanban_prompt_human_audit() {
+  local uuid="$1"
+  local description_path="$2"
+  cat <<EOF
+Use the herdr-kanban-human-audit skill.
+
+Card: $uuid
+Description file: $description_path
+
+Read the card from Herdr Kanban and use the description file above as the audit handoff document. The dispatcher has already attached this pane to the card. Before asking the human anything, inspect the card, blocked_reason, review_state, Review Notes, Human Review Request, branch/commit evidence, and relevant local files, diffs, docs, or artifacts. Build a Human Audit Checklist from every original blocker and ambiguity.
+
+Ask one focused clarification question at a time, with your recommended answer. Do not mark the parent resolved until every original checklist item is addressed. If follow-up work needs separate grilling, create follow-up blocker cards immediately with seed context and link them from the parent; these follow-up cards are not parent-blocking unless you explicitly mark them parent_blocking.
+
+When the parent is resolved, use the herdr-kanban-brushup-handoff skill to update the parent card, clear owner_role, assigned_pane, assigned_workspace, blocked_reason, and review_state, move it to reviewing, detach it, and stop working so the sweeper can reclaim the idle pane. If unresolved, keep the parent blocked and keep this pane assigned.
+EOF
+}
+
+kanban_update_card_meta() {
+  local path="$1"
+  local owner_role="$2"
+  local assigned_pane="$3"
+  local assigned_workspace="$4"
+  local last_actor="$5"
+  python3 - "$path" "$owner_role" "$assigned_pane" "$assigned_workspace" "$last_actor" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+owner_role = sys.argv[2]
+assigned_pane = sys.argv[3]
+assigned_workspace = sys.argv[4]
+last_actor = sys.argv[5]
+
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+fields = {
+    "owner_role": owner_role,
+    "assigned_pane": assigned_pane,
+    "assigned_workspace": assigned_workspace,
+    "last_actor": last_actor,
+}
+
+def render_frontmatter(existing):
+    lines = []
+    seen = set()
+    for line in existing:
+        key = line.split(":", 1)[0].strip() if ":" in line else ""
+        if key in fields:
+            lines.append(f"{key}: {fields[key]}")
+            seen.add(key)
+        else:
+            lines.append(line)
+    for key, value in fields.items():
+        if key not in seen:
+            lines.append(f"{key}: {value}")
+    return lines
+
+if text.startswith("---\n"):
+    end = text.find("\n---\n", 4)
+    if end != -1:
+        front = text[4:end].splitlines()
+        body = text[end + 5 :]
+        updated = "---\n" + "\n".join(render_frontmatter(front)) + "\n---\n" + body
+    else:
+        updated = text
+else:
+    updated = (
+        "---\n"
+        + "\n".join(f"{key}: {value}" for key, value in fields.items())
+        + "\n---\n\n"
+        + text
+    )
+
+path.write_text(updated, encoding="utf-8")
+PY
+}
+
+kanban_clear_assignment_meta() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    raise SystemExit(0)
+text = path.read_text(encoding="utf-8")
+fields = {
+    "owner_role": "",
+    "assigned_pane": "",
+    "assigned_workspace": "",
+    "last_actor": "sweeper",
+}
+
+if not text.startswith("---\n"):
+    raise SystemExit(0)
+end = text.find("\n---\n", 4)
+if end == -1:
+    raise SystemExit(0)
+front = text[4:end].splitlines()
+body = text[end + 5 :]
+out = []
+seen = set()
+for line in front:
+    key = line.split(":", 1)[0].strip() if ":" in line else ""
+    if key in fields:
+        out.append(f"{key}: {fields[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, value in fields.items():
+    if key not in seen:
+        out.append(f"{key}: {value}")
+path.write_text("---\n" + "\n".join(out) + "\n---\n" + body, encoding="utf-8")
+PY
+}

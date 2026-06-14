@@ -1,0 +1,15 @@
+{
+  "name": "herdr-personal",
+  "description": "Personal marketplace for Herdr Kanban Claude Code plugins.",
+  "owner": {
+    "name": "Tuowen Zhao",
+    "email": "tuowen.zhao@sambanovasystems.com"
+  },
+  "plugins": [
+    {
+      "name": "herdr-orchestrator",
+      "source": "./plugins/herdr",
+      "description": "Herdr Kanban multi-agent orchestration for Claude Code: triage, dispatch, worker, review, human-audit, and sweep skills with claude-yolo spawning scripts."
+    }
+  ]
+}

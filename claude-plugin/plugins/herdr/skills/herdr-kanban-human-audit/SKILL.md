@@ -30,23 +30,18 @@ Ask one focused question at a time. Each question must include:
 - your recommended answer
 - the tradeoff if the human chooses differently
 
-Keep asking until every original checklist item is addressed. If a new ambiguity is directly downstream of the same decision, keep the same audit session open and continue. If the new ambiguity is separate follow-up work, create a child blocker card immediately.
+Keep asking until every original checklist item is addressed. If a new ambiguity is directly downstream of the same decision, keep the same audit session open and continue.
 
-## Follow-Up Blockers
+## Follow-Up Requests
 
-Create follow-up cards on the spot when separate grilling or triage is needed. Use `clarify:` titles and seed them with enough context for a new audit session.
-
-Default follow-up cards are not parent-blocking. Mark `parent_blocking: true` only when the parent cannot move forward without that child decision.
-
-Record created children on the parent under:
+Do not create cards. When the human asks for separate follow-up work during the audit, record the request as text on the parent under `## Follow-Up Requests` — do not spawn `clarify:` or child blocker cards on the spot. Follow-up work re-enters the pipeline through triage on a later orchestrator pass, not from this audit session.
 
 ```markdown
-## Follow-Up Clarification Cards
-- uuid: <child-uuid>
-  title: clarify: ...
-  parent_blocking: false
-  seed_context: ...
+## Follow-Up Requests
+- <what the human asked for, with enough context for triage to pick it up later>
 ```
+
+This keeps the card on the single forward path (human-review → review → done, or human-review → review → todo → worker) instead of fanning out new tickets mid-audit.
 
 ## Resolve
 
@@ -55,7 +50,9 @@ The parent can leave `blocked` only when all original `## Human Audit Checklist`
 When resolved:
 
 1. Write `## Human Audit Decision`.
-2. Create any follow-up blocker cards and link them.
-3. Use the `herdr-kanban-brushup-handoff` skill to make the parent routable.
+2. Record any follow-up the human asked for under `## Follow-Up Requests` (text only — no new cards).
+3. Use the `herdr-kanban-brushup-handoff` skill to move the parent to `reviewing`.
+
+Always hand the resolved parent back to `reviewing`. Never move it to `todo`, `done`, or any other status directly — the reviewer owns the next routing decision (accept → done, or send → todo for a fresh worker).
 
 If unresolved, keep the card `blocked`, keep `owner_role: human-audit`, keep `assigned_pane`, and record the exact unresolved checklist item. Do not detach.

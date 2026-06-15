@@ -26,14 +26,23 @@ Distinguish a design smell (fair to send back) from an unstated feature (do not 
 
 ## Outcomes
 
-Accepted:
+**Ordering invariant — status change is your last action.** Integration is part of the reviewer's job, not a step after handoff. Do every part of an outcome first (review, and for acceptance the full integrate + push + cleanup), and only then change the card status. The status change is the single final action, followed by clearing assignment. While the card still reads `reviewing`, your `owner_role`/`assigned_pane` are the only thing stopping the dispatcher from routing a second reviewer — so never clear assignment, detach, or leave the session while it still reads `reviewing`. Run the whole outcome to completion in one session; do not flip status partway.
+
+Accepted — do these in order, status second-to-last:
+
+1. Confirm the work meets acceptance criteria and validation evidence.
+2. Integrate per repo rules: merge/squash-merge the task branch into the base branch from the shared checkout, push when allowed (see Integration below).
+3. Run repo cleanup (remove the task worktree, delete the task branch).
+4. Record the integration result in `## Review Notes`.
+5. Only after integration + push + cleanup succeed, mark it done — this is the final status change:
 
 ```bash
-# Integrate the reviewed branch per repo rules first (see Integration below).
 herdr kanban update <uuid> --status done
 ```
 
-The reviewer is the merge gate. Do not mark accepted work `done` until the reviewed branch has been integrated into the repo's base branch and pushed when repo rules allow it.
+6. Clear `owner_role`, `assigned_pane`, and `assigned_workspace`.
+
+The reviewer is the merge gate. If integration or push fails or is blocked, do **not** mark `done`: leave the card `reviewing` (or move to `blocked` with a concrete `blocked_reason` if human/manual intervention is needed) and record what failed. Never reach `done` on an unintegrated branch.
 
 ## Integration
 
@@ -42,14 +51,14 @@ Follow the repo isolation policy (`CLAUDE.md`, `AGENT.md`, or `AGENTS.md`) if pr
 Rejected:
 
 - record concrete findings in `## Review Notes`
-- clear `owner_role`, `assigned_pane`, and `assigned_workspace` metadata if present
-- move to `todo` for a fresh worker assignment
+- move to `todo` first (`herdr kanban update <uuid> --status todo`)
+- then clear `owner_role`, `assigned_pane`, and `assigned_workspace` metadata
 - do not move rejected work to `ongoing`
 
 Invalid handoff:
 
 - if `branch_name`, `commit_sha`, validation evidence, or a clean pushed branch is missing, record the missing handoff item in `## Review Notes`
-- clear worker assignment metadata and move to `todo`
+- move to `todo` first, then clear worker assignment metadata
 
 Invalid card:
 
@@ -72,7 +81,8 @@ If review needs human input, do not ask the human directly. Update the card desc
 - set `review_state: triage-question-required` when the card is underspecified, acceptance criteria are wrong, or a product/design ambiguity needs triage
 - set `blocked_reason` with a short concrete reason
 - fill `## Human Review Request` with the exact question, options, or artifact to inspect
-- move the card to `blocked`
+- move the card to `blocked` (do this before clearing assignment)
+- only after it reads `blocked`, clear `owner_role`, `assigned_pane`, and `assigned_workspace` so the human-audit launcher can claim it
 
 Triage or the coordinator owns surfacing that ask to the human and making the card routable again.
 

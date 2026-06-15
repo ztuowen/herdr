@@ -128,9 +128,9 @@ When review needs human input, reviewers write the next ask into `## Human Revie
 6. Records `owner_role: human-audit`, `assigned_pane`, `assigned_workspace`, and `last_actor`.
 7. Runs Claude with the human-audit prompt, using `HERDR_KANBAN_HUMAN_AUDIT_CLAUDE_MODE`.
 
-The human-audit skill inspects all available card, review, branch, diff, docs, and artifact context before asking the human anything. It records a `## Human Audit Checklist` that covers every original blocked reason, asks one focused question at a time with a recommended answer, and cannot release the parent card until the original checklist is addressed. It may create follow-up `clarify:` blocker cards on the spot; those children are non-parent-blocking unless explicitly marked otherwise.
+The human-audit skill inspects all available card, review, branch, diff, docs, and artifact context before asking the human anything. It records a `## Human Audit Checklist` that covers every original blocked reason, asks one focused question at a time with a recommended answer, and cannot release the parent card until the original checklist is addressed. It does not create cards: any follow-up the human asks for is recorded as text under `## Follow-Up Requests` and re-enters through triage on a later orchestrator pass.
 
-When the parent is resolved, the audit agent uses the brushup handoff skill to write the decision, clear assignment and blocker metadata, move the parent to `reviewing` or `todo` as appropriate, detach, and exit. If unresolved, the card stays `blocked` and assigned to the open audit pane.
+When the parent is resolved, the audit agent uses the brushup handoff skill to write the decision, clear assignment and blocker metadata, move the parent to `reviewing` (always — never `todo`/`done`; the reviewer owns the next routing decision), detach, and stop. If unresolved, the card stays `blocked` and assigned to the open audit pane.
 
 ## Sweep Flow
 

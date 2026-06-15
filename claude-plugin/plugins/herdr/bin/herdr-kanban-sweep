@@ -56,10 +56,14 @@ for card in cards:
     status = card.get("status")
     if assigned_pane:
         assigned_panes.add(assigned_pane)
-        if status in {"todo", "ongoing"} or (status == "blocked" and owner_role == "human-audit"):
+        # Protect any actively-assigned pane from cleanup while work is in flight.
+        # `reviewing` must be included: a freshly launched reviewer pane reads as
+        # idle while Claude boots, and closing it makes the assignment point at a
+        # dead pane, which the next sweep clears and review re-routes (double-spawn).
+        if status in {"todo", "ongoing", "reviewing"} or (status == "blocked" and owner_role == "human-audit"):
             protected_panes.add(assigned_pane)
     terminal_id = card.get("terminal_id")
-    if terminal_id and status in {"todo", "ongoing"}:
+    if terminal_id and status in {"todo", "ongoing", "reviewing"}:
         protected_terminal_ids.add(terminal_id)
     if assigned_pane and assigned_pane not in panes and status in {"todo", "ongoing", "reviewing", "blocked"}:
         print("\t".join(["clear-card", card["uuid"], str(path), assigned_pane, assigned_workspace]))

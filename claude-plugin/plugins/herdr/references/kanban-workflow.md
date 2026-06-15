@@ -159,8 +159,8 @@ last_actor: triage
 - `human_audit.context_loaded`: read card, blocked reason, review notes, human request, branch/commit, validation, and relevant local files before asking.
 - `human_audit.checklist_created`: snapshot every original blocker and ambiguity into `## Human Audit Checklist`.
 - `human_audit.question`: ask one focused question at a time with a recommended answer.
-- `human_audit.followup_created`: create child `clarify:` blocker cards immediately when separate grilling is needed; default children are not parent-blocking.
-- `human_audit.resolved`: write `## Human Audit Decision`, run brushup handoff, clear assignment, move the parent to `reviewing` or `todo`, detach, and exit.
+- `human_audit.followup_requested`: record the human's follow-up ask as text under `## Follow-Up Requests`; do not create cards — follow-up work re-enters through triage on a later orchestrator pass.
+- `human_audit.resolved`: write `## Human Audit Decision`, run brushup handoff, clear assignment, move the parent to `reviewing` (always — never `todo`/`done`; the reviewer owns the next routing decision), detach, and stop.
 - `human_audit.unresolved`: keep the parent `blocked`, keep the audit assignment, and record the unresolved checklist item.
 
 ## Sweeper Hooks

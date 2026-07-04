@@ -124,6 +124,11 @@ impl ActiveSubscription {
                 kanban_uuid: None,
                 last_sequence: 0,
             })),
+            Subscription::WorkspaceMoved {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::WorkspaceMoved,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
             Subscription::WorkspaceClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceClosed,
                 kanban_uuid: None,
@@ -131,6 +136,21 @@ impl ActiveSubscription {
             })),
             Subscription::WorkspaceFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceFocused,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
+            Subscription::WorktreeCreated {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::WorktreeCreated,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
+            Subscription::WorktreeOpened {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::WorktreeOpened,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
+            Subscription::WorktreeRemoved {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::WorktreeRemoved,
                 kanban_uuid: None,
                 last_sequence: 0,
             })),
@@ -154,6 +174,11 @@ impl ActiveSubscription {
                 kanban_uuid: None,
                 last_sequence: 0,
             })),
+            Subscription::TabMoved {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::TabMoved,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
             Subscription::PaneCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneCreated,
                 kanban_uuid: None,
@@ -166,6 +191,11 @@ impl ActiveSubscription {
             })),
             Subscription::PaneFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneFocused,
+                kanban_uuid: None,
+                last_sequence: 0,
+            })),
+            Subscription::PaneMoved {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::PaneMoved,
                 kanban_uuid: None,
                 last_sequence: 0,
             })),
@@ -192,6 +222,11 @@ impl ActiveSubscription {
             Subscription::KanbanDeleted { uuid } => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::KanbanDeleted,
                 kanban_uuid: uuid,
+                last_sequence: 0,
+            })),
+            Subscription::LayoutUpdated {} => Ok(Self::Event(ActiveEventSubscription {
+                event_kind: crate::api::schema::EventKind::LayoutUpdated,
+                kanban_uuid: None,
                 last_sequence: 0,
             })),
             Subscription::PaneOutputMatched {
@@ -249,7 +284,7 @@ impl ActiveSubscription {
                 let initial_event = agent_status
                     .is_some_and(|wanted| wanted == probe.agent_status)
                     .then_some(PaneAgentStatusChangedEvent {
-                        pane_id: probe.pane_id,
+                        pane_id: probe.pane_id.clone(),
                         workspace_id: probe.workspace_id,
                         agent_status: probe.agent_status,
                         agent: probe.agent,
@@ -261,7 +296,7 @@ impl ActiveSubscription {
 
                 Ok(Self::AgentStatusChanged(Box::new(
                     ActiveAgentStatusChangedSubscription {
-                        pane_id,
+                        pane_id: probe.pane_id,
                         status_filter: agent_status,
                         last_status: Some(last_status),
                         last_presentation: Some(last_presentation),
@@ -337,7 +372,7 @@ impl ActiveOutputMatchedSubscription {
                 Some(SubscriptionEventEnvelope {
                     event: SubscriptionEventKind::PaneOutputMatched,
                     data: SubscriptionEventData::PaneOutputMatched(PaneOutputMatchedEvent {
-                        pane_id: self.pane_id.clone(),
+                        pane_id: read.pane_id.clone(),
                         matched_line,
                         read,
                     }),

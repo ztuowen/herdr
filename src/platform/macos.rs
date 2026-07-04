@@ -16,6 +16,30 @@ const PROC_PGRP_ONLY: u32 = 2;
 const SERVER_NOFILE_LIMIT_TARGET: libc::rlim_t = 8192;
 const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
+pub(crate) fn scrollback_editor_argv(path: &Path) -> std::io::Result<Vec<String>> {
+    let quoted_path = shell_quote(&path.display().to_string());
+    let command = format!(
+        r#"scrollback_file={quoted_path}; eval "${{EDITOR:-vi}} \"\$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status"#
+    );
+    Ok(vec!["/bin/sh".to_string(), "-c".to_string(), command])
+}
+
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '@' | '%' | '_' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
+                )
+        })
+    {
+        return value.to_string();
+    }
+
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 #[repr(C)]
 struct TisInputSource {
     _private: [u8; 0],
@@ -461,6 +485,40 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
         },
         bytes,
     )
+}
+
+pub fn read_clipboard_text() -> Option<String> {
+    const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
+
+    let mut child = Command::new("pbpaste")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let read = match read_limited_reader(stdout, MAX_CLIPBOARD_TEXT_BYTES) {
+        Ok(LimitedRead::Oversized) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        Ok(read) => read,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
+    let status = child.wait().ok()?;
+    if !status.success() {
+        return None;
+    }
+    match read {
+        LimitedRead::Complete(bytes) => String::from_utf8(bytes).ok(),
+        LimitedRead::Empty => None,
+        LimitedRead::Oversized => unreachable!("oversized clipboard text is handled before wait"),
+    }
 }
 
 pub fn open_url(url: &str) -> std::io::Result<()> {
@@ -1082,5 +1140,16 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
             args,
             "-e\non run argv\n-e\ndisplay notification (item 2 of argv) with title (item 1 of argv)\n-e\nend run\ntitle\nbody\n"
         );
+    }
+
+    #[test]
+    fn scrollback_editor_argv_preserves_unix_editor_shell_semantics() {
+        let path = std::path::Path::new("/tmp/herdr scrollback.txt");
+        let argv = scrollback_editor_argv(path).unwrap();
+
+        assert_eq!(argv[0], "/bin/sh");
+        assert_eq!(argv[1], "-c");
+        assert!(argv[2].contains("EDITOR:-vi"));
+        assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }

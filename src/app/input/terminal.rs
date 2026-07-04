@@ -45,12 +45,7 @@ impl App {
             if action == super::navigate::NavigateAction::EditScrollback {
                 self.launch_focused_scrollback_editor();
             } else {
-                super::navigate::execute_navigate_action_in_context(
-                    &mut self.state,
-                    &mut self.terminal_runtimes,
-                    action,
-                    super::navigate::ActionContext::Direct,
-                );
+                self.execute_tui_navigate_action(action, super::navigate::ActionContext::Direct);
             }
             return None;
         }
@@ -94,17 +89,19 @@ impl App {
             self.state
                 .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)?;
 
-        // Intercept plain PageUp/PageDown presses for pane scrollback when the
-        // focused pane doesn't handle its own scrolling (e.g., a plain shell
-        // with mouse off). Modified page keys are pane shortcuts, and release
-        // events should not produce a second host-scroll action.
+        // Intercept plain PageUp/PageDown presses for pane scrollback only
+        // when the focused pane looks like a shell transcript. Normal-screen
+        // pagers such as `less -X` keep the primary screen but enter
+        // application cursor mode while they own special keys.
+        // Modified page keys are pane shortcuts, and release events should not
+        // produce a second host-scroll action.
         // Only intercept when we know the pane state; if input_state is unknown,
         // fail-open and forward the key to the pane.
         if matches!(key_event.code, KeyCode::PageUp | KeyCode::PageDown)
             && key_event.modifiers.is_empty()
         {
             if let Some(input_state) = rt.input_state() {
-                if !input_state.alternate_screen && !input_state.mouse_reporting_enabled() {
+                if input_state.plain_page_keys_use_host_scrollback() {
                     if key_event.kind == crossterm::event::KeyEventKind::Release {
                         return None;
                     }
@@ -198,9 +195,9 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
-    use super::super::{
-        app_for_mouse_test, mouse, numbered_lines_bytes, unique_temp_path, wait_for_file,
-    };
+    use super::super::{app_for_mouse_test, mouse, numbered_lines_bytes};
+    #[cfg(unix)]
+    use super::super::{unique_temp_path, wait_for_file};
     use super::*;
     use crate::{config::Config, events::AppEvent, workspace::Workspace};
 
@@ -260,6 +257,45 @@ mod tests {
             .selection
             .as_ref()
             .is_some_and(crate::selection::Selection::is_visible));
+    }
+
+    #[cfg(unix)]
+    fn install_test_link_handler(app: &mut App) {
+        let plugin_root = std::env::temp_dir();
+        app.state.installed_plugins = std::collections::HashMap::from([(
+            "example.links".to_string(),
+            crate::api::schema::InstalledPluginInfo {
+                plugin_id: "example.links".into(),
+                name: "Links".into(),
+                version: "0.1.0".into(),
+                min_herdr_version: "0.6.10".into(),
+                description: None,
+                manifest_path: plugin_root.join("herdr-plugin.toml").display().to_string(),
+                plugin_root: plugin_root.display().to_string(),
+                enabled: true,
+                platforms: None,
+                build: Vec::new(),
+                actions: vec![crate::api::schema::PluginManifestAction {
+                    id: "open".into(),
+                    title: "Open link".into(),
+                    description: None,
+                    contexts: Vec::new(),
+                    platforms: None,
+                    command: vec!["sh".into(), "-c".into(), ":".into()],
+                }],
+                events: Vec::new(),
+                panes: Vec::new(),
+                link_handlers: vec![crate::api::schema::PluginManifestLinkHandler {
+                    id: "github-issue".into(),
+                    title: "Open GitHub issue".into(),
+                    pattern: "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$".into(),
+                    action: "open".into(),
+                    platforms: None,
+                }],
+                source: crate::api::schema::PluginSourceInfo::default(),
+                warnings: Vec::new(),
+            },
+        )]);
     }
 
     #[tokio::test]
@@ -464,6 +500,41 @@ mod tests {
 
         assert!(app.event_rx.try_recv().is_err());
         assert!(app.selection_highlight_clear_deadline.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_url_invokes_plugin_link_handler_but_super_click_does_not() {
+        let line = "see https://github.com/ogulcancelik/herdr/issues/398";
+        let col = line.find("github").expect("url host") as u16;
+
+        let (mut ctrl_app, ctrl_info) = app_with_screen_bytes(line.as_bytes());
+        install_test_link_handler(&mut ctrl_app);
+        ctrl_app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            ctrl_info.inner_rect.x + col,
+            ctrl_info.inner_rect.y,
+            KeyModifiers::CONTROL,
+        ));
+
+        let ctrl_log = ctrl_app
+            .state
+            .plugin_command_logs
+            .last()
+            .expect("ctrl-click should start plugin link handler");
+        assert_eq!(ctrl_log.plugin_id, "example.links");
+        assert_eq!(ctrl_log.action_id.as_deref(), Some("open"));
+
+        let (mut super_app, super_info) = app_with_screen_bytes(line.as_bytes());
+        install_test_link_handler(&mut super_app);
+        super_app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            super_info.inner_rect.x + col,
+            super_info.inner_rect.y,
+            KeyModifiers::SUPER,
+        ));
+
+        assert!(super_app.state.plugin_command_logs.is_empty());
     }
 
     #[tokio::test]
@@ -739,6 +810,7 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn terminal_direct_edit_scrollback_opens_editor_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -792,6 +864,7 @@ mod tests {
         let _ = std::fs::remove_file(output_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn direct_custom_command_runs_before_forwarding_to_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -828,6 +901,7 @@ mod tests {
         let _ = std::fs::remove_file(output_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn direct_custom_pane_command_opens_overlay_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1118,6 +1192,50 @@ mod tests {
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         // Forwarded to pane, so test runtime doesn't process it — scroll stays at bottom.
+        assert_eq!(end_metrics.offset_from_bottom, 0);
+    }
+
+    #[tokio::test]
+    async fn page_up_forwarded_to_primary_screen_application_cursor_pane() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let mut bytes = b"\x1b[?1h".to_vec();
+        bytes.extend_from_slice(&numbered_lines_bytes(64));
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        let start_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("initial scroll metrics");
+        assert_eq!(start_metrics.offset_from_bottom, 0);
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+
+        let forwarded = input_rx.try_recv().expect("forwarded PageUp");
+        assert_eq!(forwarded.as_ref(), b"\x1b[5~");
+        let end_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after PageUp");
         assert_eq!(end_metrics.offset_from_bottom, 0);
     }
 }

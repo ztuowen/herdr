@@ -4,6 +4,7 @@ use super::{KeyboardProtocol, MouseProtocolEncoding, TerminalKey};
 
 const KITTY_FLAG_REPORT_EVENT_TYPES: u16 = 0b0000_0010;
 const KITTY_FLAG_REPORT_ALTERNATE_KEYS: u16 = 0b0000_0100;
+const KITTY_FLAG_REPORT_ALL_KEYS: u16 = 0b0000_1000;
 
 /// Encode a key event for a PTY child using the pane's negotiated keyboard protocol.
 #[allow(dead_code)] // exercised in input unit tests; production uses TerminalRuntime helpers
@@ -12,6 +13,15 @@ pub fn encode_key(key: KeyEvent, protocol: KeyboardProtocol) -> Vec<u8> {
 }
 
 pub fn encode_terminal_key(key: TerminalKey, protocol: KeyboardProtocol) -> Vec<u8> {
+    // A release event only produces bytes when the pane protocol reports event
+    // types (Kitty REPORT_EVENT_TYPES). Otherwise the child expects a single
+    // legacy byte per keystroke, so re-emitting it on release would double keys
+    // like Enter/Backspace. The Ghostty wrapper can route release events through
+    // this fallback, so guard the fallback encoder too.
+    if key.kind == crossterm::event::KeyEventKind::Release && !protocol.reports_event_types() {
+        return Vec::new();
+    }
+
     if let Some(bytes) = encode_text_input(&key) {
         return bytes;
     }
@@ -20,6 +30,9 @@ pub fn encode_terminal_key(key: TerminalKey, protocol: KeyboardProtocol) -> Vec<
         if let Some(bytes) = try_encode_csi_u(&key, flags) {
             return bytes;
         }
+    }
+    if key.kind == crossterm::event::KeyEventKind::Release && protocol.reports_event_types() {
+        return Vec::new();
     }
     encode_legacy(key.as_key_event())
 }
@@ -145,9 +158,18 @@ fn push_mouse_codepoint(bytes: &mut Vec<u8>, value: u32) -> Option<()> {
 /// Returns None if the key doesn't need CSI u (unmodified basic keys).
 fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
     let mods = key.modifiers;
+    let event_suffix = kitty_event_suffix(key, flags);
+    let report_all_keys = flags & KITTY_FLAG_REPORT_ALL_KEYS != 0;
+
+    if !report_all_keys
+        && key.modifiers.is_empty()
+        && matches!(key.code, KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace)
+    {
+        return None;
+    }
 
     // Unmodified keys use legacy encoding (more compatible)
-    if mods.is_empty() {
+    if mods.is_empty() && event_suffix.is_none() && !report_all_keys {
         return None;
     }
 
@@ -166,7 +188,9 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
         | KeyCode::PageDown
         | KeyCode::Insert
         | KeyCode::Delete
-        | KeyCode::F(_) => {
+        | KeyCode::F(_)
+            if event_suffix.is_none() && !report_all_keys =>
+        {
             return None; // let legacy handle these
         }
         _ => {}
@@ -182,11 +206,20 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
         KeyCode::Tab => (9, None),
         KeyCode::Backspace => (127, None),
         KeyCode::Esc => (27, None),
+        KeyCode::Left => (57417, None),
+        KeyCode::Right => (57418, None),
+        KeyCode::Up => (57419, None),
+        KeyCode::Down => (57420, None),
+        KeyCode::PageUp => (57421, None),
+        KeyCode::PageDown => (57422, None),
+        KeyCode::Home => (57423, None),
+        KeyCode::End => (57424, None),
+        KeyCode::Insert => (57425, None),
+        KeyCode::Delete => (57426, None),
         _ => return None, // fall back to legacy for unhandled keys
     };
 
     let modifier = kitty_modifier(mods);
-    let event_suffix = kitty_event_suffix(key, flags);
 
     let sequence = match (alternate_shifted, event_suffix) {
         (Some(shifted), Some(event)) => format!("\x1b[{codepoint}:{shifted};{modifier}:{event}u"),
@@ -397,7 +430,7 @@ fn encode_legacy_inner(key: KeyEvent) -> Vec<u8> {
                     '\\' | '4' => vec![28],
                     ']' | '5' => vec![29],
                     '^' | '6' => vec![30],
-                    '_' | '7' | '-' => vec![31],
+                    '_' | '/' | '7' | '-' => vec![31],
                     _ => vec![ch as u8],
                 }
             } else {
@@ -473,6 +506,12 @@ mod tests {
     fn legacy_ctrl_c() {
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(encode_key(key, KeyboardProtocol::Legacy), vec![3]);
+    }
+
+    #[test]
+    fn legacy_ctrl_slash_aliases_ctrl_underscore() {
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
+        assert_eq!(encode_key(key, KeyboardProtocol::Legacy), vec![31]);
     }
 
     #[test]
@@ -678,6 +717,83 @@ mod tests {
     }
 
     #[test]
+    fn kitty_report_event_types_keeps_basic_compatibility_keys_legacy() {
+        let cases = [
+            (KeyCode::Enter, b"\r".as_slice()),
+            (KeyCode::Tab, b"\t".as_slice()),
+            (KeyCode::Backspace, b"\x7f".as_slice()),
+        ];
+
+        for (code, expected) in cases {
+            let press = KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::empty(),
+                crossterm::event::KeyEventKind::Press,
+            );
+            assert_eq!(
+                encode_key(press, KeyboardProtocol::Kitty { flags: 3 }),
+                expected,
+                "{code:?} press should stay legacy-compatible without REPORT_ALL_KEYS"
+            );
+
+            let repeat = KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::empty(),
+                crossterm::event::KeyEventKind::Repeat,
+            );
+            assert_eq!(
+                encode_key(repeat, KeyboardProtocol::Kitty { flags: 3 }),
+                expected,
+                "{code:?} repeat should stay legacy-compatible without REPORT_ALL_KEYS"
+            );
+
+            let release = KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::empty(),
+                crossterm::event::KeyEventKind::Release,
+            );
+            assert_eq!(
+                encode_key(release, KeyboardProtocol::Kitty { flags: 3 }),
+                b"",
+                "{code:?} release should not fall back to legacy bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn kitty_report_all_keys_encodes_basic_compatibility_keys_with_events() {
+        let enter_press = KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::empty(),
+            crossterm::event::KeyEventKind::Press,
+        );
+        assert_eq!(
+            encode_key(enter_press, KeyboardProtocol::Kitty { flags: 9 }),
+            b"\x1b[13;1u"
+        );
+
+        let backspace_press = KeyEvent::new_with_kind(
+            KeyCode::Backspace,
+            KeyModifiers::empty(),
+            crossterm::event::KeyEventKind::Press,
+        );
+        assert_eq!(
+            encode_key(backspace_press, KeyboardProtocol::Kitty { flags: 11 }),
+            b"\x1b[127;1:1u"
+        );
+
+        let backspace_release = KeyEvent::new_with_kind(
+            KeyCode::Backspace,
+            KeyModifiers::empty(),
+            crossterm::event::KeyEventKind::Release,
+        );
+        assert_eq!(
+            encode_key(backspace_release, KeyboardProtocol::Kitty { flags: 11 }),
+            b"\x1b[127;1:3u"
+        );
+    }
+
+    #[test]
     fn kitty_shift_tab() {
         let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
         assert_eq!(
@@ -716,6 +832,35 @@ mod tests {
             crossterm::event::KeyEventKind::Release,
         );
         assert_eq!(encode_key(key, KeyboardProtocol::Kitty { flags: 7 }), b"");
+    }
+
+    #[test]
+    fn release_bytes_gated_on_report_event_types() {
+        for code in [KeyCode::Enter, KeyCode::Backspace] {
+            let release = KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::empty(),
+                crossterm::event::KeyEventKind::Release,
+            );
+
+            // Legacy and Kitty disambiguate-only (no REPORT_EVENT_TYPES) must not
+            // emit a byte on release, otherwise Enter/Backspace double (issue #769).
+            assert_eq!(encode_key(release, KeyboardProtocol::Legacy), b"");
+            assert_eq!(
+                encode_key(release, KeyboardProtocol::Kitty { flags: 1 }),
+                b""
+            );
+        }
+
+        let modified_release = KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL,
+            crossterm::event::KeyEventKind::Release,
+        );
+        assert_eq!(
+            encode_key(modified_release, KeyboardProtocol::Kitty { flags: 3 }),
+            b"\x1b[13;5:3u"
+        );
     }
 
     #[test]

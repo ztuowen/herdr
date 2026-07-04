@@ -1,6 +1,6 @@
 [package]
 name = "herdr"
-version = "0.6.8"
+version = "0.7.1"
 edition = "2021"
 build = "build.rs"
 default-run = "herdr"
@@ -10,16 +10,26 @@ repository = "https://github.com/ogulcancelik/herdr"
 homepage = "https://herdr.dev"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
 categories = ["command-line-utilities"]
-include = ["src/**/*", "assets/sounds/*", "README.md", "LICENSE", "Cargo.toml"]
+include = [
+    "src/**/*",
+    "assets/sounds/*",
+    "docs/next/api/herdr-api.schema.json",
+    "README.md",
+    "LICENSE",
+    "Cargo.toml",
+]
 
 [dependencies]
 base64 = "0.22.1"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1"
+clap = { version = "4.5", default-features = false, features = ["std"] }
+clap_complete = "4.5"
 crossterm = "0.29"
 ctrlc = "3"
+interprocess = "2.4.2"
 libc = "0.2"
-portable-pty = "0.9"
+portable-pty = "=0.9.0"
 png = "0.17"
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 regex = "1"
@@ -44,19 +54,28 @@ mitex = "0.2.4"
 resvg = "0.38"
 tiny-skia = "0.11"
 gh-emoji = "1.0"
-
-
+schemars = { version = "1.2.1", features = ["derive"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 cpal = "0.15"
 
+[patch.crates-io]
+portable-pty = { path = "vendor/portable-pty" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Console",
+    "Win32_System_Kernel",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [[bin]]
 name = "herdr"
 path = "src/main.rs"
-
-
-
-
-
-
-

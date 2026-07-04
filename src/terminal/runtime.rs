@@ -85,6 +85,7 @@ impl TerminalRuntime {
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         shell_config: crate::pane::PaneShellConfig<'_>,
+        launch_env: &crate::pane::PaneLaunchEnv,
         events: mpsc::Sender<AppEvent>,
         render_notify: Arc<Notify>,
         render_dirty: Arc<AtomicBool>,
@@ -97,6 +98,7 @@ impl TerminalRuntime {
             scrollback_limit_bytes,
             host_terminal_theme,
             shell_config,
+            launch_env,
             events,
             render_notify,
             render_dirty,
@@ -104,6 +106,8 @@ impl TerminalRuntime {
         .map(Self)
     }
 
+    // Wrapper mirrors pane runtime construction arguments.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_with_initial_history(
         pane_id: PaneId,
         rows: u16,
@@ -112,6 +116,7 @@ impl TerminalRuntime {
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         shell_config: crate::pane::PaneShellConfig<'_>,
+        launch_env: &crate::pane::PaneLaunchEnv,
         initial_history_ansi: Option<&str>,
         events: mpsc::Sender<AppEvent>,
         render_notify: Arc<Notify>,
@@ -125,6 +130,7 @@ impl TerminalRuntime {
             scrollback_limit_bytes,
             host_terminal_theme,
             shell_config,
+            launch_env,
             initial_history_ansi,
             events,
             render_notify,
@@ -133,13 +139,15 @@ impl TerminalRuntime {
         .map(Self)
     }
 
+    // Wrapper mirrors pane runtime construction arguments.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_shell_command(
         pane_id: PaneId,
         rows: u16,
         cols: u16,
         cwd: std::path::PathBuf,
         command: &str,
-        extra_env: &[(String, String)],
+        launch_env: &crate::pane::PaneLaunchEnv,
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         events: mpsc::Sender<AppEvent>,
@@ -152,7 +160,7 @@ impl TerminalRuntime {
             cols,
             cwd,
             command,
-            extra_env,
+            launch_env,
             scrollback_limit_bytes,
             host_terminal_theme,
             events,
@@ -168,6 +176,7 @@ impl TerminalRuntime {
         cols: u16,
         cwd: std::path::PathBuf,
         argv: &[String],
+        launch_env: &crate::pane::PaneLaunchEnv,
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
         events: mpsc::Sender<AppEvent>,
@@ -180,6 +189,7 @@ impl TerminalRuntime {
             cols,
             cwd,
             argv,
+            launch_env,
             scrollback_limit_bytes,
             host_terminal_theme,
             events,
@@ -197,10 +207,26 @@ impl TerminalRuntime {
         self.0.begin_graceful_release(agent);
     }
 
+    pub fn reset_agent_detection(&self) {
+        self.0.reset_agent_detection();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn agent_detection_reset_notify_for_test(
+        &self,
+    ) -> std::sync::Arc<tokio::sync::Notify> {
+        self.0.agent_detection_reset_notify_for_test()
+    }
+
+    pub fn set_full_lifecycle_authority_active(&self, active: bool) {
+        self.0.set_full_lifecycle_authority_active(active);
+    }
+
     pub fn resize(&self, rows: u16, cols: u16, cell_width_px: u32, cell_height_px: u32) {
         self.0.resize(rows, cols, cell_width_px, cell_height_px);
     }
 
+    #[cfg(unix)]
     pub fn nudge_child_redraw_after_handoff(&self) {
         self.0.nudge_child_redraw_after_handoff();
     }
@@ -237,12 +263,28 @@ impl TerminalRuntime {
         self.0.cursor_state(area, show_cursor)
     }
 
+    pub fn synchronized_output_active(&self) -> bool {
+        self.0.synchronized_output_active()
+    }
+
     pub fn visible_text(&self) -> String {
         self.0.visible_text()
     }
 
     pub fn visible_ansi(&self) -> String {
         self.0.visible_ansi()
+    }
+
+    pub fn detection_text(&self) -> String {
+        self.0.detection_text()
+    }
+
+    pub fn agent_osc_title(&self) -> String {
+        self.0.agent_osc_title()
+    }
+
+    pub fn agent_osc_progress(&self) -> String {
+        self.0.agent_osc_progress()
     }
 
     pub fn recent_text(&self, lines: usize) -> String {
@@ -366,6 +408,10 @@ impl TerminalRuntime {
 
     pub fn foreground_cwd(&self) -> Option<std::path::PathBuf> {
         self.0.foreground_cwd()
+    }
+
+    pub fn child_pid(&self) -> Option<u32> {
+        self.0.child_pid()
     }
 
     pub(crate) fn current_size(&self) -> (u16, u16) {

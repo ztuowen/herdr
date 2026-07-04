@@ -9,19 +9,19 @@ use crate::api::schema::{
 use crate::app::App;
 
 impl App {
-    fn emit_kanban_event(&self, event: EventKind, data: EventData) {
+    fn emit_kanban_event(&mut self, event: EventKind, data: EventData) {
         self.emit_event(EventEnvelope { event, data });
     }
 
-    fn emit_kanban_added(&self, item: KanbanItem) {
+    fn emit_kanban_added(&mut self, item: KanbanItem) {
         self.emit_kanban_event(EventKind::KanbanAdded, EventData::KanbanAdded { item });
     }
 
-    fn emit_kanban_updated(&self, item: KanbanItem) {
+    fn emit_kanban_updated(&mut self, item: KanbanItem) {
         self.emit_kanban_event(EventKind::KanbanUpdated, EventData::KanbanUpdated { item });
     }
 
-    fn emit_kanban_deleted(&self, item: KanbanItem) {
+    fn emit_kanban_deleted(&mut self, item: KanbanItem) {
         self.emit_kanban_event(EventKind::KanbanDeleted, EventData::KanbanDeleted { item });
     }
 

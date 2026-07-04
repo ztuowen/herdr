@@ -1,6 +1,6 @@
-use crate::api::schema::{
-    EmptyParams, Method, Request, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
-};
+use std::collections::HashMap;
+
+use crate::api::schema::{WorkspaceCreateParams, WorkspaceRenameParams};
 
 pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -32,16 +32,14 @@ fn workspace_list(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:list".into(),
-        method: Method::WorkspaceList(EmptyParams::default()),
-    })?)
+    super::runtime::workspace_list()
 }
 
 fn workspace_create(args: &[String]) -> std::io::Result<i32> {
     let mut cwd = None;
     let mut focus = false;
     let mut label = None;
+    let mut env = HashMap::new();
 
     let mut index = 0;
     while index < args.len() {
@@ -70,6 +68,21 @@ fn workspace_create(args: &[String]) -> std::io::Result<i32> {
                 focus = false;
                 index += 1;
             }
+            "--env" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --env");
+                    return Ok(2);
+                };
+                let (key, value) = match super::parse_env_assignment(value) {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(2);
+                    }
+                };
+                env.insert(key, value);
+                index += 2;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -77,10 +90,12 @@ fn workspace_create(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:create".into(),
-        method: Method::WorkspaceCreate(WorkspaceCreateParams { cwd, focus, label }),
-    })?)
+    super::runtime::workspace_create(WorkspaceCreateParams {
+        cwd,
+        focus,
+        label,
+        env,
+    })
 }
 
 fn workspace_get(args: &[String]) -> std::io::Result<i32> {
@@ -93,12 +108,7 @@ fn workspace_get(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:get".into(),
-        method: Method::WorkspaceGet(WorkspaceTarget {
-            workspace_id: super::normalize_workspace_id(raw_workspace_id),
-        }),
-    })?)
+    super::runtime::workspace_get(super::normalize_workspace_id(raw_workspace_id))
 }
 
 fn workspace_focus(args: &[String]) -> std::io::Result<i32> {
@@ -111,12 +121,7 @@ fn workspace_focus(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:focus".into(),
-        method: Method::WorkspaceFocus(WorkspaceTarget {
-            workspace_id: super::normalize_workspace_id(raw_workspace_id),
-        }),
-    })?)
+    super::runtime::workspace_focus(super::normalize_workspace_id(raw_workspace_id))
 }
 
 fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
@@ -125,13 +130,10 @@ fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:rename".into(),
-        method: Method::WorkspaceRename(WorkspaceRenameParams {
-            workspace_id: super::normalize_workspace_id(&args[0]),
-            label: args[1..].join(" "),
-        }),
-    })?)
+    super::runtime::workspace_rename(WorkspaceRenameParams {
+        workspace_id: super::normalize_workspace_id(&args[0]),
+        label: args[1..].join(" "),
+    })
 }
 
 fn workspace_close(args: &[String]) -> std::io::Result<i32> {
@@ -144,18 +146,13 @@ fn workspace_close(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
-        id: "cli:workspace:close".into(),
-        method: Method::WorkspaceClose(WorkspaceTarget {
-            workspace_id: super::normalize_workspace_id(raw_workspace_id),
-        }),
-    })?)
+    super::runtime::workspace_close(super::normalize_workspace_id(raw_workspace_id))
 }
 
 fn print_workspace_help() {
     eprintln!("herdr workspace commands:");
     eprintln!("  herdr workspace list");
-    eprintln!("  herdr workspace create [--cwd PATH] [--label TEXT] [--focus] [--no-focus]");
+    eprintln!("  herdr workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
     eprintln!("  herdr workspace get <workspace_id>");
     eprintln!("  herdr workspace focus <workspace_id>");
     eprintln!("  herdr workspace rename <workspace_id> <label>");

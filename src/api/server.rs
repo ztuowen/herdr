@@ -1,22 +1,25 @@
 use std::io::{self, Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use interprocess::local_socket::traits::{ListenerExt as _, Stream as _};
 use tracing::{debug, error, info, warn};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::fs;
 
 use crate::api::schema::{
     ErrorBody, ErrorResponse, Method, Request, ResponseResult, ServerCapabilities, SuccessResponse,
 };
 use crate::api::subscriptions::ActiveSubscription;
-use crate::api::wait::wait_for_output;
+use crate::api::wait::{wait_for_event, wait_for_output};
 use crate::api::{request_changes_ui, socket_path, ApiRequestMessage, ApiRequestSender, EventHub};
-use crate::ipc::{remove_socket_file_if_owned, socket_file_identity, SocketFileIdentity};
+use crate::ipc::{
+    bind_local_listener, is_connection_closed_error, local_stream_peer_closed,
+    remove_socket_file_if_owned, socket_file_identity, LocalStream, SocketFileIdentity,
+};
 
 const SOCKET_PERMISSION_MODE: u32 = 0o600;
 pub(super) const CONNECTION_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -46,7 +49,7 @@ impl Drop for ServerHandle {
 
 impl ServerHandle {
     pub(crate) fn remove_socket_file_if_owned(&self) -> std::io::Result<()> {
-        remove_socket_file_if_owned(&self.path, self.identity)
+        remove_socket_file_if_owned(&self.path, &self.identity)
     }
 }
 
@@ -57,7 +60,10 @@ pub fn start_server(
     start_server_with_capabilities(
         api_tx,
         event_hub,
-        Some(ServerCapabilities { live_handoff: true }),
+        Some(ServerCapabilities {
+            live_handoff: crate::platform::capabilities().live_handoff,
+            detached_server_daemon: crate::platform::current_process_is_detached_server_daemon(),
+        }),
     )
 }
 
@@ -69,7 +75,7 @@ pub fn start_server_with_capabilities(
     let path = socket_path();
     prepare_socket_path(&path)?;
 
-    let listener = UnixListener::bind(&path)?;
+    let listener = bind_local_listener(&path)?;
     restrict_socket_permissions(&path)?;
     let identity = socket_file_identity(&path)?;
     info!(path = %path.display(), "api server listening");
@@ -127,13 +133,13 @@ fn restrict_socket_permissions(path: &Path) -> std::io::Result<()> {
 }
 
 fn handle_connection(
-    mut stream: UnixStream,
+    mut stream: LocalStream,
     api_tx: &ApiRequestSender,
     event_hub: &EventHub,
     running: &Arc<AtomicBool>,
     capabilities: Option<ServerCapabilities>,
 ) -> std::io::Result<()> {
-    if let Err(err) = stream.set_write_timeout(Some(STREAM_WRITE_TIMEOUT)) {
+    if let Err(err) = stream.set_send_timeout(Some(STREAM_WRITE_TIMEOUT)) {
         debug!(err = %err, "api connection write timeout unavailable");
     }
 
@@ -183,6 +189,38 @@ fn handle_connection(
                     &request_id,
                     method,
                     "stream_closed",
+                    changes_ui,
+                ),
+                Err(err) => {
+                    crate::logging::api_request_failed(&request_id, method, &err.to_string())
+                }
+            }
+            result
+        }
+        Method::EventsWait(params) => {
+            let Some(response) = wait_for_event(
+                request_id.clone(),
+                params,
+                &mut stream,
+                api_tx,
+                event_hub,
+                running,
+            )?
+            else {
+                crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    "client_disconnected",
+                    changes_ui,
+                );
+                return Ok(());
+            };
+            let result = write_text_line_allow_disconnect(&mut stream, &response);
+            match &result {
+                Ok(()) => crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    api_response_outcome(&response),
                     changes_ui,
                 ),
                 Err(err) => {
@@ -276,12 +314,18 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::ServerLiveHandoff(_) => "server.live_handoff",
         Method::ServerReloadConfig(_) => "server.reload_config",
         Method::AppSnapshot(_) => "app.snapshot",
+        Method::ServerAgentManifests(_) => "server.agent_manifests",
+        Method::ServerReloadAgentManifests(_) => "server.reload_agent_manifests",
         Method::NotificationShow(_) => "notification.show",
+        Method::ClientWindowTitleSet(_) => "client.window_title.set",
+        Method::ClientWindowTitleClear(_) => "client.window_title.clear",
+        Method::SessionSnapshot(_) => "session.snapshot",
         Method::WorkspaceCreate(_) => "workspace.create",
         Method::WorkspaceList(_) => "workspace.list",
         Method::WorkspaceGet(_) => "workspace.get",
         Method::WorkspaceFocus(_) => "workspace.focus",
         Method::WorkspaceRename(_) => "workspace.rename",
+        Method::WorkspaceMove(_) => "workspace.move",
         Method::WorkspaceClose(_) => "workspace.close",
         Method::WorktreeList(_) => "worktree.list",
         Method::WorktreeCreate(_) => "worktree.create",
@@ -292,24 +336,33 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::TabGet(_) => "tab.get",
         Method::TabFocus(_) => "tab.focus",
         Method::TabRename(_) => "tab.rename",
+        Method::TabMove(_) => "tab.move",
         Method::TabClose(_) => "tab.close",
         Method::AgentList(_) => "agent.list",
         Method::AgentGet(_) => "agent.get",
         Method::AgentRead(_) => "agent.read",
+        Method::AgentExplain(_) => "agent.explain",
         Method::AgentSend(_) => "agent.send",
         Method::AgentRename(_) => "agent.rename",
         Method::AgentFocus(_) => "agent.focus",
         Method::AgentStart(_) => "agent.start",
         Method::PaneSplit(_) => "pane.split",
         Method::PaneSwap(_) => "pane.swap",
+        Method::PaneMove(_) => "pane.move",
         Method::PaneZoom(_) => "pane.zoom",
         Method::PaneLayout(_) => "pane.layout",
+        Method::PaneProcessInfo(_) => "pane.process_info",
+        Method::LayoutExport(_) => "layout.export",
+        Method::LayoutApply(_) => "layout.apply",
+        Method::LayoutSetSplitRatio(_) => "layout.set_split_ratio",
         Method::PaneNeighbor(_) => "pane.neighbor",
         Method::PaneEdges(_) => "pane.edges",
         Method::PaneFocusDirection(_) => "pane.focus_direction",
         Method::PaneResize(_) => "pane.resize",
         Method::PaneList(_) => "pane.list",
+        Method::PaneCurrent(_) => "pane.current",
         Method::PaneGet(_) => "pane.get",
+        Method::PaneFocus(_) => "pane.focus",
         Method::PaneRename(_) => "pane.rename",
         Method::PaneSendText(_) => "pane.send_text",
         Method::PaneSendKeys(_) => "pane.send_keys",
@@ -326,6 +379,17 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PaneWaitForOutput(_) => "pane.wait_for_output",
         Method::IntegrationInstall(_) => "integration.install",
         Method::IntegrationUninstall(_) => "integration.uninstall",
+        Method::PluginLink(_) => "plugin.link",
+        Method::PluginList(_) => "plugin.list",
+        Method::PluginUnlink(_) => "plugin.unlink",
+        Method::PluginEnable(_) => "plugin.enable",
+        Method::PluginDisable(_) => "plugin.disable",
+        Method::PluginActionList(_) => "plugin.action.list",
+        Method::PluginActionInvoke(_) => "plugin.action.invoke",
+        Method::PluginLogList(_) => "plugin.log.list",
+        Method::PluginPaneOpen(_) => "plugin.pane.open",
+        Method::PluginPaneFocus(_) => "plugin.pane.focus",
+        Method::PluginPaneClose(_) => "plugin.pane.close",
     }
 }
 
@@ -345,7 +409,7 @@ fn api_response_outcome(response: &str) -> &'static str {
     }
 }
 
-fn read_initial_request_line(stream: &mut UnixStream) -> std::io::Result<Option<String>> {
+fn read_initial_request_line(stream: &mut LocalStream) -> std::io::Result<Option<String>> {
     stream.set_nonblocking(true)?;
     let deadline = Instant::now() + INITIAL_REQUEST_TIMEOUT;
     let mut bytes = Vec::new();
@@ -392,7 +456,7 @@ fn read_initial_request_line(stream: &mut UnixStream) -> std::io::Result<Option<
 }
 
 fn stream_subscriptions(
-    mut stream: UnixStream,
+    mut stream: LocalStream,
     request_id: String,
     params: crate::api::schema::EventsSubscribeParams,
     api_tx: &ApiRequestSender,
@@ -449,27 +513,30 @@ fn stream_subscriptions(
     }
 }
 
-fn write_text_line(stream: &mut UnixStream, value: &str) -> std::io::Result<()> {
+fn write_text_line(stream: &mut LocalStream, value: &str) -> std::io::Result<()> {
     stream.write_all(value.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.flush()
 }
 
-fn write_text_line_allow_disconnect(stream: &mut UnixStream, value: &str) -> std::io::Result<()> {
+fn write_text_line_allow_disconnect(stream: &mut LocalStream, value: &str) -> std::io::Result<()> {
     match write_text_line(stream, value) {
         Err(err) if is_connection_closed_error(&err) => Ok(()),
         result => result,
     }
 }
 
-fn write_json_line<T: serde::Serialize>(stream: &mut UnixStream, value: &T) -> std::io::Result<()> {
+fn write_json_line<T: serde::Serialize>(
+    stream: &mut LocalStream,
+    value: &T,
+) -> std::io::Result<()> {
     let encoded = serde_json::to_string(value)
         .map_err(|err| std::io::Error::other(format!("failed to encode json: {err}")))?;
     write_text_line(stream, &encoded)
 }
 
 fn write_json_line_allow_disconnect<T: serde::Serialize>(
-    stream: &mut UnixStream,
+    stream: &mut LocalStream,
     value: &T,
 ) -> std::io::Result<()> {
     let encoded = serde_json::to_string(value)
@@ -478,47 +545,14 @@ fn write_json_line_allow_disconnect<T: serde::Serialize>(
 }
 
 pub(super) fn should_stop_connection(
-    stream: &mut UnixStream,
+    stream: &mut LocalStream,
     running: &Arc<AtomicBool>,
 ) -> std::io::Result<bool> {
     if !running.load(Ordering::Relaxed) {
         return Ok(true);
     }
 
-    probe_stream_closed(stream)
-}
-
-fn probe_stream_closed(stream: &mut UnixStream) -> std::io::Result<bool> {
-    stream.set_nonblocking(true)?;
-    let mut probe = [0u8; 1];
-    let status = match stream.read(&mut probe) {
-        Ok(0) => Ok(true),
-        Ok(_) => Ok(true),
-        Err(err)
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(err) if is_connection_closed_error(&err) => Ok(true),
-        Err(err) => Err(err),
-    };
-    stream.set_nonblocking(false)?;
-    status
-}
-
-fn is_connection_closed_error(err: &std::io::Error) -> bool {
-    matches!(
-        err.kind(),
-        std::io::ErrorKind::BrokenPipe
-            | std::io::ErrorKind::ConnectionAborted
-            | std::io::ErrorKind::ConnectionReset
-            | std::io::ErrorKind::NotConnected
-            | std::io::ErrorKind::UnexpectedEof
-            | std::io::ErrorKind::WriteZero
-    )
+    local_stream_peer_closed(stream)
 }
 
 fn dispatch_to_app(request: Request, api_tx: &ApiRequestSender) -> String {
@@ -586,11 +620,14 @@ fn error_response_json(id: String, code: &str, message: String) -> String {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use interprocess::local_socket::traits::Listener as _;
+    use std::collections::HashMap;
     use std::io::{BufRead, BufReader};
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
     use std::sync::{Mutex, OnceLock};
     use tokio::sync::mpsc;
 
@@ -607,11 +644,77 @@ mod tests {
         std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
     }
 
-    fn read_line(stream: &mut UnixStream) -> String {
+    fn read_line(stream: &mut LocalStream) -> String {
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         line
+    }
+
+    fn local_stream_pair(name: &str) -> (LocalStream, LocalStream, PathBuf) {
+        let path = unique_test_path(name);
+        let listener = crate::ipc::bind_local_listener(&path).unwrap();
+        let client = crate::ipc::connect_local_stream(&path).unwrap();
+        let server = listener.accept().unwrap();
+        (client, server, path)
+    }
+
+    fn pane_info(
+        pane_id: &str,
+        agent_status: crate::api::schema::AgentStatus,
+    ) -> crate::api::schema::PaneInfo {
+        crate::api::schema::PaneInfo {
+            pane_id: pane_id.into(),
+            terminal_id: "term_1".into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            focused: true,
+            cwd: None,
+            foreground_cwd: None,
+            label: None,
+            agent: Some("pi".into()),
+            title: None,
+            display_agent: None,
+            agent_status,
+            custom_status: None,
+            state_labels: HashMap::new(),
+            agent_session: None,
+            revision: 0,
+        }
+    }
+
+    fn spawn_pane_get_responder(
+        agent_status: crate::api::schema::AgentStatus,
+    ) -> (ApiRequestSender, std::thread::JoinHandle<()>) {
+        let (api_tx, mut api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
+        let responder = std::thread::spawn(move || {
+            while let Some(msg) = api_rx.blocking_recv() {
+                match msg.request.method {
+                    Method::PaneGet(_) => msg
+                        .respond_to
+                        .send(
+                            serde_json::to_string(&SuccessResponse {
+                                id: msg.request.id,
+                                result: ResponseResult::PaneInfo {
+                                    pane: pane_info("pane_1", agent_status),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                        .unwrap(),
+                    Method::EventsWait(_) => msg
+                        .respond_to
+                        .send(error_response_json(
+                            msg.request.id,
+                            "unexpected_dispatch",
+                            "events.wait should be handled by the api server".into(),
+                        ))
+                        .unwrap(),
+                    other => panic!("unexpected request: {other:?}"),
+                }
+            }
+        });
+        (api_tx, responder)
     }
 
     #[test]
@@ -704,7 +807,10 @@ mod tests {
                 method: Method::Ping(crate::api::schema::PingParams::default()),
             },
             &tx,
-            Some(ServerCapabilities { live_handoff: true }),
+            Some(ServerCapabilities {
+                live_handoff: true,
+                detached_server_daemon: true,
+            }),
         );
 
         let parsed: SuccessResponse = serde_json::from_str(&response).unwrap();
@@ -738,6 +844,60 @@ mod tests {
         let response = thread.join().unwrap();
         let parsed: SuccessResponse = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed.id, "req_2");
+    }
+
+    #[test]
+    fn events_wait_agent_status_returns_initial_match() {
+        let (api_tx, responder) =
+            spawn_pane_get_responder(crate::api::schema::AgentStatus::Blocked);
+
+        let (mut client, server, _path) = local_stream_pair("api-events-wait-initial");
+        client
+            .write_all(br#"{"id":"wait_1","method":"events.wait","params":{"match_event":{"event":"pane_agent_status_changed","pane_id":"pane_1","agent_status":"blocked"},"timeout_ms":1000}}"#)
+            .unwrap();
+        client.write_all(b"\n").unwrap();
+        client.flush().unwrap();
+
+        let running = Arc::new(AtomicBool::new(true));
+        let event_hub = EventHub::default();
+        handle_connection(server, &api_tx, &event_hub, &running, None).unwrap();
+
+        let response: serde_json::Value = serde_json::from_str(&read_line(&mut client)).unwrap();
+        assert_eq!(response["id"], "wait_1");
+        assert_eq!(response["result"]["type"], "wait_matched");
+        assert_eq!(
+            response["result"]["event"]["data"]["agent_status"],
+            "blocked"
+        );
+        drop(api_tx);
+        responder.join().unwrap();
+    }
+
+    #[test]
+    fn events_wait_agent_status_times_out_server_side() {
+        let (api_tx, responder) =
+            spawn_pane_get_responder(crate::api::schema::AgentStatus::Unknown);
+
+        let (mut client, server, _path) = local_stream_pair("api-events-wait-timeout");
+        client
+            .write_all(br#"{"id":"wait_2","method":"events.wait","params":{"match_event":{"event":"pane_agent_status_changed","pane_id":"pane_1","agent_status":"blocked"},"timeout_ms":30}}"#)
+            .unwrap();
+        client.write_all(b"\n").unwrap();
+        client.flush().unwrap();
+
+        let running = Arc::new(AtomicBool::new(true));
+        let event_hub = EventHub::default();
+        handle_connection(server, &api_tx, &event_hub, &running, None).unwrap();
+
+        let response: serde_json::Value = serde_json::from_str(&read_line(&mut client)).unwrap();
+        assert_eq!(response["id"], "wait_2");
+        assert_eq!(response["error"]["code"], "timeout");
+        assert_eq!(
+            response["error"]["message"],
+            "timed out waiting for event match"
+        );
+        drop(api_tx);
+        responder.join().unwrap();
     }
 
     #[test]
@@ -775,7 +935,7 @@ mod tests {
             }
         });
 
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server, _path) = local_stream_pair("api-wait-disconnect");
         client
             .write_all(br#"{"id":"req_wait","method":"pane.wait_for_output","params":{"pane_id":"pane_1","source":"recent","match":{"type":"substring","value":"never"}}}"#)
             .unwrap();
@@ -805,7 +965,7 @@ mod tests {
     #[test]
     fn subscriptions_stop_when_client_disconnects() {
         let (api_tx, _api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server, _path) = local_stream_pair("api-sub-disconnect");
         client
             .write_all(
                 br#"{"id":"sub_1","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"}]}}"#,
@@ -837,7 +997,7 @@ mod tests {
     #[test]
     fn subscriptions_stop_when_server_shuts_down() {
         let (api_tx, _api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server, _path) = local_stream_pair("api-sub-shutdown");
         client
             .write_all(
                 br#"{"id":"sub_2","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"}]}}"#,

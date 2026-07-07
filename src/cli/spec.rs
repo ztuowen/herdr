@@ -690,6 +690,36 @@ fn plugin_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("storage")
+                .about("Read and write plugin storage")
+                .subcommand(
+                    Command::new("get")
+                        .about("Read a plugin storage value")
+                        .arg(option("plugin", "ID"))
+                        .arg(required("key", "KEY")),
+                )
+                .subcommand(
+                    Command::new("set")
+                        .about("Write a plugin storage JSON value")
+                        .arg(option("plugin", "ID"))
+                        .arg(required("key", "KEY"))
+                        .arg(required("value", "JSON")),
+                )
+                .subcommand(
+                    Command::new("delete")
+                        .visible_alias("remove")
+                        .about("Delete a plugin storage value")
+                        .arg(option("plugin", "ID"))
+                        .arg(required("key", "KEY")),
+                )
+                .subcommand(
+                    Command::new("list")
+                        .about("List plugin storage values")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("prefix", "PREFIX")),
+                ),
+        )
+        .subcommand(
             Command::new("pane")
                 .about("Manage plugin-owned panes")
                 .subcommand(

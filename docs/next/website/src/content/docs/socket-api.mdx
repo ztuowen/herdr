@@ -116,7 +116,7 @@ Raw socket method names use dot notation:
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
 | Integrations | `integration.install`, `integration.uninstall` |
-| Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
+| Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.storage.get`, `plugin.storage.set`, `plugin.storage.delete`, `plugin.storage.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
 
@@ -477,9 +477,25 @@ List recent action and event command logs:
 Event hooks run for enabled installed plugins when Herdr emits a matching event
 name such as `worktree.created`.
 
-There is no Herdr-managed plugin storage API in v1. `HERDR_PLUGIN_CONFIG_DIR`
-and `HERDR_PLUGIN_STATE_DIR` are path discovery only; plugins own their files,
-schemas, migrations, and cleanup.
+Store opaque JSON state for an installed plugin:
+
+```json
+{"id":"req_plugin_storage_set","method":"plugin.storage.set","params":{"plugin_id":"example.board","key":"kanban/cards","value":[{"uuid":"card-1","title":"Card"}]}}
+```
+
+Read, list, or delete storage values:
+
+```json
+{"id":"req_plugin_storage_get","method":"plugin.storage.get","params":{"plugin_id":"example.board","key":"kanban/cards"}}
+{"id":"req_plugin_storage_list","method":"plugin.storage.list","params":{"plugin_id":"example.board","prefix":"kanban/"}}
+{"id":"req_plugin_storage_delete","method":"plugin.storage.delete","params":{"plugin_id":"example.board","key":"kanban/cards"}}
+```
+
+Plugin storage is scoped by installed plugin id and stored under the plugin
+state directory. Herdr validates the plugin id and key and owns durable
+read/write mechanics; the plugin owns the JSON value shape, migrations, and
+cleanup policy. Use `HERDR_PLUGIN_CONFIG_DIR` and `HERDR_PLUGIN_STATE_DIR`
+directly when a plugin needs custom files, databases, or large artifacts.
 
 Open a managed terminal UI:
 

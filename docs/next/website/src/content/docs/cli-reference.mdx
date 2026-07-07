@@ -398,6 +398,20 @@ the JSON response. Use the qualified action id (`plugin.id.action`) when more
 than one plugin uses the same action id. Local action ids cannot contain dots,
 so qualified ids remain unambiguous even when plugin ids contain dots.
 
+Storage:
+
+```bash
+herdr plugin storage get --plugin ID <key>
+herdr plugin storage set --plugin ID <key> <json|->
+herdr plugin storage list --plugin ID [--prefix PREFIX]
+herdr plugin storage delete --plugin ID <key>
+```
+
+`plugin storage` reads and writes opaque JSON values scoped to an installed
+plugin id. Pass `-` as the value to `storage set` to read JSON from stdin.
+Herdr owns durable storage mechanics; the plugin owns value schemas, migrations,
+and cleanup policy.
+
 Logs:
 
 ```bash

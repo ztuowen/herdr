@@ -3255,6 +3255,70 @@
           ],
           "type": "string"
         },
+        "PluginStorageDeleteParams": {
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "key"
+          ],
+          "type": "object"
+        },
+        "PluginStorageGetParams": {
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "key"
+          ],
+          "type": "object"
+        },
+        "PluginStorageListParams": {
+          "properties": {
+            "plugin_id": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "plugin_id"
+          ],
+          "type": "object"
+        },
+        "PluginStorageSetParams": {
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "plugin_id",
+            "key",
+            "value"
+          ],
+          "type": "object"
+        },
         "PluginUnlinkParams": {
           "properties": {
             "plugin_id": {
@@ -5302,6 +5366,70 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PluginLogListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.storage.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginStorageGetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.storage.set",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginStorageSetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.storage.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginStorageDeleteParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.storage.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginStorageListParams"
             }
           },
           "required": [
@@ -9063,6 +9191,94 @@
               "required": [
                 "type",
                 "logs"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_storage_value",
+                  "type": "string"
+                },
+                "value": true
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_storage_set",
+                  "type": "string"
+                },
+                "value": true
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "key",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "existed": {
+                  "type": "boolean"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_storage_deleted",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "key",
+                "existed"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "entries": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_storage_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "entries"
               ],
               "type": "object"
             },

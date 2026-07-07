@@ -207,6 +207,14 @@ pub enum Method {
     PluginActionInvoke(PluginActionInvokeParams),
     #[serde(rename = "plugin.log.list")]
     PluginLogList(PluginLogListParams),
+    #[serde(rename = "plugin.storage.get")]
+    PluginStorageGet(PluginStorageGetParams),
+    #[serde(rename = "plugin.storage.set")]
+    PluginStorageSet(PluginStorageSetParams),
+    #[serde(rename = "plugin.storage.delete")]
+    PluginStorageDelete(PluginStorageDeleteParams),
+    #[serde(rename = "plugin.storage.list")]
+    PluginStorageList(PluginStorageListParams),
     #[serde(rename = "plugin.pane.open")]
     PluginPaneOpen(PluginPaneOpenParams),
     #[serde(rename = "plugin.pane.focus")]

@@ -1024,6 +1024,18 @@ impl App {
             Method::PluginLogList(params) => {
                 return self.handle_plugin_log_list(request.id, params);
             }
+            Method::PluginStorageGet(params) => {
+                return self.handle_plugin_storage_get(request.id, params);
+            }
+            Method::PluginStorageSet(params) => {
+                return self.handle_plugin_storage_set(request.id, params);
+            }
+            Method::PluginStorageDelete(params) => {
+                return self.handle_plugin_storage_delete(request.id, params);
+            }
+            Method::PluginStorageList(params) => {
+                return self.handle_plugin_storage_list(request.id, params);
+            }
             Method::PluginPaneOpen(params) => {
                 return self.handle_plugin_pane_open(request.id, params);
             }

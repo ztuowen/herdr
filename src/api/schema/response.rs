@@ -13,7 +13,7 @@ use super::panes::{
 };
 use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
-    PluginPaneInfo,
+    PluginPaneInfo, PluginStorageEntries,
 };
 use super::server::ServerCapabilities;
 use super::session::SessionSnapshot;
@@ -227,6 +227,26 @@ pub enum ResponseResult {
     },
     PluginLogList {
         logs: Vec<PluginCommandLogInfo>,
+    },
+    PluginStorageValue {
+        plugin_id: String,
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
+    },
+    PluginStorageSet {
+        plugin_id: String,
+        key: String,
+        value: serde_json::Value,
+    },
+    PluginStorageDeleted {
+        plugin_id: String,
+        key: String,
+        existed: bool,
+    },
+    PluginStorageList {
+        plugin_id: String,
+        entries: PluginStorageEntries,
     },
     PluginPaneOpened {
         plugin_pane: PluginPaneInfo,

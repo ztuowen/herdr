@@ -299,8 +299,21 @@ checked in manifest order inside each plugin.
 
 ## Storage
 
-There is no Herdr-managed plugin storage API in v1. Plugins that need durable
-state should own their files or database.
+Plugins can store opaque JSON values through Herdr's plugin storage API:
+
+```bash
+herdr plugin storage set --plugin example.board kanban/cards '[{"uuid":"card-1","title":"Card"}]'
+herdr plugin storage get --plugin example.board kanban/cards
+herdr plugin storage list --plugin example.board --prefix kanban/
+herdr plugin storage delete --plugin example.board kanban/cards
+```
+
+Use this for small host-managed state that should follow the installed plugin
+and be reachable through the same socket API on every platform. Herdr scopes
+storage by installed plugin id, validates keys, and owns durable reads and
+writes under the plugin state directory. The plugin still owns the value schema,
+migrations, cleanup policy, and any larger custom files or databases it keeps
+under `HERDR_PLUGIN_STATE_DIR`.
 
 ## Marketplace
 

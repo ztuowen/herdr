@@ -1131,3 +1131,45 @@ fn plugin_pane_open_request_round_trips() {
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }
+
+#[test]
+fn plugin_storage_requests_round_trip() {
+    let set = Request {
+        id: "req_plugin_storage_set".into(),
+        method: Method::PluginStorageSet(PluginStorageSetParams {
+            plugin_id: "example.board".into(),
+            key: "cards".into(),
+            value: serde_json::json!([{ "uuid": "card-1", "title": "Card" }]),
+        }),
+    };
+    let json = serde_json::to_value(&set).unwrap();
+    assert_eq!(json["method"], "plugin.storage.set");
+    assert_eq!(json["params"]["key"], "cards");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, set);
+
+    let list = Request {
+        id: "req_plugin_storage_list".into(),
+        method: Method::PluginStorageList(PluginStorageListParams {
+            plugin_id: "example.board".into(),
+            prefix: Some("card".into()),
+        }),
+    };
+    let json = serde_json::to_value(&list).unwrap();
+    assert_eq!(json["method"], "plugin.storage.list");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, list);
+
+    let response = SuccessResponse {
+        id: "req_plugin_storage_get".into(),
+        result: ResponseResult::PluginStorageValue {
+            plugin_id: "example.board".into(),
+            key: "cards".into(),
+            value: Some(serde_json::json!([{ "uuid": "card-1" }])),
+        },
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert!(json.contains("\"type\":\"plugin_storage_value\""));
+    let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, response);
+}

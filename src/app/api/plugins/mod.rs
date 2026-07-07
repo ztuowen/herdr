@@ -3,6 +3,7 @@ mod env;
 mod manifest;
 mod panes;
 mod runtime;
+mod storage;
 
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
@@ -659,7 +660,9 @@ fn manifest_actions(
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
+        Method, PluginSourceInfo, PluginSourceKind, PluginStorageDeleteParams,
+        PluginStorageGetParams, PluginStorageListParams, PluginStorageSetParams, Request,
+        SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1667,6 +1670,94 @@ command = ["sh", "-c", "sleep 1"]
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_storage_round_trips_opaque_json_values() {
+        let root = unique_temp_path("plugin-storage");
+        let xdg_home = unique_temp_path("plugin-storage-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.storage"
+name = "Storage"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+        let state_dir = super::env::plugin_state_dir("example.storage");
+        let _ = std::fs::remove_dir_all(&state_dir);
+        link_manifest(&mut app, &root);
+
+        let set = app.handle_api_request(Request {
+            id: "storage-set".into(),
+            method: Method::PluginStorageSet(PluginStorageSetParams {
+                plugin_id: "example.storage".into(),
+                key: "kanban/cards".into(),
+                value: serde_json::json!([
+                    { "uuid": "card-1", "title": "Card", "status": "todo" }
+                ]),
+            }),
+        });
+        let ResponseResult::PluginStorageSet { value, .. } = response_result(&set) else {
+            panic!("expected plugin storage set: {set}");
+        };
+        assert_eq!(value[0]["uuid"], "card-1");
+
+        let get = app.handle_api_request(Request {
+            id: "storage-get".into(),
+            method: Method::PluginStorageGet(PluginStorageGetParams {
+                plugin_id: "example.storage".into(),
+                key: "kanban/cards".into(),
+            }),
+        });
+        let ResponseResult::PluginStorageValue { value, .. } = response_result(&get) else {
+            panic!("expected plugin storage value: {get}");
+        };
+        assert_eq!(value.unwrap()[0]["status"], "todo");
+
+        let list = app.handle_api_request(Request {
+            id: "storage-list".into(),
+            method: Method::PluginStorageList(PluginStorageListParams {
+                plugin_id: "example.storage".into(),
+                prefix: Some("kanban/".into()),
+            }),
+        });
+        let ResponseResult::PluginStorageList { entries, .. } = response_result(&list) else {
+            panic!("expected plugin storage list: {list}");
+        };
+        assert!(entries.contains_key("kanban/cards"));
+
+        let delete = app.handle_api_request(Request {
+            id: "storage-delete".into(),
+            method: Method::PluginStorageDelete(PluginStorageDeleteParams {
+                plugin_id: "example.storage".into(),
+                key: "kanban/cards".into(),
+            }),
+        });
+        let ResponseResult::PluginStorageDeleted { existed, .. } = response_result(&delete) else {
+            panic!("expected plugin storage delete: {delete}");
+        };
+        assert!(existed);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(state_dir);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
     }
 
     #[test]

@@ -9,8 +9,10 @@ use crate::api::schema::{
     InstalledPluginInfo, Method, PluginActionInvokeParams, PluginActionListParams,
     PluginInvocationContext, PluginLinkParams, PluginListParams, PluginLogListParams,
     PluginPaneCloseParams, PluginPaneFocusParams, PluginPaneOpenParams, PluginPanePlacement,
-    PluginPlatform, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind, PluginUnlinkParams,
-    Request, ResponseResult, SplitDirection, SuccessResponse,
+    PluginPlatform, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind,
+    PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
+    PluginStorageSetParams, PluginUnlinkParams, Request, ResponseResult, SplitDirection,
+    SuccessResponse,
 };
 
 const PLUGIN_BUILD_OUTPUT_MAX_BYTES: usize = 64 * 1024;
@@ -32,6 +34,7 @@ pub(super) fn run_plugin_command(args: &[String]) -> std::io::Result<i32> {
         "disable" => plugin_set_enabled(&args[1..], false),
         "action" => run_plugin_action_command(&args[1..]),
         "log" | "logs" => plugin_log_list(&args[1..]),
+        "storage" => run_plugin_storage_command(&args[1..]),
         "pane" => run_plugin_pane_command(&args[1..]),
         "help" | "--help" | "-h" => {
             print_plugin_help();
@@ -460,6 +463,168 @@ fn plugin_action_invoke(args: &[String]) -> std::io::Result<i32> {
             link_handler_id: None,
         }),
     }))
+}
+
+fn run_plugin_storage_command(args: &[String]) -> std::io::Result<i32> {
+    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
+        print_plugin_storage_help();
+        return Ok(2);
+    };
+
+    match subcommand {
+        "get" => plugin_storage_get(&args[1..]),
+        "set" => plugin_storage_set(&args[1..]),
+        "delete" | "remove" => plugin_storage_delete(&args[1..]),
+        "list" => plugin_storage_list(&args[1..]),
+        "help" | "--help" | "-h" => {
+            print_plugin_storage_help();
+            Ok(0)
+        }
+        _ => {
+            print_plugin_storage_help();
+            Ok(2)
+        }
+    }
+}
+
+fn plugin_storage_get(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, rest) = parse_required_plugin_option(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    let Some(key) = rest.first() else {
+        eprintln!("usage: herdr plugin storage get --plugin ID <key>");
+        return Ok(2);
+    };
+    if rest.len() != 1 {
+        eprintln!("usage: herdr plugin storage get --plugin ID <key>");
+        return Ok(2);
+    }
+    print_plugin_response(Method::PluginStorageGet(PluginStorageGetParams {
+        plugin_id,
+        key: key.clone(),
+    }))
+}
+
+fn plugin_storage_set(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, rest) = parse_required_plugin_option(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    if rest.len() != 2 {
+        eprintln!("usage: herdr plugin storage set --plugin ID <key> <json|->");
+        return Ok(2);
+    }
+    let value = match parse_plugin_storage_json_value(&rest[1]) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(2);
+        }
+    };
+    print_plugin_response(Method::PluginStorageSet(PluginStorageSetParams {
+        plugin_id,
+        key: rest[0].clone(),
+        value,
+    }))
+}
+
+fn plugin_storage_delete(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, rest) = parse_required_plugin_option(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    let Some(key) = rest.first() else {
+        eprintln!("usage: herdr plugin storage delete --plugin ID <key>");
+        return Ok(2);
+    };
+    if rest.len() != 1 {
+        eprintln!("usage: herdr plugin storage delete --plugin ID <key>");
+        return Ok(2);
+    }
+    print_plugin_response(Method::PluginStorageDelete(PluginStorageDeleteParams {
+        plugin_id,
+        key: key.clone(),
+    }))
+}
+
+fn plugin_storage_list(args: &[String]) -> std::io::Result<i32> {
+    let mut plugin_id = None;
+    let mut prefix = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--plugin" => {
+                let Some(value) = required_value(args, &mut index, "--plugin") else {
+                    return Ok(2);
+                };
+                plugin_id = Some(value);
+            }
+            "--prefix" => {
+                let Some(value) = required_value(args, &mut index, "--prefix") else {
+                    return Ok(2);
+                };
+                prefix = Some(value);
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+    let Some(plugin_id) = plugin_id else {
+        eprintln!("missing required --plugin");
+        return Ok(2);
+    };
+    print_plugin_response(Method::PluginStorageList(PluginStorageListParams {
+        plugin_id,
+        prefix,
+    }))
+}
+
+fn parse_required_plugin_option(args: &[String]) -> std::io::Result<(String, Vec<String>)> {
+    let mut plugin_id = None;
+    let mut rest = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--plugin" => {
+                let Some(value) = required_value(args, &mut index, "--plugin") else {
+                    return Ok((String::new(), Vec::new()));
+                };
+                plugin_id = Some(value);
+            }
+            value if value.starts_with("--") => {
+                eprintln!("unknown option: {value}");
+                return Ok((String::new(), Vec::new()));
+            }
+            value => {
+                rest.push(value.to_string());
+                index += 1;
+            }
+        }
+    }
+    let Some(plugin_id) = plugin_id else {
+        eprintln!("missing required --plugin");
+        return Ok((String::new(), Vec::new()));
+    };
+    Ok((plugin_id, rest))
+}
+
+fn parse_plugin_storage_json_value(input: &str) -> std::io::Result<serde_json::Value> {
+    let json = if input == "-" {
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        buffer
+    } else {
+        input.to_string()
+    };
+    serde_json::from_str(&json).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid JSON value for plugin storage: {err}"),
+        )
+    })
 }
 
 fn run_plugin_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -1593,6 +1758,7 @@ fn print_plugin_help() {
     eprintln!("  herdr plugin disable <plugin_id>");
     eprintln!("  herdr plugin action <list|invoke>");
     eprintln!("  herdr plugin log list [--plugin ID] [--limit N]");
+    eprintln!("  herdr plugin storage <get|set|delete|list>");
     eprintln!("  herdr plugin pane <open|focus|close>");
 }
 
@@ -1600,6 +1766,14 @@ fn print_plugin_action_help() {
     eprintln!("herdr plugin action commands:");
     eprintln!("  herdr plugin action list [--plugin ID]");
     eprintln!("  herdr plugin action invoke <action_id> [--plugin ID]");
+}
+
+fn print_plugin_storage_help() {
+    eprintln!("herdr plugin storage commands:");
+    eprintln!("  herdr plugin storage get --plugin ID <key>");
+    eprintln!("  herdr plugin storage set --plugin ID <key> <json|->");
+    eprintln!("  herdr plugin storage delete --plugin ID <key>");
+    eprintln!("  herdr plugin storage list --plugin ID [--prefix PREFIX]");
 }
 
 fn print_plugin_pane_help() {
@@ -1692,6 +1866,22 @@ mod tests {
                 "{source} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn plugin_storage_cli_helpers_parse_portable_arguments() {
+        let args = vec![
+            "--plugin".to_string(),
+            "example.board".to_string(),
+            "kanban/cards".to_string(),
+            r#"{"title":"Card"}"#.to_string(),
+        ];
+        let (plugin_id, rest) = parse_required_plugin_option(&args).unwrap();
+        assert_eq!(plugin_id, "example.board");
+        assert_eq!(rest, ["kanban/cards", r#"{"title":"Card"}"#]);
+
+        let value = parse_plugin_storage_json_value(&rest[1]).unwrap();
+        assert_eq!(value["title"], "Card");
     }
 
     #[test]

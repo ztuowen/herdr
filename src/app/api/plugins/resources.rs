@@ -1,6 +1,7 @@
 use crate::api::schema::{
-    PluginCapability, PluginManifestResource, PluginResourceDeleteParams, PluginResourceGetParams,
-    PluginResourceItems, PluginResourceListParams, PluginResourcePutParams, ResponseResult,
+    InstalledPluginInfo, PluginCapability, PluginManifestResource, PluginResourceDeleteParams,
+    PluginResourceGetParams, PluginResourceItems, PluginResourceListParams,
+    PluginResourcePutParams, ResponseResult,
 };
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
@@ -8,6 +9,77 @@ use crate::app::App;
 use super::storage;
 
 impl App {
+    pub(crate) fn mirror_plugin_resource_kind_put(
+        &mut self,
+        kind: &str,
+        item_id: &str,
+        value: serde_json::Value,
+    ) -> usize {
+        let targets = self.plugin_resource_kind_targets(kind);
+        let mut mirrored = 0;
+        for (plugin, resource) in targets {
+            match write_plugin_resource_item(&plugin, &resource, item_id, value.clone()) {
+                Ok(()) => mirrored += 1,
+                Err(err) => {
+                    tracing::warn!(
+                        plugin_id = %plugin.plugin_id,
+                        resource_id = %resource.id,
+                        item_id,
+                        error = %err,
+                        "failed to mirror plugin resource item"
+                    );
+                }
+            }
+        }
+        mirrored
+    }
+
+    pub(crate) fn mirror_plugin_resource_kind_delete(
+        &mut self,
+        kind: &str,
+        item_id: &str,
+    ) -> usize {
+        let targets = self.plugin_resource_kind_targets(kind);
+        let mut mirrored = 0;
+        for (plugin, resource) in targets {
+            match delete_plugin_resource_item(&plugin, &resource, item_id) {
+                Ok(()) => mirrored += 1,
+                Err(err) => {
+                    tracing::warn!(
+                        plugin_id = %plugin.plugin_id,
+                        resource_id = %resource.id,
+                        item_id,
+                        error = %err,
+                        "failed to mirror plugin resource delete"
+                    );
+                }
+            }
+        }
+        mirrored
+    }
+
+    fn plugin_resource_kind_targets(
+        &self,
+        kind: &str,
+    ) -> Vec<(InstalledPluginInfo, PluginManifestResource)> {
+        self.state
+            .installed_plugins
+            .values()
+            .filter(|plugin| {
+                plugin.enabled
+                    && super::manifest::plugin_has_capability(plugin, PluginCapability::Resources)
+            })
+            .flat_map(|plugin| {
+                plugin
+                    .resources
+                    .iter()
+                    .filter(move |resource| resource.kind == kind)
+                    .cloned()
+                    .map(|resource| (plugin.clone(), resource))
+            })
+            .collect()
+    }
+
     pub(in crate::app::api) fn handle_plugin_resource_list(
         &mut self,
         id: String,
@@ -211,4 +283,37 @@ impl App {
         storage::validate_storage_key(id, &storage_key)?;
         Ok((plugin_id, resource, item_id, storage_key))
     }
+}
+
+fn write_plugin_resource_item(
+    plugin: &InstalledPluginInfo,
+    resource: &PluginManifestResource,
+    item_id: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    super::env::ensure_plugin_user_dirs(plugin).map_err(|err| err.to_string())?;
+    let item_id = super::manifest::normalize_action_id(item_id)
+        .ok_or_else(|| "invalid resource item id".to_string())?;
+    let storage_key = format!("{}{}", resource.storage_prefix, item_id);
+    storage::validate_storage_key("plugin_resource_mirror", &storage_key)?;
+    storage::validate_storage_value("plugin_resource_mirror", &value)?;
+    let mut document = storage::read_storage_document("plugin_resource_mirror", &plugin.plugin_id)?;
+    storage::validate_storage_entry_count("plugin_resource_mirror", &document, &storage_key)?;
+    document.insert(storage_key, value);
+    storage::write_storage_document("plugin_resource_mirror", &plugin.plugin_id, &document)
+}
+
+fn delete_plugin_resource_item(
+    plugin: &InstalledPluginInfo,
+    resource: &PluginManifestResource,
+    item_id: &str,
+) -> Result<(), String> {
+    super::env::ensure_plugin_user_dirs(plugin).map_err(|err| err.to_string())?;
+    let item_id = super::manifest::normalize_action_id(item_id)
+        .ok_or_else(|| "invalid resource item id".to_string())?;
+    let storage_key = format!("{}{}", resource.storage_prefix, item_id);
+    storage::validate_storage_key("plugin_resource_mirror", &storage_key)?;
+    let mut document = storage::read_storage_document("plugin_resource_mirror", &plugin.plugin_id)?;
+    document.remove(&storage_key);
+    storage::write_storage_document("plugin_resource_mirror", &plugin.plugin_id, &document)
 }

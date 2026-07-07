@@ -361,6 +361,13 @@ letters, digits, colon, underscore, and hyphen. Herdr maps each item to
 `{storage_prefix}{item_id}` and returns list results keyed by item id. It does
 not inspect the JSON against `kind`.
 
+During the Kanban migration, legacy `kanban.add`, `kanban.update`, and
+`kanban.delete` calls also mirror cards into every enabled plugin resource with
+`kind = "application/vnd.herdr.kanban-card+json"`. The legacy Kanban API remains
+the compatibility source of truth for now; the mirrored resource collection
+lets board plugins prove they can read card state through `plugin.resource.*`
+without adding new Kanban-specific host methods.
+
 ## Client Speech
 
 Plugin v2 can declare client speech hooks without moving microphone capture,

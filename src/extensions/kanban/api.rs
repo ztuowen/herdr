@@ -5,6 +5,8 @@ use crate::api::schema::{
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
 
+const KANBAN_CARD_RESOURCE_KIND: &str = "application/vnd.herdr.kanban-card+json";
+
 pub(crate) fn handle_api_request(
     app: &mut App,
     request_id: String,
@@ -41,6 +43,18 @@ fn emit_kanban_deleted(app: &mut App, item: KanbanItem) {
         EventKind::KanbanDeleted,
         EventData::KanbanDeleted { item },
     );
+}
+
+fn mirror_kanban_card_resource(app: &mut App, item: &KanbanItem) {
+    let Ok(value) = serde_json::to_value(item) else {
+        tracing::warn!(uuid = %item.uuid, "failed to serialize kanban card for plugin resource mirror");
+        return;
+    };
+    app.mirror_plugin_resource_kind_put(KANBAN_CARD_RESOURCE_KIND, &item.uuid, value);
+}
+
+fn delete_kanban_card_resource_mirror(app: &mut App, item: &KanbanItem) {
+    app.mirror_plugin_resource_kind_delete(KANBAN_CARD_RESOURCE_KIND, &item.uuid);
 }
 
 fn active_pane_terminal_ids(app: &App) -> std::collections::HashSet<String> {
@@ -94,6 +108,7 @@ fn handle_kanban_add(app: &mut App, id: String, params: KanbanAddParams) -> Stri
     );
     app.state.mark_session_dirty();
     app.schedule_session_save();
+    mirror_kanban_card_resource(app, &item);
     emit_kanban_added(app, item.clone());
     encode_success(id, ResponseResult::KanbanItem { item })
 }
@@ -184,6 +199,7 @@ fn handle_kanban_update(app: &mut App, id: String, params: KanbanUpdateParams) -
         Some(item) => {
             app.state.mark_session_dirty();
             app.schedule_session_save();
+            mirror_kanban_card_resource(app, &item);
             emit_kanban_updated(app, item.clone());
             encode_success(id, ResponseResult::KanbanItem { item })
         }
@@ -211,6 +227,7 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
         Some(item) => {
             app.state.mark_session_dirty();
             app.schedule_session_save();
+            delete_kanban_card_resource_mirror(app, &item);
             emit_kanban_deleted(app, item.clone());
             encode_success(id, ResponseResult::KanbanItem { item })
         }
@@ -225,8 +242,11 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::schema::{Method, SuccessResponse};
+    use crate::api::schema::{
+        Method, PluginLinkParams, PluginResourceGetParams, Request, SuccessResponse,
+    };
     use crate::config::Config;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn kanban_api_request_dispatch_handles_kanban_methods() {
@@ -257,6 +277,110 @@ mod tests {
             _ => panic!("Expected ResponseResult::KanbanItem"),
         };
         assert_eq!(item.title, "Dispatched card");
+    }
+
+    #[test]
+    fn kanban_mutations_mirror_to_plugin_card_resource() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let root = unique_temp_path("kanban-resource-mirror");
+        let xdg_home = unique_temp_path("kanban-resource-mirror-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.board"
+name = "Board"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.kanban-card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+
+        let link = app.handle_api_request(Request {
+            id: "link".into(),
+            method: Method::PluginLink(PluginLinkParams {
+                path: root.display().to_string(),
+                enabled: true,
+                source: None,
+            }),
+        });
+        assert!(link.contains("plugin_linked"), "link failed: {link}");
+
+        let add = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Plugin card".into(),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Todo),
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled");
+        let item = kanban_item_from_response(&add);
+        let mirrored = plugin_resource_value(&mut app, &item.uuid).expect("card should mirror");
+        assert_eq!(mirrored["uuid"], item.uuid);
+        assert_eq!(mirrored["title"], "Plugin card");
+        assert_eq!(mirrored["status"], "todo");
+
+        let update = handle_api_request(
+            &mut app,
+            "update".into(),
+            &Method::KanbanUpdate(KanbanUpdateParams {
+                uuid: item.uuid.clone(),
+                title: Some("Plugin card updated".into()),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Reviewing),
+                terminal_id: None,
+                clear_terminal_id: None,
+            }),
+        )
+        .expect("kanban.update should be handled");
+        let updated = kanban_item_from_response(&update);
+        let mirrored = plugin_resource_value(&mut app, &updated.uuid).expect("card should update");
+        assert_eq!(mirrored["title"], "Plugin card updated");
+        assert_eq!(mirrored["status"], "reviewing");
+
+        let delete = handle_api_request(
+            &mut app,
+            "delete".into(),
+            &Method::KanbanDelete(KanbanDeleteParams {
+                uuid: updated.uuid.clone(),
+            }),
+        )
+        .expect("kanban.delete should be handled");
+        let deleted = kanban_item_from_response(&delete);
+        assert_eq!(deleted.uuid, updated.uuid);
+        assert!(plugin_resource_value(&mut app, &updated.uuid).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
     }
 
     #[test]
@@ -541,5 +665,42 @@ mod tests {
         let (text2, is_err2) = crate::extensions::kanban::ui::get_description_text(&plan_path);
         assert_eq!(text2, "NO DESCRIPTION FOUND");
         assert!(is_err2);
+    }
+
+    fn kanban_item_from_response(response: &str) -> KanbanItem {
+        let resp: SuccessResponse = serde_json::from_str(response).unwrap();
+        match resp.result {
+            ResponseResult::KanbanItem { item } => item,
+            other => panic!("expected kanban item response, got {other:?}"),
+        }
+    }
+
+    fn plugin_resource_value(app: &mut App, item_id: &str) -> Option<serde_json::Value> {
+        let response = app.handle_api_request(Request {
+            id: "resource-get".into(),
+            method: Method::PluginResourceGet(PluginResourceGetParams {
+                plugin_id: "example.board".into(),
+                resource_id: "cards".into(),
+                item_id: item_id.into(),
+            }),
+        });
+        let resp: SuccessResponse = serde_json::from_str(&response).unwrap();
+        match resp.result {
+            ResponseResult::PluginResourceValue { value, .. } => value,
+            other => panic!("expected plugin resource value response, got {other:?}"),
+        }
+    }
+
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn write_manifest_content(root: &std::path::Path, content: &str) {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join("herdr-plugin.toml"), content).unwrap();
     }
 }

@@ -4,6 +4,8 @@ use crate::input::TerminalKey;
 use crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 pub(crate) mod kanban;
 pub(crate) mod markdown;
@@ -25,6 +27,15 @@ pub struct ExtensionsState {
     pub kanban: crate::extensions::kanban::KanbanState,
     pub pending_enter: Option<PendingEnter>,
     pub pending_enter_sequence: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct KanbanColumnCounts {
+    pub todo: usize,
+    pub ongoing: usize,
+    pub blocked: usize,
+    pub reviewing: usize,
+    pub done: usize,
 }
 
 impl ExtensionsState {
@@ -54,6 +65,23 @@ impl ExtensionsState {
     pub(crate) fn restore_kanban_items(&mut self, items: Vec<crate::api::schema::KanbanItem>) {
         self.kanban = crate::extensions::kanban::KanbanState::new(items);
     }
+
+    pub(crate) fn apply_speech_to_text_config(
+        &mut self,
+        config: crate::config::SpeechToTextConfig,
+    ) {
+        self.speech_to_text = config;
+    }
+
+    pub(crate) fn kanban_column_counts(&self) -> KanbanColumnCounts {
+        KanbanColumnCounts {
+            todo: self.kanban.items_in_column(0).len(),
+            ongoing: self.kanban.items_in_column(1).len(),
+            blocked: self.kanban.items_in_column(2).len(),
+            reviewing: self.kanban.items_in_column(3).len(),
+            done: self.kanban.items_in_column(4).len(),
+        }
+    }
 }
 
 pub struct ExtensionsRuntime {
@@ -76,6 +104,13 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
     }
 
     false
+}
+
+pub(crate) fn init_extension_runtime_hooks(
+    render_notify: Arc<tokio::sync::Notify>,
+    render_dirty: Arc<AtomicBool>,
+) {
+    crate::extensions::markdown::math::init_redraw_notifier(render_notify, render_dirty);
 }
 
 pub fn handle_extension_api_request(

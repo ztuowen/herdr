@@ -698,7 +698,7 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
 
-        crate::extensions::markdown::math::init_redraw_notifier(
+        crate::extensions::init_extension_runtime_hooks(
             render_notify.clone(),
             render_dirty.clone(),
         );
@@ -1376,7 +1376,9 @@ impl App {
         }
 
         if !invalid_section("speech_to_text") {
-            self.state.extensions.speech_to_text = config.speech_to_text.clone();
+            self.state
+                .extensions
+                .apply_speech_to_text_config(config.speech_to_text.clone());
         }
 
         if !invalid_section("experimental") {

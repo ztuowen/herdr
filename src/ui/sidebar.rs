@@ -837,11 +837,7 @@ fn render_workspace_list(
     if area.height > 0 {
         let kanban_rect = app.sidebar_kanban_button_rect();
         if kanban_rect.width > 0 {
-            let todo_count = app.extensions.kanban.items_in_column(0).len();
-            let ongoing_count = app.extensions.kanban.items_in_column(1).len();
-            let blocked_count = app.extensions.kanban.items_in_column(2).len();
-            let reviewing_count = app.extensions.kanban.items_in_column(3).len();
-            let done_count = app.extensions.kanban.items_in_column(4).len();
+            let kanban_counts = app.extensions.kanban_column_counts();
 
             let is_active = app.mode == Mode::Kanban;
 
@@ -856,27 +852,27 @@ fn render_workspace_list(
                 Span::styled(" ⚏ kanban", kanban_style),
                 Span::styled(" ", Style::default()),
                 Span::styled(
-                    todo_count.to_string(),
+                    kanban_counts.todo.to_string(),
                     Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ", Style::default()),
                 Span::styled(
-                    ongoing_count.to_string(),
+                    kanban_counts.ongoing.to_string(),
                     Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ", Style::default()),
                 Span::styled(
-                    blocked_count.to_string(),
+                    kanban_counts.blocked.to_string(),
                     Style::default().fg(p.red).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ", Style::default()),
                 Span::styled(
-                    reviewing_count.to_string(),
+                    kanban_counts.reviewing.to_string(),
                     Style::default().fg(p.peach).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ", Style::default()),
                 Span::styled(
-                    done_count.to_string(),
+                    kanban_counts.done.to_string(),
                     Style::default().fg(p.green).add_modifier(Modifier::BOLD),
                 ),
             ];

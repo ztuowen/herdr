@@ -566,11 +566,7 @@ fn render_mobile_switcher_content(
 
     let active = app.mode == Mode::Kanban;
     let bg = mobile_item_bg(false, active, p);
-    let todo_count = app.extensions.kanban.items_in_column(0).len();
-    let ongoing_count = app.extensions.kanban.items_in_column(1).len();
-    let blocked_count = app.extensions.kanban.items_in_column(2).len();
-    let reviewing_count = app.extensions.kanban.items_in_column(3).len();
-    let done_count = app.extensions.kanban.items_in_column(4).len();
+    let kanban_counts = app.extensions.kanban_column_counts();
 
     let kanban_style = if active {
         Style::default()
@@ -587,7 +583,7 @@ fn render_mobile_switcher_content(
     let spans = vec![
         Span::styled("  ⚏ kanban ", kanban_style),
         Span::styled(
-            todo_count.to_string(),
+            kanban_counts.todo.to_string(),
             Style::default()
                 .fg(p.overlay1)
                 .bg(bg)
@@ -595,7 +591,7 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            ongoing_count.to_string(),
+            kanban_counts.ongoing.to_string(),
             Style::default()
                 .fg(p.yellow)
                 .bg(bg)
@@ -603,7 +599,7 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            blocked_count.to_string(),
+            kanban_counts.blocked.to_string(),
             Style::default()
                 .fg(p.red)
                 .bg(bg)
@@ -611,7 +607,7 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            reviewing_count.to_string(),
+            kanban_counts.reviewing.to_string(),
             Style::default()
                 .fg(p.peach)
                 .bg(bg)
@@ -619,7 +615,7 @@ fn render_mobile_switcher_content(
         ),
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            done_count.to_string(),
+            kanban_counts.done.to_string(),
             Style::default()
                 .fg(p.green)
                 .bg(bg)

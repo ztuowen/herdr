@@ -118,13 +118,7 @@ pub fn handle_extension_api_request(
     request_id: String,
     method: &Method,
 ) -> Option<String> {
-    match method {
-        Method::KanbanAdd(params) => Some(app.handle_kanban_add(request_id, params.clone())),
-        Method::KanbanList(params) => Some(app.handle_kanban_list(request_id, params.clone())),
-        Method::KanbanUpdate(params) => Some(app.handle_kanban_update(request_id, params.clone())),
-        Method::KanbanDelete(params) => Some(app.handle_kanban_delete(request_id, params.clone())),
-        _ => None,
-    }
+    crate::extensions::kanban::api::handle_api_request(app, request_id, method)
 }
 
 pub fn handle_extension_key(app: &mut crate::app::App, key: TerminalKey) -> bool {

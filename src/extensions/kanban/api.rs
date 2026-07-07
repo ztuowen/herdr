@@ -1,222 +1,263 @@
-// Allow dead code in app/api/kanban.rs when the kanban feature is disabled.
-#![allow(dead_code)]
-
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, KanbanAddParams, KanbanDeleteParams, KanbanItem,
-    KanbanListParams, KanbanUpdateParams, ResponseResult,
+    KanbanListParams, KanbanUpdateParams, Method, ResponseResult,
 };
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
 
-impl App {
-    fn emit_kanban_event(&mut self, event: EventKind, data: EventData) {
-        self.emit_event(EventEnvelope { event, data });
+pub(crate) fn handle_api_request(
+    app: &mut App,
+    request_id: String,
+    method: &Method,
+) -> Option<String> {
+    match method {
+        Method::KanbanAdd(params) => Some(handle_kanban_add(app, request_id, params.clone())),
+        Method::KanbanList(params) => Some(handle_kanban_list(app, request_id, params.clone())),
+        Method::KanbanUpdate(params) => Some(handle_kanban_update(app, request_id, params.clone())),
+        Method::KanbanDelete(params) => Some(handle_kanban_delete(app, request_id, params.clone())),
+        _ => None,
+    }
+}
+
+fn emit_kanban_event(app: &mut App, event: EventKind, data: EventData) {
+    app.emit_event(EventEnvelope { event, data });
+}
+
+fn emit_kanban_added(app: &mut App, item: KanbanItem) {
+    emit_kanban_event(app, EventKind::KanbanAdded, EventData::KanbanAdded { item });
+}
+
+fn emit_kanban_updated(app: &mut App, item: KanbanItem) {
+    emit_kanban_event(
+        app,
+        EventKind::KanbanUpdated,
+        EventData::KanbanUpdated { item },
+    );
+}
+
+fn emit_kanban_deleted(app: &mut App, item: KanbanItem) {
+    emit_kanban_event(
+        app,
+        EventKind::KanbanDeleted,
+        EventData::KanbanDeleted { item },
+    );
+}
+
+fn active_pane_terminal_ids(app: &App) -> std::collections::HashSet<String> {
+    let mut active = std::collections::HashSet::new();
+    for ws in &app.state.workspaces {
+        for tab in &ws.tabs {
+            for pane in tab.panes.values() {
+                active.insert(pane.attached_terminal_id.to_string());
+            }
+        }
+    }
+    active
+}
+
+fn handle_kanban_add(app: &mut App, id: String, params: KanbanAddParams) -> String {
+    if let Some(ref path_str) = params.description {
+        if !path_str.is_empty() {
+            let path = std::path::Path::new(path_str);
+            if std::fs::File::open(path).is_err() {
+                return encode_error(
+                    id,
+                    "kanban_description_not_accessible",
+                    format!("Description path {} is not accessible", path_str),
+                );
+            }
+        }
+    }
+    let terminal_id = params.terminal_id.map(|tid| {
+        if let Ok(resolved) = app.resolve_terminal_target(&tid) {
+            resolved.terminal_id
+        } else {
+            tid
+        }
+    });
+    let active_tids = active_pane_terminal_ids(app);
+    if app
+        .state
+        .extensions
+        .kanban
+        .clear_dead_terminals(|tid| active_tids.contains(tid))
+    {
+        app.state.mark_session_dirty();
+        app.schedule_session_save();
     }
 
-    fn emit_kanban_added(&mut self, item: KanbanItem) {
-        self.emit_kanban_event(EventKind::KanbanAdded, EventData::KanbanAdded { item });
+    let item = app.state.extensions.kanban.add_item(
+        params.title,
+        params.description,
+        params.status,
+        terminal_id,
+    );
+    app.state.mark_session_dirty();
+    app.schedule_session_save();
+    emit_kanban_added(app, item.clone());
+    encode_success(id, ResponseResult::KanbanItem { item })
+}
+
+fn handle_kanban_list(app: &mut App, id: String, params: KanbanListParams) -> String {
+    let target_terminal_id = params.terminal_id.map(|tid| {
+        if let Ok(resolved) = app.resolve_terminal_target(&tid) {
+            resolved.terminal_id
+        } else {
+            tid
+        }
+    });
+
+    let active_tids = active_pane_terminal_ids(app);
+    if app
+        .state
+        .extensions
+        .kanban
+        .clear_dead_terminals(|tid| active_tids.contains(tid))
+    {
+        app.state.mark_session_dirty();
+        app.schedule_session_save();
     }
 
-    fn emit_kanban_updated(&mut self, item: KanbanItem) {
-        self.emit_kanban_event(EventKind::KanbanUpdated, EventData::KanbanUpdated { item });
-    }
-
-    fn emit_kanban_deleted(&mut self, item: KanbanItem) {
-        self.emit_kanban_event(EventKind::KanbanDeleted, EventData::KanbanDeleted { item });
-    }
-
-    fn active_pane_terminal_ids(&self) -> std::collections::HashSet<String> {
-        let mut active = std::collections::HashSet::new();
-        for ws in &self.state.workspaces {
-            for tab in &ws.tabs {
-                for pane in tab.panes.values() {
-                    active.insert(pane.attached_terminal_id.to_string());
+    let items = app
+        .state
+        .extensions
+        .kanban
+        .items
+        .iter()
+        .filter(|item| {
+            if let Some(ref status) = params.status {
+                if item.status != *status {
+                    return false;
                 }
             }
-        }
-        active
-    }
-    pub(crate) fn handle_kanban_add(&mut self, id: String, params: KanbanAddParams) -> String {
-        if let Some(ref path_str) = params.description {
-            if !path_str.is_empty() {
-                let path = std::path::Path::new(path_str);
-                if std::fs::File::open(path).is_err() {
-                    return encode_error(
-                        id,
-                        "kanban_description_not_accessible",
-                        format!("Description path {} is not accessible", path_str),
-                    );
+            if let Some(ref target_tid) = target_terminal_id {
+                if item.terminal_id.as_ref() != Some(target_tid) {
+                    return false;
                 }
             }
-        }
-        let terminal_id = params.terminal_id.map(|tid| {
-            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
-                resolved.terminal_id
-            } else {
-                tid
+            true
+        })
+        .cloned()
+        .collect();
+    encode_success(id, ResponseResult::KanbanList { items })
+}
+
+fn handle_kanban_update(app: &mut App, id: String, params: KanbanUpdateParams) -> String {
+    if let Some(ref path_str) = params.description {
+        if !path_str.is_empty() {
+            let path = std::path::Path::new(path_str);
+            if std::fs::File::open(path).is_err() {
+                return encode_error(
+                    id,
+                    "kanban_description_not_accessible",
+                    format!("Description path {} is not accessible", path_str),
+                );
             }
-        });
-        let active_tids = self.active_pane_terminal_ids();
-        if self
-            .state
-            .extensions
-            .kanban
-            .clear_dead_terminals(|tid| active_tids.contains(tid))
-        {
-            self.state.mark_session_dirty();
-            self.schedule_session_save();
-        }
-
-        let item = self.state.extensions.kanban.add_item(
-            params.title,
-            params.description,
-            params.status,
-            terminal_id,
-        );
-        self.state.mark_session_dirty();
-        self.schedule_session_save();
-        self.emit_kanban_added(item.clone());
-        encode_success(id, ResponseResult::KanbanItem { item })
-    }
-
-    pub(crate) fn handle_kanban_list(&mut self, id: String, params: KanbanListParams) -> String {
-        let target_terminal_id = params.terminal_id.map(|tid| {
-            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
-                resolved.terminal_id
-            } else {
-                tid
-            }
-        });
-
-        let active_tids = self.active_pane_terminal_ids();
-        if self
-            .state
-            .extensions
-            .kanban
-            .clear_dead_terminals(|tid| active_tids.contains(tid))
-        {
-            self.state.mark_session_dirty();
-            self.schedule_session_save();
-        }
-
-        let items = self
-            .state
-            .extensions
-            .kanban
-            .items
-            .iter()
-            .filter(|item| {
-                if let Some(ref status) = params.status {
-                    if item.status != *status {
-                        return false;
-                    }
-                }
-                if let Some(ref target_tid) = target_terminal_id {
-                    if item.terminal_id.as_ref() != Some(target_tid) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .cloned()
-            .collect();
-        encode_success(id, ResponseResult::KanbanList { items })
-    }
-
-    pub(crate) fn handle_kanban_update(
-        &mut self,
-        id: String,
-        params: KanbanUpdateParams,
-    ) -> String {
-        if let Some(ref path_str) = params.description {
-            if !path_str.is_empty() {
-                let path = std::path::Path::new(path_str);
-                if std::fs::File::open(path).is_err() {
-                    return encode_error(
-                        id,
-                        "kanban_description_not_accessible",
-                        format!("Description path {} is not accessible", path_str),
-                    );
-                }
-            }
-        }
-        let terminal_id = params.terminal_id.map(|tid| {
-            if let Ok(resolved) = self.resolve_terminal_target(&tid) {
-                resolved.terminal_id
-            } else {
-                tid
-            }
-        });
-        let active_tids = self.active_pane_terminal_ids();
-        if self
-            .state
-            .extensions
-            .kanban
-            .clear_dead_terminals(|tid| active_tids.contains(tid))
-        {
-            self.state.mark_session_dirty();
-            self.schedule_session_save();
-        }
-
-        match self.state.extensions.kanban.update_item(
-            &params.uuid,
-            params.title,
-            params.description,
-            params.status,
-            terminal_id,
-            params.clear_terminal_id,
-        ) {
-            Some(item) => {
-                self.state.mark_session_dirty();
-                self.schedule_session_save();
-                self.emit_kanban_updated(item.clone());
-                encode_success(id, ResponseResult::KanbanItem { item })
-            }
-            None => encode_error(
-                id,
-                "kanban_item_not_found",
-                format!("Kanban item with uuid {} not found", params.uuid),
-            ),
         }
     }
-
-    pub(crate) fn handle_kanban_delete(
-        &mut self,
-        id: String,
-        params: KanbanDeleteParams,
-    ) -> String {
-        let active_tids = self.active_pane_terminal_ids();
-        if self
-            .state
-            .extensions
-            .kanban
-            .clear_dead_terminals(|tid| active_tids.contains(tid))
-        {
-            self.state.mark_session_dirty();
-            self.schedule_session_save();
+    let terminal_id = params.terminal_id.map(|tid| {
+        if let Ok(resolved) = app.resolve_terminal_target(&tid) {
+            resolved.terminal_id
+        } else {
+            tid
         }
+    });
+    let active_tids = active_pane_terminal_ids(app);
+    if app
+        .state
+        .extensions
+        .kanban
+        .clear_dead_terminals(|tid| active_tids.contains(tid))
+    {
+        app.state.mark_session_dirty();
+        app.schedule_session_save();
+    }
 
-        match self.state.extensions.kanban.delete_item(&params.uuid) {
-            Some(item) => {
-                self.state.mark_session_dirty();
-                self.schedule_session_save();
-                self.emit_kanban_deleted(item.clone());
-                encode_success(id, ResponseResult::KanbanItem { item })
-            }
-            None => encode_error(
-                id,
-                "kanban_item_not_found",
-                format!("Kanban item with uuid {} not found", params.uuid),
-            ),
+    match app.state.extensions.kanban.update_item(
+        &params.uuid,
+        params.title,
+        params.description,
+        params.status,
+        terminal_id,
+        params.clear_terminal_id,
+    ) {
+        Some(item) => {
+            app.state.mark_session_dirty();
+            app.schedule_session_save();
+            emit_kanban_updated(app, item.clone());
+            encode_success(id, ResponseResult::KanbanItem { item })
         }
+        None => encode_error(
+            id,
+            "kanban_item_not_found",
+            format!("Kanban item with uuid {} not found", params.uuid),
+        ),
+    }
+}
+
+fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -> String {
+    let active_tids = active_pane_terminal_ids(app);
+    if app
+        .state
+        .extensions
+        .kanban
+        .clear_dead_terminals(|tid| active_tids.contains(tid))
+    {
+        app.state.mark_session_dirty();
+        app.schedule_session_save();
+    }
+
+    match app.state.extensions.kanban.delete_item(&params.uuid) {
+        Some(item) => {
+            app.state.mark_session_dirty();
+            app.schedule_session_save();
+            emit_kanban_deleted(app, item.clone());
+            encode_success(id, ResponseResult::KanbanItem { item })
+        }
+        None => encode_error(
+            id,
+            "kanban_item_not_found",
+            format!("Kanban item with uuid {} not found", params.uuid),
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::schema::SuccessResponse;
+    use crate::api::schema::{Method, SuccessResponse};
     use crate::config::Config;
+
+    #[test]
+    fn kanban_api_request_dispatch_handles_kanban_methods() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let response = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Dispatched card".into(),
+                description: None,
+                status: None,
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled by kanban extension API");
+
+        let resp: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let item = match resp.result {
+            ResponseResult::KanbanItem { item } => item,
+            _ => panic!("Expected ResponseResult::KanbanItem"),
+        };
+        assert_eq!(item.title, "Dispatched card");
+    }
 
     #[test]
     fn test_kanban_api_handlers() {
@@ -235,7 +276,8 @@ mod tests {
         );
 
         // Add
-        let add_res = app.handle_kanban_add(
+        let add_res = handle_kanban_add(
+            &mut app,
             "1".into(),
             KanbanAddParams {
                 title: "Test Kanban".into(),
@@ -252,7 +294,8 @@ mod tests {
         assert_eq!(item.title, "Test Kanban");
 
         // List
-        let list_res = app.handle_kanban_list(
+        let list_res = handle_kanban_list(
+            &mut app,
             "2".into(),
             KanbanListParams {
                 status: None,
@@ -267,7 +310,8 @@ mod tests {
         assert_eq!(items.len(), 1);
 
         // List with terminal_id: Some("other-terminal") (should return 0 items)
-        let list_res = app.handle_kanban_list(
+        let list_res = handle_kanban_list(
+            &mut app,
             "2a".into(),
             KanbanListParams {
                 status: None,
@@ -293,7 +337,8 @@ mod tests {
         app.state.workspaces.push(ws);
 
         // Update item with terminal_id: Some("my-terminal")
-        let update_res = app.handle_kanban_update(
+        let update_res = handle_kanban_update(
+            &mut app,
             "2b".into(),
             KanbanUpdateParams {
                 uuid: item.uuid.clone(),
@@ -307,7 +352,8 @@ mod tests {
         assert!(update_res.contains("\"type\":\"kanban_item\""));
 
         // List with terminal_id: Some("my-terminal") (should return 1 item)
-        let list_res = app.handle_kanban_list(
+        let list_res = handle_kanban_list(
+            &mut app,
             "2c".into(),
             KanbanListParams {
                 status: None,
@@ -323,7 +369,8 @@ mod tests {
         assert_eq!(items[0].terminal_id, Some(term_id_str));
 
         // Update
-        let update_res = app.handle_kanban_update(
+        let update_res = handle_kanban_update(
+            &mut app,
             "3".into(),
             KanbanUpdateParams {
                 uuid: item.uuid.clone(),
@@ -346,7 +393,8 @@ mod tests {
         );
 
         // Delete
-        let delete_res = app.handle_kanban_delete(
+        let delete_res = handle_kanban_delete(
+            &mut app,
             "4".into(),
             KanbanDeleteParams {
                 uuid: item.uuid.clone(),
@@ -356,7 +404,8 @@ mod tests {
         assert!(matches!(resp.result, ResponseResult::KanbanItem { .. }));
 
         // List after delete should be empty
-        let list_res = app.handle_kanban_list(
+        let list_res = handle_kanban_list(
+            &mut app,
             "5".into(),
             KanbanListParams {
                 status: None,
@@ -379,7 +428,8 @@ mod tests {
         let event_hub = crate::api::EventHub::default();
         let mut app = App::new(&Config::default(), true, None, api_rx, event_hub.clone());
 
-        let add_res = app.handle_kanban_add(
+        let add_res = handle_kanban_add(
+            &mut app,
             "add".into(),
             KanbanAddParams {
                 title: "Streamed card".into(),
@@ -394,7 +444,8 @@ mod tests {
             _ => panic!("Expected ResponseResult::KanbanItem"),
         };
 
-        app.handle_kanban_update(
+        handle_kanban_update(
+            &mut app,
             "update".into(),
             KanbanUpdateParams {
                 uuid: item.uuid.clone(),
@@ -405,7 +456,8 @@ mod tests {
                 clear_terminal_id: None,
             },
         );
-        app.handle_kanban_delete(
+        handle_kanban_delete(
+            &mut app,
             "delete".into(),
             KanbanDeleteParams {
                 uuid: item.uuid.clone(),
@@ -453,7 +505,8 @@ mod tests {
         );
 
         // 1. Validation fails when file does not exist
-        let add_res = app.handle_kanban_add(
+        let add_res = handle_kanban_add(
+            &mut app,
             "1".into(),
             KanbanAddParams {
                 title: "Test Plan Validation".into(),
@@ -466,7 +519,8 @@ mod tests {
 
         // 2. Validation succeeds once file is written
         std::fs::write(&plan_file, "API validation check").unwrap();
-        let add_res2 = app.handle_kanban_add(
+        let add_res2 = handle_kanban_add(
+            &mut app,
             "2".into(),
             KanbanAddParams {
                 title: "Test Plan Validation".into(),

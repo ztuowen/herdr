@@ -148,7 +148,7 @@ impl App {
                     crossterm::event::KeyEventKind::Release => {
                         self.release_events_supported = true;
                         self.suppressed_repeat_keys.remove(&key_id);
-                        self.handle_speech_to_text_key(key)
+                        crate::extensions::speech::input::handle_speech_to_text_key(self, key)
                     }
                 }
             }
@@ -175,16 +175,7 @@ impl App {
             }
             crate::raw_input::RawInputEvent::OuterFocusLost => {
                 self.state.outer_terminal_focus = Some(false);
-                if self.state.extensions.recording_workspace.is_some() {
-                    self.stop_recording(true);
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::NeedsAttention,
-                        title: "Speech to Text".into(),
-                        context: "Recording aborted due to focus loss.".into(),
-                        position: None,
-                        target: None,
-                    });
-                }
+                crate::extensions::speech::input::handle_outer_focus_lost(self);
                 false
             }
             crate::raw_input::RawInputEvent::HostDefaultColor { kind, color } => {

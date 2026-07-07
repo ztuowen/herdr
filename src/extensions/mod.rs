@@ -85,7 +85,7 @@ pub fn handle_extension_key(app: &mut crate::app::App, key: TerminalKey) -> bool
         return true;
     }
 
-    if app.handle_speech_to_text_key(key) {
+    if crate::extensions::speech::input::handle_speech_to_text_key(app, key) {
         return true;
     }
 

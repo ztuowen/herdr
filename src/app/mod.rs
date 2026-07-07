@@ -1518,10 +1518,10 @@ impl App {
                     if key.kind == crossterm::event::KeyEventKind::Release {
                         self.release_events_supported = true;
                     }
-                    if self.handle_speech_to_text_key(key) {
+                    if crate::extensions::speech::input::handle_speech_to_text_key(self, key) {
                         continue;
                     }
-                    if self.handle_audio_summary_key(key) {
+                    if crate::extensions::speech::input::handle_audio_summary_key(self, key) {
                         continue;
                     }
                     let key_id = repeat_key_identity(&key);
@@ -4985,12 +4985,18 @@ last_pane = "prefix+tab"
         assert!(!app.extensions.speech_recorder.is_toggle);
 
         // 1. Release quickly (<400ms): should enable toggle mode and not stop
-        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Release)));
+        assert!(crate::extensions::speech::input::handle_speech_to_text_key(
+            &mut app,
+            stt_key.with_kind(KeyEventKind::Release)
+        ));
         assert!(app.state.extensions.recording_workspace.is_some());
         assert!(app.extensions.speech_recorder.is_toggle);
 
         // 2. Subsequent Press: should stop recording
-        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Press)));
+        assert!(crate::extensions::speech::input::handle_speech_to_text_key(
+            &mut app,
+            stt_key.with_kind(KeyEventKind::Press)
+        ));
         assert!(!app.extensions.speech_recorder.is_recording());
         assert!(!app.extensions.speech_recorder.is_toggle);
 
@@ -5028,7 +5034,10 @@ last_pane = "prefix+tab"
         }
 
         // 1. Release after >=400ms: should stop recording directly (no toggle mode)
-        assert!(app.handle_speech_to_text_key(stt_key.with_kind(KeyEventKind::Release)));
+        assert!(crate::extensions::speech::input::handle_speech_to_text_key(
+            &mut app,
+            stt_key.with_kind(KeyEventKind::Release)
+        ));
         assert!(!app.extensions.speech_recorder.is_recording());
 
         // Simulate transcription event finishing to clear recording_workspace

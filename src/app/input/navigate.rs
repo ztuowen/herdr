@@ -1682,7 +1682,7 @@ fn finish_custom_command_context(
     }
 }
 
-pub(super) fn leave_command_mode(state: &mut AppState) {
+pub(crate) fn leave_command_mode(state: &mut AppState) {
     state.mode = if let Some(prev) = state.prefix_previous_mode.take() {
         prev
     } else if state.active.is_some() {

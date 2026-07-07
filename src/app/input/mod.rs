@@ -49,7 +49,7 @@ pub(crate) use self::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
         insert_navigator_search_text, insert_rename_input_text,
     },
-    navigate::terminal_direct_navigation_action,
+    navigate::{leave_command_mode, terminal_direct_navigation_action},
     settings::open_settings_at,
 };
 use self::{
@@ -76,7 +76,7 @@ impl App {
             self.release_events_supported = true;
         }
 
-        if self.handle_audio_summary_key(key) {
+        if crate::extensions::speech::input::handle_audio_summary_key(self, key) {
             return;
         }
 
@@ -135,147 +135,6 @@ impl App {
                 tracing::warn!("failed to queue clipboard write event");
             }
         }
-    }
-
-    pub(crate) fn handle_audio_summary_key(&mut self, key: TerminalKey) -> bool {
-        if key.kind != crossterm::event::KeyEventKind::Press {
-            return false;
-        }
-
-        let is_audio_summary_trigger = self.state.keybinds.audio_summary.matches_direct_key(key)
-            || (self.state.mode == Mode::Prefix
-                && self.state.keybinds.audio_summary.matches_prefix_key(key));
-
-        if is_audio_summary_trigger {
-            let is_agent = self
-                .state
-                .active
-                .and_then(|ws_idx| {
-                    let ws = self.state.workspaces.get(ws_idx)?;
-                    let pane_id = ws.focused_pane_id()?;
-                    let pane = ws.pane_state(pane_id)?;
-                    let term = self.state.terminals.get(&pane.attached_terminal_id)?;
-                    Some(term.is_agent_terminal())
-                })
-                .unwrap_or(false);
-
-            if is_agent {
-                if let Some(ws_idx) = self.state.active {
-                    let tab_idx = self.state.workspaces[ws_idx].active_tab;
-                    self.trigger_audio_summary(ws_idx, tab_idx);
-                    if self.state.mode == Mode::Prefix {
-                        self::navigate::leave_command_mode(&mut self.state);
-                    }
-                    return true;
-                }
-            }
-        }
-
-        self.cancel_audio_summary();
-        false
-    }
-
-    pub(crate) fn handle_speech_to_text_key(&mut self, key: TerminalKey) -> bool {
-        if key.kind == crossterm::event::KeyEventKind::Release {
-            self.release_events_supported = true;
-        }
-
-        if self.no_session
-            && self
-                .state
-                .extensions
-                .speech_to_text
-                .gemini_api_key
-                .as_ref()
-                .is_none_or(|k| k.trim().is_empty())
-        {
-            return false;
-        }
-
-        if self.state.extensions.recording_workspace.is_some() {
-            let is_stt_key = self.state.keybinds.speech_to_text.matches_direct_key(key)
-                || self.state.keybinds.speech_to_text.matches_prefix_key(key)
-                || (self.extensions.speech_recorder.recording_key().is_some()
-                    && key.code
-                        == self
-                            .extensions
-                            .speech_recorder
-                            .recording_key()
-                            .unwrap()
-                            .code);
-
-            if is_stt_key || key.code == KeyCode::Esc {
-                if key.kind == crossterm::event::KeyEventKind::Repeat {
-                    return true;
-                }
-
-                if key.code == KeyCode::Esc {
-                    let previous_toast = self.state.toast.clone();
-                    self.stop_recording(true);
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::NeedsAttention,
-                        title: "Speech to Text".into(),
-                        context: "Recording aborted.".into(),
-                        position: None,
-                        target: None,
-                    });
-                    self.sync_toast_deadline(previous_toast);
-                    return true;
-                }
-
-                let elapsed = self
-                    .extensions
-                    .speech_recorder
-                    .start_time()
-                    .map(|t| t.elapsed())
-                    .unwrap_or(std::time::Duration::ZERO);
-
-                let should_stop = match key.kind {
-                    crossterm::event::KeyEventKind::Release => {
-                        if elapsed < std::time::Duration::from_millis(400) {
-                            self.extensions.speech_recorder.is_toggle = true;
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    crossterm::event::KeyEventKind::Press => {
-                        if self.extensions.speech_recorder.is_toggle {
-                            true
-                        } else if !self.release_events_supported {
-                            elapsed >= std::time::Duration::from_millis(400)
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
-                };
-
-                if should_stop {
-                    self.stop_recording(false);
-                    return true;
-                }
-            }
-
-            return true;
-        }
-
-        if key.kind == crossterm::event::KeyEventKind::Press {
-            let is_direct_match = self.state.keybinds.speech_to_text.matches_direct_key(key);
-            let is_prefix_match = self.state.mode == Mode::Prefix
-                && self.state.keybinds.speech_to_text.matches_prefix_key(key);
-
-            if is_direct_match || is_prefix_match {
-                if let Some(ws_idx) = self.state.active {
-                    if self.start_recording(ws_idx, key) && self.state.mode == Mode::Prefix {
-                        self::navigate::leave_command_mode(&mut self.state);
-                    }
-                }
-                return true;
-            }
-        }
-
-        false
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {

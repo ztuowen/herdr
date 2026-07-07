@@ -5,7 +5,7 @@ use crate::api::schema::{
 
 const STATUS_HELP: &str = "todo|ongoing|blocked|reviewing|done";
 
-pub(super) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
+pub(crate) fn run_kanban_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
         print_kanban_help();
         return Ok(2);
@@ -92,7 +92,7 @@ fn kanban_add(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:add".into(),
         method: Method::KanbanAdd(KanbanAddParams {
             title: title.clone(),
@@ -145,7 +145,7 @@ fn kanban_list(args: &[String]) -> std::io::Result<i32> {
         None
     };
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:list".into(),
         method: Method::KanbanList(KanbanListParams {
             status,
@@ -212,7 +212,7 @@ fn kanban_update(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:update".into(),
         method: Method::KanbanUpdate(KanbanUpdateParams {
             uuid: uuid.clone(),
@@ -235,7 +235,7 @@ fn kanban_delete(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:delete".into(),
         method: Method::KanbanDelete(KanbanDeleteParams { uuid: uuid.clone() }),
     })?)
@@ -256,7 +256,7 @@ fn kanban_attach(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     };
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:attach".into(),
         method: Method::KanbanUpdate(KanbanUpdateParams {
             uuid: uuid.clone(),
@@ -279,7 +279,7 @@ fn kanban_detach(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    super::print_response(&super::send_request(&Request {
+    crate::cli::print_response(&crate::cli::send_request(&Request {
         id: "cli:kanban:detach".into(),
         method: Method::KanbanUpdate(KanbanUpdateParams {
             uuid: uuid.clone(),

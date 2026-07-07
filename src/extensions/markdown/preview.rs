@@ -1881,7 +1881,10 @@ pub fn wrap_markdown(
                 let mut rendered = false;
                 if cell_size.is_known() {
                     if let Some((_, w_px, h_px, failed)) =
-                        crate::math_compiler::lookup_math_cache(formula, &text_color_hex)
+                        crate::extensions::markdown::math::lookup_math_cache(
+                            formula,
+                            &text_color_hex,
+                        )
                     {
                         if !failed {
                             let max_cols = width as u32;
@@ -1915,7 +1918,7 @@ pub fn wrap_markdown(
                             rendered = true;
                         }
                     } else {
-                        crate::math_compiler::enqueue_compile_job(
+                        crate::extensions::markdown::math::enqueue_compile_job(
                             formula.clone(),
                             text_color_hex.clone(),
                         );
@@ -2021,7 +2024,10 @@ pub fn wrap_markdown(
                     let mut tokenized = false;
                     if cell_size.is_known() {
                         if let Some((_, w_px, h_px, failed)) =
-                            crate::math_compiler::lookup_math_cache(formula, &text_color_hex)
+                            crate::extensions::markdown::math::lookup_math_cache(
+                                formula,
+                                &text_color_hex,
+                            )
                         {
                             if !failed {
                                 let max_cols = width as u32;
@@ -2047,7 +2053,7 @@ pub fn wrap_markdown(
                                 tokenized = true;
                             }
                         } else {
-                            crate::math_compiler::enqueue_compile_job(
+                            crate::extensions::markdown::math::enqueue_compile_job(
                                 formula.clone(),
                                 text_color_hex.clone(),
                             );

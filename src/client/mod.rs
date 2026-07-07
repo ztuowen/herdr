@@ -85,9 +85,9 @@ struct ClientState {
     /// Whether outer focus gain should force a full host-terminal redraw.
     redraw_on_focus_gained: bool,
     /// Active speech-to-text pipeline for client-side microphone capture.
-    recording_pipeline: Option<crate::speech::TranscriptionPipeline>,
+    recording_pipeline: Option<crate::extensions::speech::TranscriptionPipeline>,
     /// Active tab audio summarizer for client-side audio playback.
-    tab_summarizer: Option<crate::speech::summary::TabSummarizer>,
+    tab_summarizer: Option<crate::extensions::speech::summary::TabSummarizer>,
     /// Whether this client draws the cursor into frame cells instead of using the host cursor.
     draw_host_cursor: bool,
 }
@@ -1619,17 +1619,18 @@ async fn run_client_loop(
                         }
                     };
 
-                    let model = crate::speech::model_or_default(
+                    let model = crate::extensions::speech::model_or_default(
                         loaded_config.config.speech_to_text.model.clone(),
                     );
-                    let postprocess_instruction = crate::speech::postprocess_instruction(
-                        &loaded_config.config.speech_to_text,
-                        is_agent,
-                    );
+                    let postprocess_instruction =
+                        crate::extensions::speech::postprocess_instruction(
+                            &loaded_config.config.speech_to_text,
+                            is_agent,
+                        );
 
                     let pipeline =
-                        match crate::speech::pipeline::TranscriptionPipeline::start_client_messages(
-                            crate::speech::pipeline::ClientPipelineConfig {
+                        match crate::extensions::speech::pipeline::TranscriptionPipeline::start_client_messages(
+                            crate::extensions::speech::pipeline::ClientPipelineConfig {
                                 workspace_id: workspace_id.clone(),
                                 pane_id,
                                 api_key,
@@ -1712,7 +1713,7 @@ async fn run_client_loop(
                                 .to_string()
                         });
 
-                    let summarizer = match crate::speech::summary::start_client_summary(
+                    let summarizer = match crate::extensions::speech::summary::start_client_summary(
                         api_key,
                         model,
                         system_instruction,

@@ -121,7 +121,9 @@ impl AppState {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         let (width, height) =
-                            crate::ui::kanban::kanban_detail_modal_size(self.view.terminal_area);
+                            crate::extensions::kanban::ui::kanban_detail_modal_size(
+                                self.view.terminal_area,
+                            );
                         let popup =
                             crate::ui::centered_popup_rect(self.view.terminal_area, width, height);
                         if let Some(rect) = popup {
@@ -152,11 +154,11 @@ impl AppState {
 
                                 // Check if user clicked on any markdown hyperlink
                                 if let Some((_, _, url)) =
-                                    crate::ui::kanban::active_kanban_detail_hyperlinks(self)
-                                        .into_iter()
-                                        .find(|((x, y), _, _)| {
-                                            *x == mouse.column && *y == mouse.row
-                                        })
+                                    crate::extensions::kanban::ui::active_kanban_detail_hyperlinks(
+                                        self,
+                                    )
+                                    .into_iter()
+                                    .find(|((x, y), _, _)| *x == mouse.column && *y == mouse.row)
                                 {
                                     if !url.starts_with("http://") && !url.starts_with("https://") {
                                         self.request_clipboard_write = Some(url.into_bytes());
@@ -234,23 +236,29 @@ impl AppState {
                         }
                     }
                     MouseEventKind::ScrollUp => {
-                        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(self);
+                        let max_scroll =
+                            crate::extensions::kanban::ui::kanban_detail_max_scroll(self);
                         self.extensions.kanban.scroll_detail(-3, max_scroll);
                     }
                     MouseEventKind::ScrollDown => {
-                        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(self);
+                        let max_scroll =
+                            crate::extensions::kanban::ui::kanban_detail_max_scroll(self);
                         self.extensions.kanban.scroll_detail(3, max_scroll);
                     }
                     MouseEventKind::ScrollLeft => {
                         let max_scroll =
-                            crate::ui::kanban::kanban_detail_max_horizontal_scroll(self);
+                            crate::extensions::kanban::ui::kanban_detail_max_horizontal_scroll(
+                                self,
+                            );
                         self.extensions
                             .kanban
                             .scroll_horizontal_detail(-2, max_scroll);
                     }
                     MouseEventKind::ScrollRight => {
                         let max_scroll =
-                            crate::ui::kanban::kanban_detail_max_horizontal_scroll(self);
+                            crate::extensions::kanban::ui::kanban_detail_max_horizontal_scroll(
+                                self,
+                            );
                         self.extensions
                             .kanban
                             .scroll_horizontal_detail(2, max_scroll);
@@ -272,7 +280,7 @@ impl AppState {
                 | MouseEventKind::Down(MouseButton::Right)
                     if !in_sidebar =>
                 {
-                    let board_layout = crate::ui::kanban::kanban_board_layout(self);
+                    let board_layout = crate::extensions::kanban::ui::kanban_board_layout(self);
                     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
                         self.extensions.kanban.open_card_at(
                             self.view.terminal_area,
@@ -280,7 +288,7 @@ impl AppState {
                             mouse.column,
                             mouse.row,
                         );
-                    } else if let crate::kanban::KanbanBoardAction::ActivateCard {
+                    } else if let crate::extensions::kanban::KanbanBoardAction::ActivateCard {
                         uuid,
                         terminal_id,
                     } = self.extensions.kanban.activate_card_at(
@@ -318,7 +326,7 @@ impl AppState {
                     };
                     self.extensions.kanban.scroll_board_at(
                         self.view.terminal_area,
-                        crate::ui::kanban::kanban_board_layout(self),
+                        crate::extensions::kanban::ui::kanban_board_layout(self),
                         mouse.column,
                         mouse.row,
                         delta,
@@ -4186,7 +4194,7 @@ mod tests {
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
         assert_eq!(app.state.extensions.kanban.detail_scroll, 0);
-        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&app.state);
+        let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(&app.state);
         assert!(max_scroll > 0);
 
         // Scroll down in modal using mouse wheel
@@ -4261,7 +4269,7 @@ mod tests {
             .set_detail_uuid(Some(item.uuid.clone()));
         app.state.view.terminal_area = Rect::new(0, 0, 80, 24);
 
-        let links = crate::ui::kanban::active_kanban_detail_hyperlinks(&app.state);
+        let links = crate::extensions::kanban::ui::active_kanban_detail_hyperlinks(&app.state);
         let file_link_coord = links
             .iter()
             .find(|(_, _, url)| url == "file:///path/to/my/file.txt")

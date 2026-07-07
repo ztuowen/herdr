@@ -502,11 +502,12 @@ async fn run_websocket_summary(
                                                         raw_samples.push(sample_f32);
                                                     }
 
-                                                    let resampled = crate::speech::resample(
-                                                        &raw_samples,
-                                                        24000,
-                                                        output_sample_rate,
-                                                    );
+                                                    let resampled =
+                                                        crate::extensions::speech::resample(
+                                                            &raw_samples,
+                                                            24000,
+                                                            output_sample_rate,
+                                                        );
                                                     if let Ok(mut buf) = audio_buffer.lock() {
                                                         buf.extend(resampled);
                                                     }

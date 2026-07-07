@@ -4,6 +4,10 @@ use crate::input::TerminalKey;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
+pub(crate) mod kanban;
+pub(crate) mod markdown;
+pub(crate) mod speech;
+
 #[derive(Debug, Clone)]
 pub struct PendingEnter {
     pub workspace_id: String,
@@ -17,7 +21,7 @@ pub struct ExtensionsState {
     pub speech_to_text: crate::config::SpeechToTextConfig,
     pub recording_workspace: Option<String>,
     pub live_transcription: Option<String>,
-    pub kanban: crate::kanban::KanbanState,
+    pub kanban: crate::extensions::kanban::KanbanState,
     pub pending_enter: Option<PendingEnter>,
     pub pending_enter_sequence: u64,
 }
@@ -32,7 +36,7 @@ impl ExtensionsState {
             speech_to_text,
             recording_workspace: None,
             live_transcription: None,
-            kanban: crate::kanban::KanbanState::new(kanban_items),
+            kanban: crate::extensions::kanban::KanbanState::new(kanban_items),
             pending_enter: None,
             pending_enter_sequence: 0,
         }
@@ -40,14 +44,14 @@ impl ExtensionsState {
 }
 
 pub struct ExtensionsRuntime {
-    pub speech_recorder: crate::speech::SpeechRecorder,
-    pub tab_summarizer: Option<crate::speech::summary::TabSummarizer>,
+    pub speech_recorder: crate::extensions::speech::SpeechRecorder,
+    pub tab_summarizer: Option<crate::extensions::speech::summary::TabSummarizer>,
 }
 
 impl ExtensionsRuntime {
     pub fn new() -> Self {
         Self {
-            speech_recorder: crate::speech::SpeechRecorder::new(),
+            speech_recorder: crate::extensions::speech::SpeechRecorder::new(),
             tab_summarizer: None,
         }
     }
@@ -154,11 +158,12 @@ pub fn handle_extension_event(app: &mut crate::app::App, ev: &AppEvent) -> bool 
                                 let workspace_id_clone = workspace_id.clone();
                                 let raw_text_clone = raw_text.clone();
                                 std::thread::spawn(move || {
-                                    let postprocess_result = crate::speech::run_gemini_postprocess(
-                                        api_key,
-                                        raw_text_clone,
-                                        system_instruction,
-                                    );
+                                    let postprocess_result =
+                                        crate::extensions::speech::run_gemini_postprocess(
+                                            api_key,
+                                            raw_text_clone,
+                                            system_instruction,
+                                        );
                                     let _ = event_tx.blocking_send(AppEvent::SpeechTranscribed {
                                         workspace_id: workspace_id_clone,
                                         pane_id: Some(pane_id),
@@ -411,7 +416,7 @@ pub fn render_extension_ui(
     terminal_area: Rect,
 ) -> bool {
     if app.mode == crate::app::Mode::Kanban {
-        crate::ui::kanban::render_kanban(app, frame, terminal_area);
+        crate::extensions::kanban::ui::render_kanban(app, frame, terminal_area);
         return true;
     }
     false

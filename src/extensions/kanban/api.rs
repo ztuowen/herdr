@@ -1,11 +1,11 @@
 // Allow dead code in app/api/kanban.rs when the kanban feature is disabled.
 #![allow(dead_code)]
 
-use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, KanbanAddParams, KanbanDeleteParams, KanbanItem,
     KanbanListParams, KanbanUpdateParams, ResponseResult,
 };
+use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
 
 impl App {
@@ -478,13 +478,13 @@ mod tests {
         assert!(add_res2.contains("\"type\":\"kanban_item\""));
 
         // 3. UI Helper behaves correctly
-        let (text, is_err) = crate::ui::kanban::get_description_text(&plan_path);
+        let (text, is_err) = crate::extensions::kanban::ui::get_description_text(&plan_path);
         assert_eq!(text, "API validation check");
         assert!(!is_err);
 
         // 4. UI Helper handles deleted file correctly
         std::fs::remove_file(&plan_file).unwrap();
-        let (text2, is_err2) = crate::ui::kanban::get_description_text(&plan_path);
+        let (text2, is_err2) = crate::extensions::kanban::ui::get_description_text(&plan_path);
         assert_eq!(text2, "NO DESCRIPTION FOUND");
         assert!(is_err2);
     }

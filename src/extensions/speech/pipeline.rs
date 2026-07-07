@@ -1,6 +1,6 @@
+use crate::extensions::speech::audio::{AudioStream, SendStream};
+use crate::extensions::speech::gemini::{self, TranscriptionEvent};
 use crate::input::TerminalKey;
-use crate::speech::audio::{AudioStream, SendStream};
-use crate::speech::gemini::{self, TranscriptionEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

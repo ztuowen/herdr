@@ -9,9 +9,12 @@ use ratatui::{
     Frame,
 };
 
-use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::AppState;
-use crate::kanban::{KanbanBoardLayout, KanbanBoardProjection};
+use crate::extensions::kanban::{KanbanBoardLayout, KanbanBoardProjection};
+use crate::ui::{
+    centered_popup_rect, render_panel_shell, MarkdownDocument, MarkdownPreview,
+    MarkdownPreviewRequest, MarkdownPreviewScrollbars,
+};
 
 pub(crate) fn kanban_board_layout(app: &AppState) -> KanbanBoardLayout {
     if app.view.layout == crate::app::state::ViewLayout::Mobile {
@@ -22,7 +25,10 @@ pub(crate) fn kanban_board_layout(app: &AppState) -> KanbanBoardLayout {
 }
 
 fn kanban_constraints() -> Vec<Constraint> {
-    vec![Constraint::Ratio(1, crate::kanban::column_count() as u32); crate::kanban::column_count()]
+    vec![
+        Constraint::Ratio(1, crate::extensions::kanban::column_count() as u32);
+        crate::extensions::kanban::column_count()
+    ]
 }
 
 fn status_label_and_color(
@@ -177,7 +183,7 @@ fn render_kanban_detail_modal(
         return;
     };
 
-    super::dim_background(frame, area);
+    crate::ui::dim_background(frame, area);
 
     let Some(inner) = render_panel_shell(frame, popup, p.accent, p.panel_bg) else {
         return;
@@ -279,14 +285,14 @@ fn render_kanban_detail_modal(
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    let preview = super::MarkdownPreview::build(super::MarkdownPreviewRequest {
+    let preview = MarkdownPreview::build(MarkdownPreviewRequest {
         document: &doc,
         area: rows[6],
         scroll_y: app.extensions.kanban.detail_scroll,
         scroll_x: app.extensions.kanban.detail_horizontal_scroll,
         cell_size,
         text_color: app.palette.text,
-        scrollbars: super::MarkdownPreviewScrollbars::BOTH,
+        scrollbars: MarkdownPreviewScrollbars::BOTH,
     });
 
     let desc_text = Paragraph::new(preview.lines().to_vec()).scroll((preview.scroll_y, 0));
@@ -299,7 +305,7 @@ fn render_kanban_detail_modal(
     }
 
     if let Some(scrollbar) = preview.vertical_scrollbar {
-        super::render_scrollbar(
+        crate::ui::render_scrollbar(
             frame,
             scrollbar.metrics,
             scrollbar.track,
@@ -373,9 +379,9 @@ pub(crate) fn get_description_text(path_str: &str) -> (String, bool) {
 fn build_kanban_description_doc(
     item: &crate::api::schema::KanbanItem,
     p: &crate::app::state::Palette,
-) -> super::MarkdownDocument {
+) -> MarkdownDocument {
     let (display_desc, is_error) = get_description_text(&item.description);
-    let mut doc = super::MarkdownDocument::new();
+    let mut doc = MarkdownDocument::new();
     doc.append_text_line(
         "Description:",
         Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
@@ -456,7 +462,7 @@ pub fn active_kanban_detail_hyperlinks(app: &AppState) -> Vec<((u16, u16), Strin
         .unwrap_or_default()
 }
 
-fn kanban_detail_preview(app: &AppState) -> Option<super::MarkdownPreview> {
+fn kanban_detail_preview(app: &AppState) -> Option<MarkdownPreview> {
     let uuid = app.extensions.kanban.detail_uuid.as_ref()?;
     let item = app
         .extensions
@@ -473,17 +479,15 @@ fn kanban_detail_preview(app: &AppState) -> Option<super::MarkdownPreview> {
         crate::kitty_graphics::HostCellSize::default()
     };
 
-    Some(super::MarkdownPreview::build(
-        super::MarkdownPreviewRequest {
-            document: &doc,
-            area: desc_area,
-            scroll_y: app.extensions.kanban.detail_scroll,
-            scroll_x: app.extensions.kanban.detail_horizontal_scroll,
-            cell_size,
-            text_color: app.palette.text,
-            scrollbars: super::MarkdownPreviewScrollbars::BOTH,
-        },
-    ))
+    Some(MarkdownPreview::build(MarkdownPreviewRequest {
+        document: &doc,
+        area: desc_area,
+        scroll_y: app.extensions.kanban.detail_scroll,
+        scroll_x: app.extensions.kanban.detail_horizontal_scroll,
+        cell_size,
+        text_color: app.palette.text,
+        scrollbars: MarkdownPreviewScrollbars::BOTH,
+    }))
 }
 
 fn kanban_detail_description_area(app: &AppState) -> Option<Rect> {
@@ -518,7 +522,7 @@ pub fn kanban_item_at(
         .card_at(col_x, row_y)
         .map(|card| {
             (
-                crate::kanban::column_index_for_status(card.item.status),
+                crate::extensions::kanban::column_index_for_status(card.item.status),
                 card.row_index,
                 card.item.clone(),
             )

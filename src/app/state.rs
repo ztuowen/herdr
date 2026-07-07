@@ -2429,7 +2429,7 @@ mod tests {
             Some(crate::api::schema::KanbanStatus::Todo),
             None,
         );
-        let hit = crate::ui::kanban::kanban_item_at(&state, 5, 3);
+        let hit = crate::extensions::kanban::ui::kanban_item_at(&state, 5, 3);
         assert!(hit.is_some());
         let (col, idx, item) = hit.unwrap();
         assert_eq!(col, 0);
@@ -2464,11 +2464,11 @@ mod tests {
         state.extensions.kanban.detail_uuid = Some(item.uuid.clone());
 
         // Max scroll should correctly calculate the height including the path
-        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&state);
+        let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(&state);
 
         // Reducing terminal area height should increase max scroll since fewer lines fit
         state.view.terminal_area = Rect::new(0, 0, 100, 15);
-        let max_scroll_small = crate::ui::kanban::kanban_detail_max_scroll(&state);
+        let max_scroll_small = crate::extensions::kanban::ui::kanban_detail_max_scroll(&state);
         assert!(max_scroll_small > max_scroll);
 
         let _ = std::fs::remove_file(plan_file);

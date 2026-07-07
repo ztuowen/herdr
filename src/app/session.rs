@@ -3,7 +3,7 @@ use std::time::Instant;
 use super::{App, SESSION_SAVE_DEBOUNCE};
 
 impl App {
-    pub(super) fn schedule_session_save(&mut self) {
+    pub(crate) fn schedule_session_save(&mut self) {
         if !self.no_session {
             self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE);
         }

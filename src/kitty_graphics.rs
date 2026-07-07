@@ -904,7 +904,7 @@ fn convert_static_placement(
     cell_size: HostCellSize,
 ) -> Option<HostPlacement> {
     if let Some((png_bytes, w_px, h_px, failed)) =
-        crate::math_compiler::lookup_math_cache(&sp.formula, &sp.text_color_hex)
+        crate::extensions::markdown::math::lookup_math_cache(&sp.formula, &sp.text_color_hex)
     {
         if !failed {
             let mut hasher = DefaultHasher::new();
@@ -920,7 +920,7 @@ fn convert_static_placement(
             // Scale and pad the math image to match the grid cell size,
             // preserving aspect ratio and preventing distortion.
             let (final_bytes, final_w, final_h) = if let Some(padded_bytes) =
-                crate::math_compiler::scale_and_pad_math_image(
+                crate::extensions::markdown::math::scale_and_pad_math_image(
                     &png_bytes,
                     w_px,
                     h_px,

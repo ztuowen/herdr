@@ -7,7 +7,7 @@
 pub(crate) mod actions;
 mod agent_resume;
 mod agents;
-mod api;
+pub(crate) mod api;
 mod api_helpers;
 mod config_io;
 mod creation;
@@ -699,7 +699,10 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
 
-        crate::math_compiler::init_redraw_notifier(render_notify.clone(), render_dirty.clone());
+        crate::extensions::markdown::math::init_redraw_notifier(
+            render_notify.clone(),
+            render_dirty.clone(),
+        );
 
         Self {
             config_diagnostic_deadline: None,
@@ -813,7 +816,7 @@ impl App {
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
         app.state.extensions.kanban =
-            crate::kanban::KanbanState::new(snapshot.kanban_items.clone());
+            crate::extensions::kanban::KanbanState::new(snapshot.kanban_items.clone());
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -1788,7 +1791,7 @@ impl App {
 
         let event_tx = self.event_tx.clone();
 
-        match crate::speech::summary::start_summary(
+        match crate::extensions::speech::summary::start_summary(
             api_key,
             model,
             system_instruction,
@@ -1874,16 +1877,18 @@ impl App {
         };
 
         let model = self.state.extensions.speech_to_text.model.clone();
-        let postprocess_instruction =
-            crate::speech::postprocess_instruction(&self.state.extensions.speech_to_text, is_agent);
+        let postprocess_instruction = crate::extensions::speech::postprocess_instruction(
+            &self.state.extensions.speech_to_text,
+            is_agent,
+        );
 
         if let Err(e) = self.extensions.speech_recorder.start_local(
             key,
-            crate::speech::pipeline::AppPipelineConfig {
+            crate::extensions::speech::pipeline::AppPipelineConfig {
                 workspace_id: workspace_id.clone(),
                 pane_id,
                 api_key,
-                model: crate::speech::model_or_default(model),
+                model: crate::extensions::speech::model_or_default(model),
                 postprocess_instruction,
                 event_tx: self.event_tx.clone(),
             },

@@ -4,11 +4,10 @@ use std::time::{Duration, Instant};
 mod agents;
 mod env;
 mod integrations;
-mod kanban;
 mod layouts;
 mod panes;
 pub(crate) mod plugins;
-mod responses;
+pub(crate) mod responses;
 mod session;
 mod snapshot;
 mod tabs;
@@ -736,7 +735,7 @@ impl App {
         }
     }
 
-    pub(super) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {
+    pub(crate) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {
         self.run_plugin_event_hooks(&event);
         self.event_hub.push(event);
     }

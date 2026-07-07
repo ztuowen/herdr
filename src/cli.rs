@@ -15,8 +15,6 @@ mod api;
 mod app;
 mod completion;
 mod integration;
-mod kanban;
-mod md;
 mod notification;
 mod pane;
 mod plugin;
@@ -80,8 +78,8 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "wait" => run_wait_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
-        "kanban" => kanban::run_kanban_command(&args[2..])?,
-        "md" => md::run_md_command(&args[2..])?,
+        "kanban" => crate::extensions::kanban::cli::run_kanban_command(&args[2..])?,
+        "md" => crate::extensions::markdown::cli::run_md_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 
@@ -936,7 +934,7 @@ pub(super) fn wait_for_agent_change(
     }
 }
 
-pub(super) fn print_response(response: &serde_json::Value) -> std::io::Result<i32> {
+pub(crate) fn print_response(response: &serde_json::Value) -> std::io::Result<i32> {
     if response.get("error").is_some() {
         eprintln!("{}", serde_json::to_string(response).unwrap());
         return Ok(1);
@@ -960,7 +958,7 @@ pub(super) fn send_ok_request(method: Method) -> std::io::Result<i32> {
     Ok(0)
 }
 
-pub(super) fn send_request(request: &Request) -> std::io::Result<serde_json::Value> {
+pub(crate) fn send_request(request: &Request) -> std::io::Result<serde_json::Value> {
     ApiClient::local()
         .request_value(request)
         .map_err(api_client_error_to_io)

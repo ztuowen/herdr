@@ -1,4 +1,4 @@
-use crate::speech::audio::{downmix_to_mono, resample};
+use crate::extensions::speech::audio::{downmix_to_mono, resample};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;

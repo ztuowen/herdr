@@ -6,9 +6,7 @@ use ratatui::{
 };
 
 mod dialogs;
-pub(crate) mod kanban;
 mod keybind_help;
-mod markdown;
 mod menus;
 mod mobile;
 mod navigator;
@@ -28,9 +26,6 @@ use self::dialogs::{
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
 use self::keybind_help::render_keybind_help_overlay;
-pub(crate) use self::markdown::{
-    MarkdownDocument, MarkdownPreview, MarkdownPreviewRequest, MarkdownPreviewScrollbars,
-};
 use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
     render_navigate_overlay, render_prefix_overlay, render_resize_overlay,
@@ -92,10 +87,13 @@ pub(crate) use self::{
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tabs::compute_tab_bar_view,
-    widgets::{centered_popup_rect, modal_stack_areas},
+    widgets::{centered_popup_rect, modal_stack_areas, render_panel_shell},
 };
 use crate::app::state::ViewLayout;
 use crate::app::{AppState, Mode};
+pub(crate) use crate::extensions::markdown::preview::{
+    MarkdownDocument, MarkdownPreview, MarkdownPreviewRequest, MarkdownPreviewScrollbars,
+};
 use crate::terminal::TerminalRuntimeRegistry;
 
 const COLLAPSED_WIDTH: u16 = 4; // num + space + dot + separator
@@ -570,7 +568,7 @@ fn rects_overlap(a: Rect, b: Rect) -> bool {
         && b.y < a.y.saturating_add(a.height)
 }
 
-fn dim_background(frame: &mut Frame, area: Rect) {
+pub(crate) fn dim_background(frame: &mut Frame, area: Rect) {
     let buf = frame.buffer_mut();
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {

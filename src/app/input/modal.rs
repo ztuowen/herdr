@@ -1319,7 +1319,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
     }
 
     let key_event = key.as_key_event();
-    let board_layout = crate::ui::kanban::kanban_board_layout(state);
+    let board_layout = crate::extensions::kanban::ui::kanban_board_layout(state);
     if state.extensions.kanban.detail_uuid.is_some() {
         match key_event.code {
             KeyCode::Esc => {
@@ -1336,33 +1336,35 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
                 state.extensions.kanban.set_detail_uuid(None);
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
+                let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(state);
                 state.extensions.kanban.scroll_detail(-1, max_scroll);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
+                let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(state);
                 state.extensions.kanban.scroll_detail(1, max_scroll);
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_horizontal_scroll(state);
+                let max_scroll =
+                    crate::extensions::kanban::ui::kanban_detail_max_horizontal_scroll(state);
                 state
                     .extensions
                     .kanban
                     .scroll_horizontal_detail(-2, max_scroll);
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_horizontal_scroll(state);
+                let max_scroll =
+                    crate::extensions::kanban::ui::kanban_detail_max_horizontal_scroll(state);
                 state
                     .extensions
                     .kanban
                     .scroll_horizontal_detail(2, max_scroll);
             }
             KeyCode::PageUp => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
+                let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(state);
                 state.extensions.kanban.scroll_detail(-10, max_scroll);
             }
             KeyCode::PageDown => {
-                let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(state);
+                let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(state);
                 state.extensions.kanban.scroll_detail(10, max_scroll);
             }
             _ => {}
@@ -1375,7 +1377,7 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
             leave_modal(state);
         }
         KeyCode::Char('c') | KeyCode::Char('y') => {
-            if let crate::kanban::KanbanBoardAction::CopyUuid { uuid } =
+            if let crate::extensions::kanban::KanbanBoardAction::CopyUuid { uuid } =
                 state.extensions.kanban.copy_selected_uuid()
             {
                 state.request_clipboard_write = Some(uuid.into_bytes());
@@ -1383,10 +1385,10 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         }
         KeyCode::Left
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Desktop
+                && board_layout == crate::extensions::kanban::KanbanBoardLayout::Desktop
                 && state.extensions.kanban.shift_selected_item_for_layout(
                     board_layout,
-                    crate::kanban::KanbanBoardDirection::Left,
+                    crate::extensions::kanban::KanbanBoardDirection::Left,
                 ) =>
         {
             state.mark_session_dirty();
@@ -1394,17 +1396,17 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         KeyCode::Char('H')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
-                crate::kanban::KanbanBoardDirection::Left,
+                crate::extensions::kanban::KanbanBoardDirection::Left,
             ) =>
         {
             state.mark_session_dirty();
         }
         KeyCode::Right
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Desktop
+                && board_layout == crate::extensions::kanban::KanbanBoardLayout::Desktop
                 && state.extensions.kanban.shift_selected_item_for_layout(
                     board_layout,
-                    crate::kanban::KanbanBoardDirection::Right,
+                    crate::extensions::kanban::KanbanBoardDirection::Right,
                 ) =>
         {
             state.mark_session_dirty();
@@ -1412,17 +1414,17 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         KeyCode::Char('L')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
-                crate::kanban::KanbanBoardDirection::Right,
+                crate::extensions::kanban::KanbanBoardDirection::Right,
             ) =>
         {
             state.mark_session_dirty();
         }
         KeyCode::Up
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Mobile
+                && board_layout == crate::extensions::kanban::KanbanBoardLayout::Mobile
                 && state.extensions.kanban.shift_selected_item_for_layout(
                     board_layout,
-                    crate::kanban::KanbanBoardDirection::Up,
+                    crate::extensions::kanban::KanbanBoardDirection::Up,
                 ) =>
         {
             state.mark_session_dirty();
@@ -1430,17 +1432,17 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         KeyCode::Char('K')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
-                crate::kanban::KanbanBoardDirection::Up,
+                crate::extensions::kanban::KanbanBoardDirection::Up,
             ) =>
         {
             state.mark_session_dirty();
         }
         KeyCode::Down
             if key_event.modifiers == KeyModifiers::SHIFT
-                && board_layout == crate::kanban::KanbanBoardLayout::Mobile
+                && board_layout == crate::extensions::kanban::KanbanBoardLayout::Mobile
                 && state.extensions.kanban.shift_selected_item_for_layout(
                     board_layout,
-                    crate::kanban::KanbanBoardDirection::Down,
+                    crate::extensions::kanban::KanbanBoardDirection::Down,
                 ) =>
         {
             state.mark_session_dirty();
@@ -1448,34 +1450,34 @@ pub(crate) fn handle_kanban_key(state: &mut AppState, key: TerminalKey) {
         KeyCode::Char('J')
             if state.extensions.kanban.shift_selected_item_for_layout(
                 board_layout,
-                crate::kanban::KanbanBoardDirection::Down,
+                crate::extensions::kanban::KanbanBoardDirection::Down,
             ) =>
         {
             state.mark_session_dirty();
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            state
-                .extensions
-                .kanban
-                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Left);
+            state.extensions.kanban.move_board_selection(
+                board_layout,
+                crate::extensions::kanban::KanbanBoardDirection::Left,
+            );
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            state
-                .extensions
-                .kanban
-                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Right);
+            state.extensions.kanban.move_board_selection(
+                board_layout,
+                crate::extensions::kanban::KanbanBoardDirection::Right,
+            );
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            state
-                .extensions
-                .kanban
-                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Up);
+            state.extensions.kanban.move_board_selection(
+                board_layout,
+                crate::extensions::kanban::KanbanBoardDirection::Up,
+            );
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            state
-                .extensions
-                .kanban
-                .move_board_selection(board_layout, crate::kanban::KanbanBoardDirection::Down);
+            state.extensions.kanban.move_board_selection(
+                board_layout,
+                crate::extensions::kanban::KanbanBoardDirection::Down,
+            );
         }
         KeyCode::Char(' ') | KeyCode::Enter => {
             state.extensions.kanban.open_selected_detail();
@@ -2143,7 +2145,7 @@ mod tests {
         assert_eq!(state.extensions.kanban.detail_scroll, 0);
 
         // Calculate max scroll first
-        let max_scroll = crate::ui::kanban::kanban_detail_max_scroll(&state);
+        let max_scroll = crate::extensions::kanban::ui::kanban_detail_max_scroll(&state);
         assert!(
             max_scroll > 0,
             "max_scroll should be greater than 0, got {}",

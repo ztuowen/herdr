@@ -677,6 +677,12 @@ updated `PaneLayoutSnapshot` for one tab. Clients that bootstrap with
 
 Kanban event subscriptions include `kanban.added`, `kanban.updated`, and `kanban.deleted`. Each pushed event includes the changed `item`; clients can optionally pass `uuid` on the subscription to receive events for one card.
 
+Plugin event subscriptions use `plugin.event`. Plugins emit them with
+`plugin.event.emit` or `herdr plugin event emit`; pushed envelopes use
+`event: "plugin_event"` and include `plugin_id`, the plugin-owned `event` name,
+and an opaque JSON `payload`. Subscribers can pass optional `plugin_id` and
+`event` filters.
+
 Use `events.wait` when you want one matching event and then a response.
 
 Worktree event subscriptions include `worktree.created`, `worktree.opened`, and `worktree.removed`. Worktree events describe Git checkout lifecycle. `worktree.created` includes the opened `workspace` and created `worktree`. `worktree.opened` includes the target `workspace`, opened `worktree`, and `already_open`. `worktree.removed` includes the `workspace_id`, removed `worktree`, and `forced`.

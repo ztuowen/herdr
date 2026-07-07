@@ -348,6 +348,22 @@ letters, digits, colon, underscore, and hyphen. Herdr maps each item to
 `{storage_prefix}{item_id}` and returns list results keyed by item id. It does
 not inspect the JSON against `kind`.
 
+## Events
+
+Plugin v2 can emit plugin-scoped runtime events for clients that subscribe to
+plugin-owned state changes:
+
+```bash
+herdr plugin event emit --plugin example.board --event resource.updated '{"resource":"cards","id":"card-1"}'
+```
+
+The plugin must be installed, enabled, and declare the `events` capability. The
+event name is owned by the plugin and may contain ASCII letters, digits, colon,
+dot, underscore, and hyphen. Herdr validates the plugin id and event name, then
+publishes the opaque JSON payload without interpreting it. Protocol clients can
+subscribe with `events.subscribe` using `{ "type": "plugin.event" }`, optionally
+filtered by `plugin_id` and `event`.
+
 ## Storage
 
 Plugins can store opaque JSON values through Herdr's plugin storage API:

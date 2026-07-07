@@ -396,6 +396,13 @@ pub struct PluginResourceDeleteParams {
 
 pub type PluginResourceItems = BTreeMap<String, serde_json::Value>;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginEventEmitParams {
+    pub plugin_id: String,
+    pub event: String,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginActionInvokeParams {
     pub action_id: String,

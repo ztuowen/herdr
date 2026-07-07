@@ -91,6 +91,8 @@ impl PanePresentationSnapshot {
 pub(super) struct ActiveEventSubscription {
     event_kind: crate::api::schema::EventKind,
     kanban_uuid: Option<String>,
+    plugin_id: Option<String>,
+    plugin_event: Option<String>,
     last_sequence: u64,
 }
 
@@ -112,123 +114,180 @@ impl ActiveSubscription {
             Subscription::WorkspaceCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceCreated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceUpdated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceUpdated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceRenamed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceRenamed,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceMoved {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceMoved,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceClosed,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorkspaceFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorkspaceFocused,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorktreeCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorktreeCreated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorktreeOpened {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorktreeOpened,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::WorktreeRemoved {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::WorktreeRemoved,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::TabCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabCreated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::TabClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabClosed,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::TabFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabFocused,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::TabRenamed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabRenamed,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::TabMoved {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::TabMoved,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneCreated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneClosed {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneClosed,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneFocused {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneFocused,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneMoved {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneMoved,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneExited {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneExited,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::PaneAgentDetected {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::PaneAgentDetected,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::KanbanAdded { uuid } => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::KanbanAdded,
                 kanban_uuid: uuid,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::KanbanUpdated { uuid } => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::KanbanUpdated,
                 kanban_uuid: uuid,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::KanbanDeleted { uuid } => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::KanbanDeleted,
                 kanban_uuid: uuid,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
             Subscription::LayoutUpdated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::LayoutUpdated,
                 kanban_uuid: None,
+                plugin_id: None,
+                plugin_event: None,
                 last_sequence: 0,
             })),
+            Subscription::PluginEvent { plugin_id, event } => {
+                Ok(Self::Event(ActiveEventSubscription {
+                    event_kind: crate::api::schema::EventKind::PluginEvent,
+                    kanban_uuid: None,
+                    plugin_id,
+                    plugin_event: event,
+                    last_sequence: 0,
+                }))
+            }
             Subscription::PaneOutputMatched {
                 pane_id,
                 source,
@@ -338,15 +397,35 @@ impl ActiveEventSubscription {
     }
 
     fn matches_event(&self, event: &crate::api::schema::EventEnvelope) -> bool {
-        let Some(wanted_uuid) = &self.kanban_uuid else {
-            return true;
-        };
-        match &event.data {
-            crate::api::schema::EventData::KanbanAdded { item }
-            | crate::api::schema::EventData::KanbanUpdated { item }
-            | crate::api::schema::EventData::KanbanDeleted { item } => &item.uuid == wanted_uuid,
-            _ => true,
+        if let Some(wanted_uuid) = &self.kanban_uuid {
+            return match &event.data {
+                crate::api::schema::EventData::KanbanAdded { item }
+                | crate::api::schema::EventData::KanbanUpdated { item }
+                | crate::api::schema::EventData::KanbanDeleted { item } => {
+                    &item.uuid == wanted_uuid
+                }
+                _ => true,
+            };
         }
+
+        if self.plugin_id.is_some() || self.plugin_event.is_some() {
+            return match &event.data {
+                crate::api::schema::EventData::PluginEvent {
+                    plugin_id, event, ..
+                } => {
+                    self.plugin_id
+                        .as_deref()
+                        .is_none_or(|wanted| wanted == plugin_id)
+                        && self
+                            .plugin_event
+                            .as_deref()
+                            .is_none_or(|wanted| wanted == event)
+                }
+                _ => false,
+            };
+        }
+
+        true
     }
 }
 
@@ -607,7 +686,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::api::schema::{AgentStatus, EventData, EventEnvelope, EventKind};
+    use crate::api::schema::{AgentStatus, EventData, EventEnvelope, EventKind, Subscription};
 
     fn status_event(custom_status: Option<&str>) -> EventEnvelope {
         EventEnvelope {
@@ -623,6 +702,46 @@ mod tests {
                 state_labels: HashMap::new(),
             },
         }
+    }
+
+    fn plugin_event(plugin_id: &str, event: &str) -> EventEnvelope {
+        EventEnvelope {
+            event: EventKind::PluginEvent,
+            data: EventData::PluginEvent {
+                plugin_id: plugin_id.into(),
+                event: event.into(),
+                payload: serde_json::json!({ "ok": true }),
+            },
+        }
+    }
+
+    #[test]
+    fn plugin_event_subscription_filters_by_plugin_and_event() {
+        let event_hub = EventHub::default();
+        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut subscription = ActiveSubscription::new(
+            Subscription::PluginEvent {
+                plugin_id: Some("example.board".into()),
+                event: Some("resource.updated".into()),
+            },
+            "sub_plugin_event",
+            0,
+            &api_tx,
+            &event_hub,
+        )
+        .expect("plugin event subscription");
+
+        event_hub.push(plugin_event("example.other", "resource.updated"));
+        event_hub.push(plugin_event("example.board", "resource.deleted"));
+        assert!(subscription.poll(&api_tx, &event_hub).is_none());
+
+        event_hub.push(plugin_event("example.board", "resource.updated"));
+        let value = subscription
+            .poll(&api_tx, &event_hub)
+            .expect("matching plugin event");
+        assert_eq!(value["event"], "plugin_event");
+        assert_eq!(value["data"]["plugin_id"], "example.board");
+        assert_eq!(value["data"]["event"], "resource.updated");
     }
 
     #[test]

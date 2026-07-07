@@ -1,5 +1,6 @@
 mod context;
 mod env;
+mod events;
 mod manifest;
 mod panes;
 mod resources;
@@ -621,7 +622,7 @@ fn normalize_optional_plugin_id(
     }
 }
 
-fn plugin_manifest_available(plugin: &InstalledPluginInfo) -> bool {
+pub(super) fn plugin_manifest_available(plugin: &InstalledPluginInfo) -> bool {
     !plugin.warnings.iter().any(|warning| {
         warning.starts_with(crate::persist::plugin_registry::MANIFEST_UNAVAILABLE_WARNING_PREFIX)
     })
@@ -661,10 +662,11 @@ fn manifest_actions(
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginApiVersion, PluginCapability, PluginResourceDeleteParams,
-        PluginResourceGetParams, PluginResourceListParams, PluginResourcePutParams,
-        PluginSourceInfo, PluginSourceKind, PluginStorageDeleteParams, PluginStorageGetParams,
-        PluginStorageListParams, PluginStorageSetParams, Request, SuccessResponse,
+        EventData, EventKind, Method, PluginApiVersion, PluginCapability, PluginEventEmitParams,
+        PluginResourceDeleteParams, PluginResourceGetParams, PluginResourceListParams,
+        PluginResourcePutParams, PluginSourceInfo, PluginSourceKind, PluginStorageDeleteParams,
+        PluginStorageGetParams, PluginStorageListParams, PluginStorageSetParams, Request,
+        SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2151,6 +2153,141 @@ storage_prefix = "resources/cards/"
         });
         let value: serde_json::Value = serde_json::from_str(&put).unwrap();
         assert_eq!(value["error"]["code"], "invalid_plugin_resource_item_id");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_event_emit_publishes_plugin_scoped_event() {
+        let root = unique_temp_path("plugin-event-emit");
+        let xdg_home = unique_temp_path("plugin-event-emit-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.events"
+name = "Events"
+version = "0.1.0"
+api_version = 2
+capabilities = ["events"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let response = app.handle_api_request(Request {
+            id: "event-emit".into(),
+            method: Method::PluginEventEmit(PluginEventEmitParams {
+                plugin_id: "example.events".into(),
+                event: "resource.updated".into(),
+                payload: serde_json::json!({ "resource": "cards", "id": "card-1" }),
+            }),
+        });
+        assert!(matches!(response_result(&response), ResponseResult::Ok {}));
+
+        let events = app.event_hub.events_after(0);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.event, EventKind::PluginEvent);
+        let EventData::PluginEvent {
+            plugin_id,
+            event,
+            payload,
+        } = &events[0].1.data
+        else {
+            panic!("expected plugin event");
+        };
+        assert_eq!(plugin_id, "example.events");
+        assert_eq!(event, "resource.updated");
+        assert_eq!(payload["id"], "card-1");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_event_emit_requires_enabled_event_capable_plugin() {
+        let root = unique_temp_path("plugin-event-missing-capability");
+        let xdg_home = unique_temp_path("plugin-event-missing-capability-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.event-missing-cap"
+name = "Event Missing Capability"
+version = "0.1.0"
+api_version = 2
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let missing_plugin = app.handle_api_request(Request {
+            id: "event-emit".into(),
+            method: Method::PluginEventEmit(PluginEventEmitParams {
+                plugin_id: "example.missing".into(),
+                event: "resource.updated".into(),
+                payload: serde_json::json!({}),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&missing_plugin).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_not_found");
+
+        let missing_capability = app.handle_api_request(Request {
+            id: "event-emit".into(),
+            method: Method::PluginEventEmit(PluginEventEmitParams {
+                plugin_id: "example.event-missing-cap".into(),
+                event: "resource.updated".into(),
+                payload: serde_json::json!({}),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&missing_capability).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_capability_required");
+
+        let _ = app.handle_api_request(Request {
+            id: "disable".into(),
+            method: Method::PluginDisable(PluginSetEnabledParams {
+                plugin_id: "example.event-missing-cap".into(),
+            }),
+        });
+        let disabled = app.handle_api_request(Request {
+            id: "event-emit".into(),
+            method: Method::PluginEventEmit(PluginEventEmitParams {
+                plugin_id: "example.event-missing-cap".into(),
+                event: "resource.updated".into(),
+                payload: serde_json::json!({}),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&disabled).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_disabled");
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);

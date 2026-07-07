@@ -755,6 +755,18 @@ fn plugin_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("event")
+                .about("Emit plugin-scoped events")
+                .visible_alias("events")
+                .subcommand(
+                    Command::new("emit")
+                        .about("Emit a plugin event with an opaque JSON payload")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("event", "NAME"))
+                        .arg(required("payload", "JSON")),
+                ),
+        )
+        .subcommand(
             Command::new("pane")
                 .about("Manage plugin-owned panes")
                 .subcommand(

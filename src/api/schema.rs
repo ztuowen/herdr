@@ -223,6 +223,8 @@ pub enum Method {
     PluginResourcePut(PluginResourcePutParams),
     #[serde(rename = "plugin.resource.delete")]
     PluginResourceDelete(PluginResourceDeleteParams),
+    #[serde(rename = "plugin.event.emit")]
+    PluginEventEmit(PluginEventEmitParams),
     #[serde(rename = "plugin.pane.open")]
     PluginPaneOpen(PluginPaneOpenParams),
     #[serde(rename = "plugin.pane.focus")]

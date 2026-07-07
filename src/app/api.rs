@@ -1048,6 +1048,9 @@ impl App {
             Method::PluginResourceDelete(params) => {
                 return self.handle_plugin_resource_delete(request.id, params);
             }
+            Method::PluginEventEmit(params) => {
+                return self.handle_plugin_event_emit(request.id, params);
+            }
             Method::PluginPaneOpen(params) => {
                 return self.handle_plugin_pane_open(request.id, params);
             }

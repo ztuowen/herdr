@@ -402,6 +402,14 @@ fn event_envelope_round_trips() {
                 },
             },
         },
+        EventEnvelope {
+            event: EventKind::PluginEvent,
+            data: EventData::PluginEvent {
+                plugin_id: "example.board".into(),
+                event: "resource.updated".into(),
+                payload: serde_json::json!({ "resource": "cards", "id": "card-1" }),
+            },
+        },
     ];
 
     for event in events {
@@ -430,6 +438,11 @@ fn subscribe_request_parses_parameterized_subscriptions() {
                     "type": "pane.agent_status_changed",
                     "pane_id": "p_1_1",
                     "agent_status": "done"
+                },
+                {
+                    "type": "plugin.event",
+                    "plugin_id": "example.board",
+                    "event": "resource.updated"
                 }
             ]
         }
@@ -440,7 +453,7 @@ fn subscribe_request_parses_parameterized_subscriptions() {
     let Method::EventsSubscribe(params) = request.method else {
         panic!("wrong method parsed");
     };
-    assert_eq!(params.subscriptions.len(), 2);
+    assert_eq!(params.subscriptions.len(), 3);
     assert!(matches!(
         &params.subscriptions[0],
         Subscription::PaneOutputMatched {
@@ -457,6 +470,13 @@ fn subscribe_request_parses_parameterized_subscriptions() {
             pane_id,
             agent_status: Some(AgentStatus::Done),
         } if pane_id == "p_1_1"
+    ));
+    assert!(matches!(
+        &params.subscriptions[2],
+        Subscription::PluginEvent {
+            plugin_id: Some(plugin_id),
+            event: Some(event),
+        } if plugin_id == "example.board" && event == "resource.updated"
     ));
 }
 
@@ -1220,4 +1240,22 @@ fn plugin_resource_requests_round_trip() {
     assert!(json.contains("\"type\":\"plugin_resource_value\""));
     let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, response);
+}
+
+#[test]
+fn plugin_event_emit_request_round_trips() {
+    let request = Request {
+        id: "req_plugin_event_emit".into(),
+        method: Method::PluginEventEmit(PluginEventEmitParams {
+            plugin_id: "example.board".into(),
+            event: "resource.updated".into(),
+            payload: serde_json::json!({ "resource": "cards", "id": "card-1" }),
+        }),
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "plugin.event.emit");
+    assert_eq!(json["params"]["event"], "resource.updated");
+    assert_eq!(json["params"]["payload"]["id"], "card-1");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
 }

@@ -700,6 +700,28 @@
                 "item"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "event": {
+                  "type": "string"
+                },
+                "payload": true,
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_event",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "event",
+                "payload"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -730,7 +752,8 @@
             "layout_updated",
             "kanban_added",
             "kanban_updated",
-            "kanban_deleted"
+            "kanban_deleted",
+            "plugin_event"
           ],
           "type": "string"
         },
@@ -2932,6 +2955,23 @@
           },
           "type": "object"
         },
+        "PluginEventEmitParams": {
+          "properties": {
+            "event": {
+              "type": "string"
+            },
+            "payload": true,
+            "plugin_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "event",
+            "payload"
+          ],
+          "type": "object"
+        },
         "PluginInvocationContext": {
           "properties": {
             "clicked_url": {
@@ -3815,6 +3855,30 @@
                     "string",
                     "null"
                   ]
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "event": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "plugin_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "plugin.event",
+                  "type": "string"
                 }
               },
               "required": [
@@ -5579,6 +5643,22 @@
         {
           "properties": {
             "method": {
+              "const": "plugin.event.emit",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginEventEmitParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "plugin.pane.open",
               "type": "string"
             },
@@ -6793,6 +6873,28 @@
                 "item"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "event": {
+                  "type": "string"
+                },
+                "payload": true,
+                "plugin_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_event",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "event",
+                "payload"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -6838,7 +6940,8 @@
             "layout_updated",
             "kanban_added",
             "kanban_updated",
-            "kanban_deleted"
+            "kanban_deleted",
+            "plugin_event"
           ],
           "type": "string"
         },

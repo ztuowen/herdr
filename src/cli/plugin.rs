@@ -7,11 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::schema::{
     InstalledPluginInfo, Method, PluginActionInvokeParams, PluginActionListParams,
-    PluginInvocationContext, PluginLinkParams, PluginListParams, PluginLogListParams,
-    PluginPaneCloseParams, PluginPaneFocusParams, PluginPaneOpenParams, PluginPanePlacement,
-    PluginPlatform, PluginResourceDeleteParams, PluginResourceGetParams, PluginResourceListParams,
-    PluginResourcePutParams, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind,
-    PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
+    PluginEventEmitParams, PluginInvocationContext, PluginLinkParams, PluginListParams,
+    PluginLogListParams, PluginPaneCloseParams, PluginPaneFocusParams, PluginPaneOpenParams,
+    PluginPanePlacement, PluginPlatform, PluginResourceDeleteParams, PluginResourceGetParams,
+    PluginResourceListParams, PluginResourcePutParams, PluginSetEnabledParams, PluginSourceInfo,
+    PluginSourceKind, PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
     PluginStorageSetParams, PluginUnlinkParams, Request, ResponseResult, SplitDirection,
     SuccessResponse,
 };
@@ -37,6 +37,7 @@ pub(super) fn run_plugin_command(args: &[String]) -> std::io::Result<i32> {
         "log" | "logs" => plugin_log_list(&args[1..]),
         "storage" => run_plugin_storage_command(&args[1..]),
         "resource" | "resources" => run_plugin_resource_command(&args[1..]),
+        "event" | "events" => run_plugin_event_command(&args[1..]),
         "pane" => run_plugin_pane_command(&args[1..]),
         "help" | "--help" | "-h" => {
             print_plugin_help();
@@ -762,6 +763,80 @@ fn parse_required_plugin_resource_options(
         return Ok((String::new(), String::new(), Vec::new()));
     };
     Ok((plugin_id, resource_id, rest))
+}
+
+fn run_plugin_event_command(args: &[String]) -> std::io::Result<i32> {
+    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
+        print_plugin_event_help();
+        return Ok(2);
+    };
+
+    match subcommand {
+        "emit" => plugin_event_emit(&args[1..]),
+        "help" | "--help" | "-h" => {
+            print_plugin_event_help();
+            Ok(0)
+        }
+        _ => {
+            print_plugin_event_help();
+            Ok(2)
+        }
+    }
+}
+
+fn plugin_event_emit(args: &[String]) -> std::io::Result<i32> {
+    let mut plugin_id = None;
+    let mut event = None;
+    let mut rest = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--plugin" => {
+                let Some(value) = required_value(args, &mut index, "--plugin") else {
+                    return Ok(2);
+                };
+                plugin_id = Some(value);
+            }
+            "--event" => {
+                let Some(value) = required_value(args, &mut index, "--event") else {
+                    return Ok(2);
+                };
+                event = Some(value);
+            }
+            value if value.starts_with("--") => {
+                eprintln!("unknown option: {value}");
+                return Ok(2);
+            }
+            value => {
+                rest.push(value.to_string());
+                index += 1;
+            }
+        }
+    }
+    let Some(plugin_id) = plugin_id else {
+        eprintln!("missing required --plugin");
+        return Ok(2);
+    };
+    let Some(event) = event else {
+        eprintln!("missing required --event");
+        return Ok(2);
+    };
+    if rest.len() != 1 {
+        eprintln!("usage: herdr plugin event emit --plugin ID --event NAME <json|->");
+        return Ok(2);
+    }
+    let payload = match parse_plugin_storage_json_value(&rest[0]) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(2);
+        }
+    };
+    print_plugin_response(Method::PluginEventEmit(PluginEventEmitParams {
+        plugin_id,
+        event,
+        payload,
+    }))
 }
 
 fn run_plugin_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -1897,6 +1972,7 @@ fn print_plugin_help() {
     eprintln!("  herdr plugin log list [--plugin ID] [--limit N]");
     eprintln!("  herdr plugin storage <get|set|delete|list>");
     eprintln!("  herdr plugin resource <list|get|put|delete>");
+    eprintln!("  herdr plugin event emit --plugin ID --event NAME <json|->");
     eprintln!("  herdr plugin pane <open|focus|close>");
 }
 
@@ -1920,6 +1996,11 @@ fn print_plugin_resource_help() {
     eprintln!("  herdr plugin resource get --plugin ID --resource ID <item_id>");
     eprintln!("  herdr plugin resource put --plugin ID --resource ID <item_id> <json|->");
     eprintln!("  herdr plugin resource delete --plugin ID --resource ID <item_id>");
+}
+
+fn print_plugin_event_help() {
+    eprintln!("herdr plugin event commands:");
+    eprintln!("  herdr plugin event emit --plugin ID --event NAME <json|->");
 }
 
 fn print_plugin_pane_help() {

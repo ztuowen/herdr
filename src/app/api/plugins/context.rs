@@ -186,6 +186,11 @@ impl App {
                     crate::extensions::plugin_invocation_source_for_event(event_data);
                 context
             }
+            EventData::PluginEvent { .. } => {
+                let mut context = empty_plugin_context(correlation_id);
+                context.invocation_source = Some("plugin.event".to_string());
+                context
+            }
         }
     }
 

@@ -395,6 +395,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::PluginResourceGet(_) => "plugin.resource.get",
         Method::PluginResourcePut(_) => "plugin.resource.put",
         Method::PluginResourceDelete(_) => "plugin.resource.delete",
+        Method::PluginEventEmit(_) => "plugin.event.emit",
         Method::PluginPaneOpen(_) => "plugin.pane.open",
         Method::PluginPaneFocus(_) => "plugin.pane.focus",
         Method::PluginPaneClose(_) => "plugin.pane.close",

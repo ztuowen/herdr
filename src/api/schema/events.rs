@@ -90,6 +90,13 @@ pub enum Subscription {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uuid: Option<String>,
     },
+    #[serde(rename = "plugin.event")]
+    PluginEvent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plugin_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -238,6 +245,7 @@ pub enum EventKind {
     KanbanAdded,
     KanbanUpdated,
     KanbanDeleted,
+    PluginEvent,
 }
 
 impl EventKind {
@@ -269,6 +277,7 @@ impl EventKind {
             EventKind::KanbanAdded => "kanban.added",
             EventKind::KanbanUpdated => "kanban.updated",
             EventKind::KanbanDeleted => "kanban.deleted",
+            EventKind::PluginEvent => "plugin.event",
         }
     }
 }
@@ -301,6 +310,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::KanbanAdded,
     EventKind::KanbanUpdated,
     EventKind::KanbanDeleted,
+    EventKind::PluginEvent,
 ];
 
 pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
@@ -568,5 +578,10 @@ pub enum EventData {
     },
     KanbanDeleted {
         item: KanbanItem,
+    },
+    PluginEvent {
+        plugin_id: String,
+        event: String,
+        payload: serde_json::Value,
     },
 }

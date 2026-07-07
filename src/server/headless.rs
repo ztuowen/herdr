@@ -2087,46 +2087,13 @@ impl HeadlessServer {
 
                 true
             }
-            AppEvent::SpeechStartRecording {
-                workspace_id,
-                pane_id,
-                is_agent,
-            } => {
+            _ if crate::extensions::speech::server::server_message_for_app_event(&ev).is_some() => {
                 if let Some(client_id) = self.foreground_client_id {
-                    self.send_to_client(
-                        client_id,
-                        ServerMessage::StartRecording {
-                            workspace_id: workspace_id.clone(),
-                            pane_id: *pane_id,
-                            is_agent: *is_agent,
-                        },
-                    );
-                }
-                self.app.handle_internal_event(ev);
-                true
-            }
-            AppEvent::SpeechStopRecording { abort } => {
-                if let Some(client_id) = self.foreground_client_id {
-                    self.send_to_client(client_id, ServerMessage::StopRecording { abort: *abort });
-                }
-                self.app.handle_internal_event(ev);
-                true
-            }
-            AppEvent::AudioSummaryStart { text_content } => {
-                if let Some(client_id) = self.foreground_client_id {
-                    self.send_to_client(
-                        client_id,
-                        ServerMessage::StartAudioSummary {
-                            text_content: text_content.clone(),
-                        },
-                    );
-                }
-                self.app.handle_internal_event(ev);
-                true
-            }
-            AppEvent::AudioSummaryCancel => {
-                if let Some(client_id) = self.foreground_client_id {
-                    self.send_to_client(client_id, ServerMessage::CancelAudioSummary);
+                    if let Some(message) =
+                        crate::extensions::speech::server::server_message_for_app_event(&ev)
+                    {
+                        self.send_to_client(client_id, message);
+                    }
                 }
                 self.app.handle_internal_event(ev);
                 true
@@ -2764,58 +2731,18 @@ impl HeadlessServer {
                 // No render needed — the next iteration will initiate shutdown.
                 false
             }
-            ServerEvent::ClientSpeechPartialTranscription {
-                client_id,
-                workspace_id,
-                text,
-            } => {
-                if Some(client_id) == self.foreground_client_id {
-                    if let Err(e) =
-                        self.app
-                            .event_tx
-                            .try_send(AppEvent::SpeechPartialTranscription {
-                                workspace_id: workspace_id.clone(),
-                                text: text.clone(),
-                            })
-                    {
-                        tracing::error!("failed to send SpeechPartialTranscription: {:?}", e);
-                    }
-                }
-                false
-            }
-            ServerEvent::ClientSpeechTranscribed {
-                client_id,
-                workspace_id,
-                pane_id,
-                result,
-            } => {
-                if Some(client_id) == self.foreground_client_id {
-                    if let Err(e) = self.app.event_tx.try_send(AppEvent::SpeechTranscribed {
-                        workspace_id: workspace_id.clone(),
-                        pane_id,
-                        result: result.clone(),
-                    }) {
-                        tracing::error!("failed to send SpeechTranscribed: {:?}", e);
-                    }
-                }
-                false
-            }
-            ServerEvent::ClientAudioSummaryFinished { client_id } => {
-                if Some(client_id) == self.foreground_client_id {
-                    if let Err(e) = self.app.event_tx.try_send(AppEvent::AudioSummaryFinished) {
-                        tracing::error!("failed to send AudioSummaryFinished: {:?}", e);
-                    }
-                }
-                false
-            }
-            ServerEvent::ClientAudioSummaryError { client_id, error } => {
-                if Some(client_id) == self.foreground_client_id {
-                    if let Err(e) = self
-                        .app
-                        .event_tx
-                        .try_send(AppEvent::AudioSummaryError(error.clone()))
-                    {
-                        tracing::error!("failed to send AudioSummaryError: {:?}", e);
+            speech_event @ (ServerEvent::ClientSpeechPartialTranscription { .. }
+            | ServerEvent::ClientSpeechTranscribed { .. }
+            | ServerEvent::ClientAudioSummaryFinished { .. }
+            | ServerEvent::ClientAudioSummaryError { .. }) => {
+                if let Some(app_event) =
+                    crate::extensions::speech::server::app_event_for_client_event(
+                        &speech_event,
+                        self.foreground_client_id,
+                    )
+                {
+                    if let Err(e) = self.app.event_tx.try_send(app_event) {
+                        tracing::error!("failed to send speech client event: {:?}", e);
                     }
                 }
                 false

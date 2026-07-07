@@ -5,6 +5,7 @@ pub mod events;
 pub mod gemini;
 pub mod input;
 pub mod pipeline;
+pub(crate) mod server;
 pub mod summary;
 
 pub use audio::resample;

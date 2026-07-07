@@ -2137,6 +2137,31 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
         );
     }
 
+    #[test]
+    fn kanban_event_context_uses_extension_invocation_source() {
+        let app = test_app();
+        let context = app.plugin_context_for_event(
+            &crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::KanbanAdded,
+                data: crate::api::schema::EventData::KanbanAdded {
+                    item: crate::api::schema::KanbanItem {
+                        uuid: "card-123".into(),
+                        title: "Card".into(),
+                        description: String::new(),
+                        status: crate::api::schema::KanbanStatus::Todo,
+                        terminal_id: None,
+                    },
+                },
+            },
+            "kanban.added",
+        );
+
+        assert_eq!(
+            context.invocation_source.as_deref(),
+            Some("kanban:card-123")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn plugin_link_handler_invokes_action_with_clicked_url_context() {

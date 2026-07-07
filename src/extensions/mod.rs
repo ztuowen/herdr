@@ -1,4 +1,4 @@
-use crate::api::schema::Method;
+use crate::api::schema::{EventData, Method};
 use crate::events::AppEvent;
 use crate::input::TerminalKey;
 use crossterm::event::MouseEvent;
@@ -158,4 +158,8 @@ pub(crate) fn active_extension_hyperlinks(
     }
 
     Vec::new()
+}
+
+pub(crate) fn plugin_invocation_source_for_event(event_data: &EventData) -> Option<String> {
+    crate::extensions::kanban::events::plugin_invocation_source(event_data)
 }

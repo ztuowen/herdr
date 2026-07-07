@@ -178,11 +178,12 @@ impl App {
                     context.focused_pane_id = Some(pane_id.clone());
                     context
                 }),
-            EventData::KanbanAdded { item }
-            | EventData::KanbanUpdated { item }
-            | EventData::KanbanDeleted { item } => {
+            event_data @ (EventData::KanbanAdded { .. }
+            | EventData::KanbanUpdated { .. }
+            | EventData::KanbanDeleted { .. }) => {
                 let mut context = self.current_plugin_context(correlation_id);
-                context.invocation_source = Some(format!("kanban:{}", item.uuid));
+                context.invocation_source =
+                    crate::extensions::plugin_invocation_source_for_event(event_data);
                 context
             }
         }

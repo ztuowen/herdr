@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::api::schema::{
-    PluginStorageDeleteParams, PluginStorageEntries, PluginStorageGetParams,
+    PluginCapability, PluginStorageDeleteParams, PluginStorageEntries, PluginStorageGetParams,
     PluginStorageListParams, PluginStorageSetParams, ResponseResult,
 };
 use crate::app::api::responses::{encode_error, encode_success};
@@ -137,6 +137,13 @@ impl App {
                 format!("plugin {plugin_id} is not installed"),
             ));
         };
+        if !super::manifest::plugin_has_capability(plugin, PluginCapability::Storage) {
+            return Err(encode_error(
+                id.to_string(),
+                "plugin_capability_required",
+                "plugin storage requires capability 'storage'",
+            ));
+        }
         super::env::ensure_plugin_user_dirs(plugin).map_err(|err| {
             encode_error(
                 id.to_string(),

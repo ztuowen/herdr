@@ -39,6 +39,10 @@ pub struct InstalledPluginInfo {
     pub name: String,
     pub version: String,
     #[serde(default)]
+    pub api_version: PluginApiVersion,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<PluginCapability>,
+    #[serde(default)]
     pub min_herdr_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -57,12 +61,49 @@ pub struct InstalledPluginInfo {
     pub panes: Vec<PluginManifestPane>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_handlers: Vec<PluginManifestLinkHandler>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<PluginManifestResource>,
     #[serde(default)]
     pub source: PluginSourceInfo,
     /// Warnings collected at link time or on registry load (e.g. unknown event names,
     /// missing manifest file). Non-fatal — the entry is kept and surfaced by plugin.list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginApiVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginCapability {
+    Actions,
+    Events,
+    Links,
+    Panes,
+    Storage,
+    Resources,
+    Notifications,
+    ClientSpeech,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -273,6 +314,14 @@ pub struct PluginManifestLinkHandler {
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platforms: Option<Vec<PluginPlatform>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginManifestResource {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub storage_prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]

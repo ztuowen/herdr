@@ -6712,9 +6712,19 @@
               },
               "type": "array"
             },
+            "api_version": {
+              "$ref": "#/schemas/success_response/$defs/PluginApiVersion",
+              "default": "v1"
+            },
             "build": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/PluginManifestBuild"
+              },
+              "type": "array"
+            },
+            "capabilities": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginCapability"
               },
               "type": "array"
             },
@@ -6769,6 +6779,12 @@
             },
             "plugin_root": {
               "type": "string"
+            },
+            "resources": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginManifestResource"
+              },
+              "type": "array"
             },
             "source": {
               "$ref": "#/schemas/success_response/$defs/PluginSourceInfo",
@@ -7733,6 +7749,26 @@
           ],
           "type": "object"
         },
+        "PluginApiVersion": {
+          "enum": [
+            "v1",
+            "v2"
+          ],
+          "type": "string"
+        },
+        "PluginCapability": {
+          "enum": [
+            "actions",
+            "events",
+            "links",
+            "panes",
+            "storage",
+            "resources",
+            "notifications",
+            "client-speech"
+          ],
+          "type": "string"
+        },
         "PluginCommandLogInfo": {
           "properties": {
             "action_id": {
@@ -8084,6 +8120,29 @@
             "id",
             "title",
             "command"
+          ],
+          "type": "object"
+        },
+        "PluginManifestResource": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "storage_prefix": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "kind",
+            "storage_prefix"
           ],
           "type": "object"
         },

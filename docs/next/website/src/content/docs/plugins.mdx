@@ -103,6 +103,21 @@ or install a plugin when its minimum version is newer than the current binary.
 `description` is optional. Plugin ids may use ASCII letters, digits, dot,
 colon, underscore, and hyphen.
 
+`api_version` is optional and defaults to plugin v1. Use `api_version = 2`
+when the plugin depends on the plugin v2 host contract. V2 plugins declare the
+host surfaces they use:
+
+```toml
+api_version = 2
+capabilities = ["actions", "events", "links", "panes", "storage", "resources"]
+```
+
+Capability values are `actions`, `events`, `links`, `panes`, `storage`,
+`resources`, `notifications`, and `client-speech`. Herdr lists capabilities in
+`plugin.list` so authors and tooling can see the plugin's host dependency
+contract. V1 manifests keep working; Herdr infers their declared actions,
+events, panes, and link handlers for reporting.
+
 Action ids, pane ids, and link handler ids are local ids inside the plugin.
 They may use ASCII letters, digits, colon, underscore, and hyphen, but not
 dots. Each id type must be unique inside a plugin. Herdr qualifies action ids
@@ -297,6 +312,27 @@ name an action declared by the same plugin. Link handler actions receive
 `HERDR_PLUGIN_CLICKED_URL` and `HERDR_PLUGIN_LINK_HANDLER_ID`. Handlers are
 checked in manifest order inside each plugin.
 
+## Resources
+
+Plugin v2 can declare resource collections that map discoverable plugin-owned
+objects onto opaque plugin storage:
+
+```toml
+api_version = 2
+capabilities = ["resources", "storage"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+```
+
+Resource ids are local plugin ids. `kind` is an informational media type or
+schema label owned by the plugin. `storage_prefix` must start with
+`resources/` and end with `/`. Herdr validates ids and storage plumbing only;
+the plugin owns each resource value's JSON shape, migrations, and cleanup.
+
 ## Storage
 
 Plugins can store opaque JSON values through Herdr's plugin storage API:
@@ -313,7 +349,8 @@ and be reachable through the same socket API on every platform. Herdr scopes
 storage by installed plugin id, validates keys, and owns durable reads and
 writes under the plugin state directory. The plugin still owns the value schema,
 migrations, cleanup policy, and any larger custom files or databases it keeps
-under `HERDR_PLUGIN_STATE_DIR`.
+under `HERDR_PLUGIN_STATE_DIR`. Plugin v2 manifests must declare the `storage`
+capability before using `plugin.storage.*`.
 
 ## Marketplace
 

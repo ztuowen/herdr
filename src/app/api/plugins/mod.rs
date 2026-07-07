@@ -660,9 +660,9 @@ fn manifest_actions(
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginSourceInfo, PluginSourceKind, PluginStorageDeleteParams,
-        PluginStorageGetParams, PluginStorageListParams, PluginStorageSetParams, Request,
-        SuccessResponse,
+        Method, PluginApiVersion, PluginCapability, PluginSourceInfo, PluginSourceKind,
+        PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
+        PluginStorageSetParams, Request, SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1088,10 +1088,169 @@ command = ["echo", "b"]
         let plugin = load_plugin_manifest("tests/fixtures/plugin-smoke", true)
             .expect("smoke fixture should load");
         assert_eq!(plugin.plugin_id, "example.smoke");
+        assert_eq!(plugin.api_version, PluginApiVersion::V1);
+        assert_eq!(
+            plugin.capabilities,
+            vec![
+                PluginCapability::Actions,
+                PluginCapability::Events,
+                PluginCapability::Panes,
+            ]
+        );
         assert_eq!(plugin.actions.len(), 1);
         assert_eq!(plugin.events.len(), 1);
         assert_eq!(plugin.panes.len(), 1);
         assert!(plugin.warnings.is_empty());
+    }
+
+    #[test]
+    fn v2_manifest_declares_capabilities_and_resources() {
+        let root = unique_temp_path("plugin-v2-resources");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-resources"
+name = "V2 Resources"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        assert_eq!(plugin.api_version, PluginApiVersion::V2);
+        assert_eq!(
+            plugin.capabilities,
+            vec![PluginCapability::Storage, PluginCapability::Resources]
+        );
+        assert_eq!(plugin.resources.len(), 1);
+        assert_eq!(plugin.resources[0].id, "cards");
+        assert_eq!(plugin.resources[0].storage_prefix, "resources/cards/");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_resources_without_capability() {
+        let root = unique_temp_path("plugin-v2-resource-missing-capability");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-missing-resource-cap"
+name = "V2 Missing Resource Capability"
+version = "0.1.0"
+api_version = 2
+capabilities = ["storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(result, Err(("plugin_capability_required", _))));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_duplicate_resource_ids() {
+        let root = unique_temp_path("plugin-v2-duplicate-resource");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-duplicate-resource"
+name = "V2 Duplicate Resource"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+
+[[resources]]
+id = "cards"
+title = "Other Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/other-cards/"
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(result, Err(("duplicate_plugin_resource_id", _))));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_invalid_resource_storage_prefix() {
+        let root = unique_temp_path("plugin-v2-invalid-resource-prefix");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-invalid-resource-prefix"
+name = "V2 Invalid Resource Prefix"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "cards/"
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(
+            result,
+            Err(("invalid_plugin_resource_storage_prefix", _))
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_plugin_capability() {
+        let root = unique_temp_path("plugin-v2-unknown-capability");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-unknown-cap"
+name = "V2 Unknown Capability"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "frobnicate"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(result, Err(("invalid_plugin_capability", _))));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1749,6 +1908,52 @@ platforms = ["linux", "macos", "windows"]
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(state_dir);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_storage_requires_v2_storage_capability() {
+        let root = unique_temp_path("plugin-storage-missing-capability");
+        let xdg_home = unique_temp_path("plugin-storage-missing-capability-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.storage-missing-cap"
+name = "Storage Missing Capability"
+version = "0.1.0"
+api_version = 2
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let set = app.handle_api_request(Request {
+            id: "storage-set".into(),
+            method: Method::PluginStorageSet(PluginStorageSetParams {
+                plugin_id: "example.storage-missing-cap".into(),
+                key: "state/value".into(),
+                value: serde_json::json!({ "ok": true }),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&set).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_capability_required");
+
+        let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);
         match old_config_home {
             Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),

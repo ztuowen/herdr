@@ -1805,6 +1805,8 @@ mod tests {
             plugin_id: id.to_string(),
             name: "Test Plugin".to_string(),
             version: "0.1.0".to_string(),
+            api_version: crate::api::schema::PluginApiVersion::V1,
+            capabilities: vec![],
             min_herdr_version: crate::build_info::BASE_VERSION.to_string(),
             description: None,
             manifest_path: format!("/tmp/{id}/herdr-plugin.toml"),
@@ -1816,6 +1818,7 @@ mod tests {
             events: vec![],
             panes: vec![],
             link_handlers: vec![],
+            resources: vec![],
             source: PluginSourceInfo {
                 kind: PluginSourceKind::Github,
                 owner: Some(owner.to_string()),

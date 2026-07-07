@@ -1,17 +1,24 @@
 use crate::api::schema::{
-    InstalledPluginInfo, PluginManifestAction, PluginManifestBuild, PluginManifestEventHook,
-    PluginManifestLinkHandler, PluginManifestPane, PluginPanePlacement, PluginPlatform,
-    PluginSourceInfo, PluginSourceKind,
+    InstalledPluginInfo, PluginApiVersion, PluginCapability, PluginManifestAction,
+    PluginManifestBuild, PluginManifestEventHook, PluginManifestLinkHandler, PluginManifestPane,
+    PluginManifestResource, PluginPanePlacement, PluginPlatform, PluginSourceInfo,
+    PluginSourceKind,
 };
 
 const PLUGIN_ID_MAX_CHARS: usize = 120;
 const PLUGIN_ACTION_ID_MAX_CHARS: usize = 120;
+const PLUGIN_RESOURCE_KIND_MAX_CHARS: usize = 120;
+const PLUGIN_RESOURCE_STORAGE_PREFIX_MAX_CHARS: usize = 256;
 
 #[derive(serde::Deserialize)]
 struct RawPluginManifest {
     id: String,
     name: String,
     version: String,
+    #[serde(default)]
+    api_version: Option<u8>,
+    #[serde(default)]
+    capabilities: Vec<String>,
     #[serde(default)]
     min_herdr_version: Option<String>,
     #[serde(default)]
@@ -28,6 +35,8 @@ struct RawPluginManifest {
     panes: Vec<RawPluginManifestPane>,
     #[serde(default)]
     link_handlers: Vec<RawPluginManifestLinkHandler>,
+    #[serde(default)]
+    resources: Vec<RawPluginManifestResource>,
 }
 
 #[derive(serde::Deserialize)]
@@ -79,6 +88,14 @@ struct RawPluginManifestLinkHandler {
     action: String,
     #[serde(default)]
     platforms: Option<Vec<RawPlatform>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawPluginManifestResource {
+    id: String,
+    title: String,
+    kind: String,
+    storage_prefix: String,
 }
 
 /// Raw string platform value from the manifest, validated before conversion.
@@ -135,6 +152,7 @@ pub(crate) fn load_plugin_manifest(
         "invalid_plugin_version",
         "plugin version is required",
     )?;
+    let api_version = normalize_api_version(raw.api_version)?;
     let min_herdr_version = validate_min_herdr_version(raw.min_herdr_version.as_deref())?;
     let description = raw
         .description
@@ -173,6 +191,22 @@ pub(crate) fn load_plugin_manifest(
         .collect::<Result<Vec<_>, _>>()?;
     reject_duplicate_link_handler_ids(&link_handlers)?;
     validate_link_handler_actions(&link_handlers, &actions)?;
+    let mut resources = raw
+        .resources
+        .into_iter()
+        .map(normalize_manifest_resource)
+        .collect::<Result<Vec<_>, _>>()?;
+    reject_duplicate_resource_ids(&resources)?;
+    resources.sort_by(|a, b| a.id.cmp(&b.id));
+    let capabilities = normalize_capabilities(
+        api_version,
+        raw.capabilities,
+        &actions,
+        &events,
+        &panes,
+        &link_handlers,
+        &resources,
+    )?;
 
     let mut warnings = validate_event_names(&events);
     if platforms.is_none() {
@@ -183,6 +217,8 @@ pub(crate) fn load_plugin_manifest(
         plugin_id,
         name,
         version,
+        api_version,
+        capabilities,
         min_herdr_version,
         description,
         manifest_path: manifest_path.display().to_string(),
@@ -194,9 +230,21 @@ pub(crate) fn load_plugin_manifest(
         events,
         panes,
         link_handlers,
+        resources,
         source: Default::default(),
         warnings,
     })
+}
+
+fn normalize_api_version(value: Option<u8>) -> Result<PluginApiVersion, (&'static str, String)> {
+    match value.unwrap_or(1) {
+        1 => Ok(PluginApiVersion::V1),
+        2 => Ok(PluginApiVersion::V2),
+        other => Err((
+            "invalid_plugin_api_version",
+            format!("unsupported plugin api_version {other}; supported versions are 1 and 2"),
+        )),
+    }
 }
 
 fn validate_min_herdr_version(value: Option<&str>) -> Result<String, (&'static str, String)> {
@@ -332,6 +380,21 @@ fn reject_duplicate_link_handler_ids(
     Ok(())
 }
 
+fn reject_duplicate_resource_ids(
+    resources: &[PluginManifestResource],
+) -> Result<(), (&'static str, String)> {
+    let mut seen = std::collections::HashSet::new();
+    for resource in resources {
+        if !seen.insert(resource.id.as_str()) {
+            return Err((
+                "duplicate_plugin_resource_id",
+                format!("duplicate resource id '{}'", resource.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_link_handler_actions(
     handlers: &[PluginManifestLinkHandler],
     actions: &[PluginManifestAction],
@@ -348,6 +411,162 @@ fn validate_link_handler_actions(
         }
     }
     Ok(())
+}
+
+fn normalize_manifest_resource(
+    resource: RawPluginManifestResource,
+) -> Result<PluginManifestResource, (&'static str, String)> {
+    let id = normalize_action_id(&resource.id).ok_or_else(|| {
+        (
+            "invalid_plugin_resource_id",
+            "invalid resource id".to_string(),
+        )
+    })?;
+    let title = non_empty_trimmed(
+        &resource.title,
+        "invalid_plugin_resource_title",
+        "resource title is required",
+    )?;
+    let kind = normalize_resource_kind(&resource.kind)?;
+    let storage_prefix = normalize_resource_storage_prefix(&resource.storage_prefix)?;
+    Ok(PluginManifestResource {
+        id,
+        title,
+        kind,
+        storage_prefix,
+    })
+}
+
+fn normalize_capabilities(
+    api_version: PluginApiVersion,
+    raw: Vec<String>,
+    actions: &[PluginManifestAction],
+    events: &[PluginManifestEventHook],
+    panes: &[PluginManifestPane],
+    link_handlers: &[PluginManifestLinkHandler],
+    resources: &[PluginManifestResource],
+) -> Result<Vec<PluginCapability>, (&'static str, String)> {
+    let mut capabilities = if raw.is_empty() && api_version == PluginApiVersion::V1 {
+        inferred_v1_capabilities(actions, events, panes, link_handlers, resources)
+    } else {
+        raw.into_iter()
+            .map(|capability| normalize_capability(&capability))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    capabilities.sort();
+    capabilities.dedup();
+
+    if api_version == PluginApiVersion::V1 && !resources.is_empty() {
+        return Err((
+            "plugin_api_version_required",
+            "[[resources]] requires api_version = 2".to_string(),
+        ));
+    }
+    if api_version == PluginApiVersion::V2 {
+        require_capability_for_section(
+            &capabilities,
+            PluginCapability::Actions,
+            actions,
+            "actions",
+        )?;
+        require_capability_for_section(&capabilities, PluginCapability::Events, events, "events")?;
+        require_capability_for_section(&capabilities, PluginCapability::Panes, panes, "panes")?;
+        require_capability_for_section(
+            &capabilities,
+            PluginCapability::Links,
+            link_handlers,
+            "link_handlers",
+        )?;
+        require_capability_for_section(
+            &capabilities,
+            PluginCapability::Resources,
+            resources,
+            "resources",
+        )?;
+    }
+
+    Ok(capabilities)
+}
+
+fn normalize_capability(value: &str) -> Result<PluginCapability, (&'static str, String)> {
+    match value.trim() {
+        "actions" => Ok(PluginCapability::Actions),
+        "events" => Ok(PluginCapability::Events),
+        "links" => Ok(PluginCapability::Links),
+        "panes" => Ok(PluginCapability::Panes),
+        "storage" => Ok(PluginCapability::Storage),
+        "resources" => Ok(PluginCapability::Resources),
+        "notifications" => Ok(PluginCapability::Notifications),
+        "client-speech" => Ok(PluginCapability::ClientSpeech),
+        other => Err((
+            "invalid_plugin_capability",
+            format!("unknown plugin capability '{other}'"),
+        )),
+    }
+}
+
+fn inferred_v1_capabilities(
+    actions: &[PluginManifestAction],
+    events: &[PluginManifestEventHook],
+    panes: &[PluginManifestPane],
+    link_handlers: &[PluginManifestLinkHandler],
+    resources: &[PluginManifestResource],
+) -> Vec<PluginCapability> {
+    let mut capabilities = Vec::new();
+    if !actions.is_empty() {
+        capabilities.push(PluginCapability::Actions);
+    }
+    if !events.is_empty() {
+        capabilities.push(PluginCapability::Events);
+    }
+    if !panes.is_empty() {
+        capabilities.push(PluginCapability::Panes);
+    }
+    if !link_handlers.is_empty() {
+        capabilities.push(PluginCapability::Links);
+    }
+    if !resources.is_empty() {
+        capabilities.push(PluginCapability::Resources);
+    }
+    capabilities
+}
+
+fn require_capability_for_section<T>(
+    capabilities: &[PluginCapability],
+    required: PluginCapability,
+    items: &[T],
+    section: &str,
+) -> Result<(), (&'static str, String)> {
+    if !items.is_empty() && !capabilities.contains(&required) {
+        return Err((
+            "plugin_capability_required",
+            format!(
+                "{section} requires capability '{}'",
+                capability_name(required)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn plugin_has_capability(
+    plugin: &InstalledPluginInfo,
+    capability: PluginCapability,
+) -> bool {
+    plugin.api_version == PluginApiVersion::V1 || plugin.capabilities.contains(&capability)
+}
+
+fn capability_name(capability: PluginCapability) -> &'static str {
+    match capability {
+        PluginCapability::Actions => "actions",
+        PluginCapability::Events => "events",
+        PluginCapability::Links => "links",
+        PluginCapability::Panes => "panes",
+        PluginCapability::Storage => "storage",
+        PluginCapability::Resources => "resources",
+        PluginCapability::Notifications => "notifications",
+        PluginCapability::ClientSpeech => "client-speech",
+    }
 }
 
 fn normalize_manifest_action(
@@ -530,6 +749,62 @@ fn normalize_command(command: Vec<String>) -> Result<Vec<String>, (&'static str,
         ));
     }
     Ok(command)
+}
+
+fn normalize_resource_kind(value: &str) -> Result<String, (&'static str, String)> {
+    let value = non_empty_trimmed(
+        value,
+        "invalid_plugin_resource_kind",
+        "resource kind is required",
+    )?;
+    if value.chars().count() > PLUGIN_RESOURCE_KIND_MAX_CHARS {
+        return Err((
+            "invalid_plugin_resource_kind",
+            format!("resource kind must be {PLUGIN_RESOURCE_KIND_MAX_CHARS} characters or fewer"),
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err((
+            "invalid_plugin_resource_kind",
+            "resource kind cannot contain control characters".to_string(),
+        ));
+    }
+    Ok(value)
+}
+
+fn normalize_resource_storage_prefix(value: &str) -> Result<String, (&'static str, String)> {
+    let value = non_empty_trimmed(
+        value,
+        "invalid_plugin_resource_storage_prefix",
+        "resource storage_prefix is required",
+    )?;
+    if !value.starts_with("resources/") {
+        return Err((
+            "invalid_plugin_resource_storage_prefix",
+            "resource storage_prefix must start with resources/".to_string(),
+        ));
+    }
+    if !value.ends_with('/') {
+        return Err((
+            "invalid_plugin_resource_storage_prefix",
+            "resource storage_prefix must end with /".to_string(),
+        ));
+    }
+    if value.chars().count() > PLUGIN_RESOURCE_STORAGE_PREFIX_MAX_CHARS {
+        return Err((
+            "invalid_plugin_resource_storage_prefix",
+            format!(
+                "resource storage_prefix must be {PLUGIN_RESOURCE_STORAGE_PREFIX_MAX_CHARS} characters or fewer"
+            ),
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err((
+            "invalid_plugin_resource_storage_prefix",
+            "resource storage_prefix cannot contain control characters".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 fn non_empty_trimmed(

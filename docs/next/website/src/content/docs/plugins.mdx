@@ -352,6 +352,13 @@ migrations, cleanup policy, and any larger custom files or databases it keeps
 under `HERDR_PLUGIN_STATE_DIR`. Plugin v2 manifests must declare the `storage`
 capability before using `plugin.storage.*`.
 
+Storage keys must be non-empty, contain no control characters, and fit within
+256 characters. Prefer stable prefixes such as `state/`, `cache/`, and
+`resources/<collection>/` so tools can list related entries without knowing the
+plugin's full schema. Herdr limits each plugin to 1,024 storage keys, 256 KiB
+per JSON value, and a 1 MiB storage document. Use plugin-owned files under
+`HERDR_PLUGIN_STATE_DIR` for larger indexes, caches, or databases.
+
 ## Marketplace
 
 Community plugins are discoverable in the [marketplace](/plugins/), an automatic

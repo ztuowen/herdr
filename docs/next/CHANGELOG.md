@@ -7,7 +7,7 @@
 - Added `herdr completion <shell>` / `herdr completions <shell>` to generate shell completion scripts for bash, elvish, fish, PowerShell, and zsh. (#435)
 - Added `session.snapshot` to bootstrap client runtime state in one socket API response before subscribing to events.
 - Added `herdr api schema` to inspect the bundled socket API schema, with `--json` for the full JSON Schema document and `--output PATH` for file output.
-- Added `plugin.storage.get/set/delete/list` and `herdr plugin storage` commands so plugins can use host-managed opaque JSON storage without adding feature-specific Herdr state.
+- Added `plugin.storage.get/set/delete/list` and `herdr plugin storage` commands so plugins can use host-managed opaque JSON storage, with size and key-count guardrails, without adding feature-specific Herdr state.
 - Added plugin v2 manifest fields for `api_version`, declared capabilities, and resource collections.
 - Added `layout.updated` socket events so protocol clients can keep tab layout snapshots current after pane split, resize, swap, move, zoom, and layout mutations.
 - Added `herdr terminal session observe` for read-only live ANSI terminal streams that bridge processes can consume as newline-delimited JSON.

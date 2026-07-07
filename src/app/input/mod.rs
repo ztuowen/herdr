@@ -46,7 +46,7 @@ mod terminal;
 
 pub(crate) use self::{
     modal::{
-        handle_global_menu_key, handle_kanban_key, handle_keybind_help_key, handle_navigator_key,
+        handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
         insert_navigator_search_text, insert_rename_input_text,
     },
     navigate::terminal_direct_navigation_action,
@@ -119,7 +119,9 @@ impl App {
                 Mode::Navigator => {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
-                Mode::Kanban => handle_kanban_key(&mut self.state, key),
+                Mode::Kanban => {
+                    crate::extensions::kanban::input::handle_kanban_key(&mut self.state, key)
+                }
                 Mode::Terminal => unreachable!(),
             },
         }

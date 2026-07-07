@@ -1000,10 +1000,6 @@ impl App {
             Method::IntegrationUninstall(params) => {
                 return self.handle_integration_uninstall(request.id, params);
             }
-            Method::KanbanAdd(params) => return self.handle_kanban_add(request.id, params),
-            Method::KanbanList(params) => return self.handle_kanban_list(request.id, params),
-            Method::KanbanUpdate(params) => return self.handle_kanban_update(request.id, params),
-            Method::KanbanDelete(params) => return self.handle_kanban_delete(request.id, params),
             Method::PluginLink(params) => {
                 return self.handle_plugin_link(request.id, params);
             }

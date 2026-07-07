@@ -374,9 +374,7 @@ pub(crate) fn visible_hyperlinks(
 
     let mut links = Vec::new();
 
-    if app_state.mode == Mode::Kanban {
-        links.extend(crate::extensions::kanban::ui::active_kanban_detail_hyperlinks(app_state));
-    }
+    links.extend(crate::extensions::active_extension_hyperlinks(app_state));
 
     for info in &app_state.view.pane_infos {
         if let Some(runtime) = tab

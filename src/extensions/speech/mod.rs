@@ -1,4 +1,6 @@
+pub mod app;
 pub mod audio;
+pub mod events;
 pub mod gemini;
 pub mod pipeline;
 pub mod summary;

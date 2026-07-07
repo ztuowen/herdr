@@ -1,5 +1,6 @@
 pub mod app;
 pub mod audio;
+pub(crate) mod client;
 pub mod events;
 pub mod gemini;
 pub mod input;

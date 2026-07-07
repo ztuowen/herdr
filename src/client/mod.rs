@@ -84,10 +84,8 @@ struct ClientState {
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
     /// Whether outer focus gain should force a full host-terminal redraw.
     redraw_on_focus_gained: bool,
-    /// Active speech-to-text pipeline for client-side microphone capture.
-    recording_pipeline: Option<crate::extensions::speech::TranscriptionPipeline>,
-    /// Active tab audio summarizer for client-side audio playback.
-    tab_summarizer: Option<crate::extensions::speech::summary::TabSummarizer>,
+    /// Client-side speech-to-text and audio-summary runtime state.
+    speech_runtime: crate::extensions::speech::client::ClientSpeechRuntime,
     /// Whether this client draws the cursor into frame cells instead of using the host cursor.
     draw_host_cursor: bool,
 }
@@ -1304,8 +1302,7 @@ async fn run_client_loop(
         #[cfg(unix)]
         remote_image_paste_key: config.remote_image_paste_key,
         redraw_on_focus_gained: config.redraw_on_focus_gained,
-        recording_pipeline: None,
-        tab_summarizer: None,
+        speech_runtime: crate::extensions::speech::client::ClientSpeechRuntime::default(),
         draw_host_cursor,
     };
     debug!(?negotiated_encoding, "client render encoding active");
@@ -1581,161 +1578,32 @@ async fn run_client_loop(
                     pane_id,
                     is_agent,
                 } => {
-                    if let Some(pipeline) = state.recording_pipeline.take() {
-                        pipeline.abort();
-                    }
-
-                    // Load config
-                    let loaded_config = match crate::config::load_live_config() {
-                        Ok(loaded) => loaded,
-                        Err(errs) => {
-                            let err_msg =
-                                format!("Failed to load local config: {}", errs.join("; "));
-                            let error_msg = ClientMessage::SpeechTranscribed {
-                                workspace_id: workspace_id.clone(),
-                                pane_id,
-                                result: Err(err_msg),
-                            };
-                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(e));
-                            }
-                            continue;
-                        }
-                    };
-
-                    let api_key = match loaded_config.config.speech_to_text.gemini_api_key.as_ref()
-                    {
-                        Some(k) if !k.trim().is_empty() => k.clone(),
-                        _ => {
-                            let error_msg = ClientMessage::SpeechTranscribed {
-                                workspace_id: workspace_id.clone(),
-                                pane_id,
-                                result: Err("Gemini API key is not configured in local config (~/.config/herdr/config.toml).".to_string()),
-                            };
-                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(e));
-                            }
-                            continue;
-                        }
-                    };
-
-                    let model = crate::extensions::speech::model_or_default(
-                        loaded_config.config.speech_to_text.model.clone(),
-                    );
-                    let postprocess_instruction =
-                        crate::extensions::speech::postprocess_instruction(
-                            &loaded_config.config.speech_to_text,
-                            is_agent,
-                        );
-
-                    let pipeline =
-                        match crate::extensions::speech::pipeline::TranscriptionPipeline::start_client_messages(
-                            crate::extensions::speech::pipeline::ClientPipelineConfig {
-                                workspace_id: workspace_id.clone(),
-                                pane_id,
-                                api_key,
-                                model,
-                                postprocess_instruction,
-                            },
-                            event_tx.clone(),
-                        ) {
-                            Ok(pipeline) => pipeline,
-                            Err(e) => {
-                                let error_msg = ClientMessage::SpeechTranscribed {
-                                    workspace_id: workspace_id.clone(),
-                                    pane_id,
-                                    result: Err(e),
-                                };
-                                if let Err(err) = write_to_server(&mut write_stream, &error_msg) {
-                                    return Err(ClientError::ConnectionLost(err));
-                                }
-                                continue;
-                            }
-                        };
-                    state.recording_pipeline = Some(pipeline);
-                }
-                ServerMessage::StopRecording { abort } => {
-                    if let Some(pipeline) = state.recording_pipeline.take() {
-                        if abort {
-                            pipeline.abort();
-                        } else {
-                            pipeline.stop();
-                        }
-                    }
-                }
-                ServerMessage::StartAudioSummary { text_content } => {
-                    if let Some(summarizer) = state.tab_summarizer.take() {
-                        summarizer.stop();
-                    }
-
-                    // Load config
-                    let loaded_config = match crate::config::load_live_config() {
-                        Ok(loaded) => loaded,
-                        Err(errs) => {
-                            let err_msg =
-                                format!("Failed to load local config: {}", errs.join("; "));
-                            let error_msg = ClientMessage::AudioSummaryError(err_msg);
-                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(e));
-                            }
-                            continue;
-                        }
-                    };
-
-                    let api_key = match loaded_config.config.speech_to_text.gemini_api_key.as_ref()
-                    {
-                        Some(k) if !k.trim().is_empty() => k.clone(),
-                        _ => {
-                            let error_msg = ClientMessage::AudioSummaryError(
-                                "Gemini API key is not configured in local config (~/.config/herdr/config.toml).".to_string()
-                            );
-                            if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(e));
-                            }
-                            continue;
-                        }
-                    };
-
-                    let model = loaded_config
-                        .config
-                        .speech_to_text
-                        .model
-                        .clone()
-                        .unwrap_or_else(|| "gemini-3.1-flash-live-preview".to_string());
-
-                    let system_instruction = loaded_config
-                        .config
-                        .speech_to_text
-                        .summary_system_instruction
-                        .clone()
-                        .unwrap_or_else(|| {
-                            "You are a helpful assistant. You will generate a concise audio summary of the user's terminal session. Focus on key developments, status changes, and any recent errors."
-                                .to_string()
-                        });
-
-                    let summarizer = match crate::extensions::speech::summary::start_client_summary(
-                        api_key,
-                        model,
-                        system_instruction,
-                        text_content,
+                    if let Err(error_msg) = state.speech_runtime.start_recording(
+                        workspace_id.clone(),
+                        pane_id,
+                        is_agent,
                         event_tx.clone(),
                     ) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            let error_msg = ClientMessage::AudioSummaryError(e);
-                            if let Err(err) = write_to_server(&mut write_stream, &error_msg) {
-                                return Err(ClientError::ConnectionLost(err));
-                            }
-                            continue;
+                        if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                            return Err(ClientError::ConnectionLost(e));
                         }
-                    };
-
-                    state.tab_summarizer = Some(summarizer);
+                    }
+                }
+                ServerMessage::StopRecording { abort } => {
+                    state.speech_runtime.stop_recording(abort);
+                }
+                ServerMessage::StartAudioSummary { text_content } => {
+                    if let Err(error_msg) = state
+                        .speech_runtime
+                        .start_audio_summary(text_content, event_tx.clone())
+                    {
+                        if let Err(e) = write_to_server(&mut write_stream, &error_msg) {
+                            return Err(ClientError::ConnectionLost(e));
+                        }
+                    }
                 }
                 ServerMessage::CancelAudioSummary => {
-                    if let Some(summarizer) = state.tab_summarizer.take() {
-                        summarizer.stop();
-                    }
+                    state.speech_runtime.cancel_audio_summary();
                 }
             },
             ClientLoopEvent::ServerDisconnected => {

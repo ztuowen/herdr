@@ -814,8 +814,9 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
-        app.state.extensions.kanban =
-            crate::extensions::kanban::KanbanState::new(snapshot.kanban_items.clone());
+        app.state
+            .extensions
+            .restore_kanban_items(snapshot.kanban_items.clone());
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -1675,7 +1676,7 @@ impl App {
                 // Should not be called in terminal mode.
             }
             Mode::Kanban => {
-                crate::extensions::kanban::input::handle_kanban_key(&mut self.state, key);
+                crate::extensions::handle_extension_key(self, key);
             }
         }
 

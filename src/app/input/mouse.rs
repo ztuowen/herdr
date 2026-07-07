@@ -116,7 +116,7 @@ impl AppState {
             return None;
         }
 
-        if crate::extensions::kanban::mouse::handle_kanban_mouse(self, mouse) {
+        if crate::extensions::handle_extension_mouse(self, mouse) {
             return None;
         }
 

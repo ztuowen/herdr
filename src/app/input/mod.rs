@@ -120,7 +120,7 @@ impl App {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
                 Mode::Kanban => {
-                    crate::extensions::kanban::input::handle_kanban_key(&mut self.state, key)
+                    crate::extensions::handle_extension_key(self, key);
                 }
                 Mode::Terminal => unreachable!(),
             },

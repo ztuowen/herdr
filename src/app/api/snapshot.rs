@@ -37,7 +37,7 @@ impl App {
             tabs,
             panes,
             agents: self.collect_agent_infos(),
-            kanban_items: self.state.extensions.kanban.items.clone(),
+            kanban_items: self.state.extensions.kanban_items_for_persistence(),
         };
 
         encode_success(id, ResponseResult::AppSnapshot { snapshot })

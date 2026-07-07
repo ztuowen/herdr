@@ -1,6 +1,7 @@
 use crate::api::schema::Method;
 use crate::events::AppEvent;
 use crate::input::TerminalKey;
+use crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -40,6 +41,18 @@ impl ExtensionsState {
             pending_enter: None,
             pending_enter_sequence: 0,
         }
+    }
+
+    pub(crate) fn has_persisted_extension_data(&self) -> bool {
+        !self.kanban.items.is_empty()
+    }
+
+    pub(crate) fn kanban_items_for_persistence(&self) -> Vec<crate::api::schema::KanbanItem> {
+        self.kanban.items.clone()
+    }
+
+    pub(crate) fn restore_kanban_items(&mut self, items: Vec<crate::api::schema::KanbanItem>) {
+        self.kanban = crate::extensions::kanban::KanbanState::new(items);
     }
 }
 
@@ -90,6 +103,10 @@ pub fn handle_extension_key(app: &mut crate::app::App, key: TerminalKey) -> bool
     }
 
     false
+}
+
+pub(crate) fn handle_extension_mouse(state: &mut crate::app::AppState, mouse: MouseEvent) -> bool {
+    crate::extensions::kanban::mouse::handle_kanban_mouse(state, mouse)
 }
 
 pub fn render_extension_ui(

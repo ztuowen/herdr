@@ -9,7 +9,8 @@ use crate::api::schema::{
     InstalledPluginInfo, Method, PluginActionInvokeParams, PluginActionListParams,
     PluginInvocationContext, PluginLinkParams, PluginListParams, PluginLogListParams,
     PluginPaneCloseParams, PluginPaneFocusParams, PluginPaneOpenParams, PluginPanePlacement,
-    PluginPlatform, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind,
+    PluginPlatform, PluginResourceDeleteParams, PluginResourceGetParams, PluginResourceListParams,
+    PluginResourcePutParams, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind,
     PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
     PluginStorageSetParams, PluginUnlinkParams, Request, ResponseResult, SplitDirection,
     SuccessResponse,
@@ -35,6 +36,7 @@ pub(super) fn run_plugin_command(args: &[String]) -> std::io::Result<i32> {
         "action" => run_plugin_action_command(&args[1..]),
         "log" | "logs" => plugin_log_list(&args[1..]),
         "storage" => run_plugin_storage_command(&args[1..]),
+        "resource" | "resources" => run_plugin_resource_command(&args[1..]),
         "pane" => run_plugin_pane_command(&args[1..]),
         "help" | "--help" | "-h" => {
             print_plugin_help();
@@ -625,6 +627,141 @@ fn parse_plugin_storage_json_value(input: &str) -> std::io::Result<serde_json::V
             format!("invalid JSON value for plugin storage: {err}"),
         )
     })
+}
+
+fn run_plugin_resource_command(args: &[String]) -> std::io::Result<i32> {
+    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
+        print_plugin_resource_help();
+        return Ok(2);
+    };
+
+    match subcommand {
+        "list" => plugin_resource_list(&args[1..]),
+        "get" => plugin_resource_get(&args[1..]),
+        "put" | "set" => plugin_resource_put(&args[1..]),
+        "delete" | "remove" => plugin_resource_delete(&args[1..]),
+        "help" | "--help" | "-h" => {
+            print_plugin_resource_help();
+            Ok(0)
+        }
+        _ => {
+            print_plugin_resource_help();
+            Ok(2)
+        }
+    }
+}
+
+fn plugin_resource_list(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, resource_id, rest) = parse_required_plugin_resource_options(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    if !rest.is_empty() {
+        eprintln!("usage: herdr plugin resource list --plugin ID --resource ID");
+        return Ok(2);
+    }
+    print_plugin_response(Method::PluginResourceList(PluginResourceListParams {
+        plugin_id,
+        resource_id,
+    }))
+}
+
+fn plugin_resource_get(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, resource_id, rest) = parse_required_plugin_resource_options(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    if rest.len() != 1 {
+        eprintln!("usage: herdr plugin resource get --plugin ID --resource ID <item_id>");
+        return Ok(2);
+    }
+    print_plugin_response(Method::PluginResourceGet(PluginResourceGetParams {
+        plugin_id,
+        resource_id,
+        item_id: rest[0].clone(),
+    }))
+}
+
+fn plugin_resource_put(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, resource_id, rest) = parse_required_plugin_resource_options(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    if rest.len() != 2 {
+        eprintln!("usage: herdr plugin resource put --plugin ID --resource ID <item_id> <json|->");
+        return Ok(2);
+    }
+    let value = match parse_plugin_storage_json_value(&rest[1]) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(2);
+        }
+    };
+    print_plugin_response(Method::PluginResourcePut(PluginResourcePutParams {
+        plugin_id,
+        resource_id,
+        item_id: rest[0].clone(),
+        value,
+    }))
+}
+
+fn plugin_resource_delete(args: &[String]) -> std::io::Result<i32> {
+    let (plugin_id, resource_id, rest) = parse_required_plugin_resource_options(args)?;
+    if plugin_id.is_empty() {
+        return Ok(2);
+    }
+    if rest.len() != 1 {
+        eprintln!("usage: herdr plugin resource delete --plugin ID --resource ID <item_id>");
+        return Ok(2);
+    }
+    print_plugin_response(Method::PluginResourceDelete(PluginResourceDeleteParams {
+        plugin_id,
+        resource_id,
+        item_id: rest[0].clone(),
+    }))
+}
+
+fn parse_required_plugin_resource_options(
+    args: &[String],
+) -> std::io::Result<(String, String, Vec<String>)> {
+    let mut plugin_id = None;
+    let mut resource_id = None;
+    let mut rest = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--plugin" => {
+                let Some(value) = required_value(args, &mut index, "--plugin") else {
+                    return Ok((String::new(), String::new(), Vec::new()));
+                };
+                plugin_id = Some(value);
+            }
+            "--resource" => {
+                let Some(value) = required_value(args, &mut index, "--resource") else {
+                    return Ok((String::new(), String::new(), Vec::new()));
+                };
+                resource_id = Some(value);
+            }
+            value if value.starts_with("--") => {
+                eprintln!("unknown option: {value}");
+                return Ok((String::new(), String::new(), Vec::new()));
+            }
+            value => {
+                rest.push(value.to_string());
+                index += 1;
+            }
+        }
+    }
+    let Some(plugin_id) = plugin_id else {
+        eprintln!("missing required --plugin");
+        return Ok((String::new(), String::new(), Vec::new()));
+    };
+    let Some(resource_id) = resource_id else {
+        eprintln!("missing required --resource");
+        return Ok((String::new(), String::new(), Vec::new()));
+    };
+    Ok((plugin_id, resource_id, rest))
 }
 
 fn run_plugin_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -1759,6 +1896,7 @@ fn print_plugin_help() {
     eprintln!("  herdr plugin action <list|invoke>");
     eprintln!("  herdr plugin log list [--plugin ID] [--limit N]");
     eprintln!("  herdr plugin storage <get|set|delete|list>");
+    eprintln!("  herdr plugin resource <list|get|put|delete>");
     eprintln!("  herdr plugin pane <open|focus|close>");
 }
 
@@ -1774,6 +1912,14 @@ fn print_plugin_storage_help() {
     eprintln!("  herdr plugin storage set --plugin ID <key> <json|->");
     eprintln!("  herdr plugin storage delete --plugin ID <key>");
     eprintln!("  herdr plugin storage list --plugin ID [--prefix PREFIX]");
+}
+
+fn print_plugin_resource_help() {
+    eprintln!("herdr plugin resource commands:");
+    eprintln!("  herdr plugin resource list --plugin ID --resource ID");
+    eprintln!("  herdr plugin resource get --plugin ID --resource ID <item_id>");
+    eprintln!("  herdr plugin resource put --plugin ID --resource ID <item_id> <json|->");
+    eprintln!("  herdr plugin resource delete --plugin ID --resource ID <item_id>");
 }
 
 fn print_plugin_pane_help() {

@@ -367,6 +367,36 @@ pub struct PluginStorageListParams {
 pub type PluginStorageEntries = BTreeMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginResourceListParams {
+    pub plugin_id: String,
+    pub resource_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginResourceGetParams {
+    pub plugin_id: String,
+    pub resource_id: String,
+    pub item_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginResourcePutParams {
+    pub plugin_id: String,
+    pub resource_id: String,
+    pub item_id: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginResourceDeleteParams {
+    pub plugin_id: String,
+    pub resource_id: String,
+    pub item_id: String,
+}
+
+pub type PluginResourceItems = BTreeMap<String, serde_json::Value>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginActionInvokeParams {
     pub action_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -14,7 +14,7 @@ const MAX_STORAGE_KEYS: usize = 1024;
 const MAX_STORAGE_VALUE_BYTES: usize = 256 * 1024;
 const MAX_STORAGE_DOCUMENT_BYTES: usize = 1024 * 1024;
 
-type StorageDocument = BTreeMap<String, serde_json::Value>;
+pub(super) type StorageDocument = BTreeMap<String, serde_json::Value>;
 
 impl App {
     pub(in crate::app::api) fn handle_plugin_storage_get(
@@ -173,12 +173,12 @@ fn normalize_storage_request(
     Ok((plugin_id, key))
 }
 
-fn normalize_plugin_storage_id(id: &str, plugin_id: String) -> Result<String, String> {
+pub(super) fn normalize_plugin_storage_id(id: &str, plugin_id: String) -> Result<String, String> {
     super::manifest::normalize_plugin_id(&plugin_id)
         .ok_or_else(|| invalid_storage_request(id, "invalid plugin id"))
 }
 
-fn validate_storage_key(id: &str, key: &str) -> Result<(), String> {
+pub(super) fn validate_storage_key(id: &str, key: &str) -> Result<(), String> {
     if key.is_empty() {
         return Err(invalid_storage_request(
             id,
@@ -200,7 +200,7 @@ fn validate_storage_key(id: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_storage_value(id: &str, value: &serde_json::Value) -> Result<(), String> {
+pub(super) fn validate_storage_value(id: &str, value: &serde_json::Value) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(|err| {
         encode_error(
             id.to_string(),
@@ -218,7 +218,7 @@ fn validate_storage_value(id: &str, value: &serde_json::Value) -> Result<(), Str
     Ok(())
 }
 
-fn validate_storage_entry_count(
+pub(super) fn validate_storage_entry_count(
     id: &str,
     document: &StorageDocument,
     key: &str,
@@ -241,7 +241,7 @@ fn storage_file(plugin_id: &str) -> PathBuf {
     super::env::plugin_state_dir(plugin_id).join(STORAGE_FILE)
 }
 
-fn read_storage_document(id: &str, plugin_id: &str) -> Result<StorageDocument, String> {
+pub(super) fn read_storage_document(id: &str, plugin_id: &str) -> Result<StorageDocument, String> {
     let path = storage_file(plugin_id);
     if !path.exists() {
         return Ok(StorageDocument::new());
@@ -278,7 +278,7 @@ fn read_storage_document(id: &str, plugin_id: &str) -> Result<StorageDocument, S
     })
 }
 
-fn write_storage_document(
+pub(super) fn write_storage_document(
     id: &str,
     plugin_id: &str,
     document: &StorageDocument,

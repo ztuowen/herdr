@@ -3184,6 +3184,80 @@
           ],
           "type": "string"
         },
+        "PluginResourceDeleteParams": {
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "resource_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "resource_id",
+            "item_id"
+          ],
+          "type": "object"
+        },
+        "PluginResourceGetParams": {
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "resource_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "resource_id",
+            "item_id"
+          ],
+          "type": "object"
+        },
+        "PluginResourceListParams": {
+          "properties": {
+            "plugin_id": {
+              "type": "string"
+            },
+            "resource_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plugin_id",
+            "resource_id"
+          ],
+          "type": "object"
+        },
+        "PluginResourcePutParams": {
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "resource_id": {
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "plugin_id",
+            "resource_id",
+            "item_id",
+            "value"
+          ],
+          "type": "object"
+        },
         "PluginSetEnabledParams": {
           "properties": {
             "plugin_id": {
@@ -5430,6 +5504,70 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PluginStorageListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.resource.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginResourceListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.resource.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginResourceGetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.resource.put",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginResourcePutParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "plugin.resource.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PluginResourceDeleteParams"
             }
           },
           "required": [
@@ -9338,6 +9476,110 @@
                 "type",
                 "plugin_id",
                 "entries"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "resource_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_resource_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "resource_id",
+                "items"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "item_id": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "resource_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_resource_value",
+                  "type": "string"
+                },
+                "value": true
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "resource_id",
+                "item_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "item_id": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "resource_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_resource_put",
+                  "type": "string"
+                },
+                "value": true
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "resource_id",
+                "item_id",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "existed": {
+                  "type": "boolean"
+                },
+                "item_id": {
+                  "type": "string"
+                },
+                "plugin_id": {
+                  "type": "string"
+                },
+                "resource_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "plugin_resource_deleted",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "plugin_id",
+                "resource_id",
+                "item_id",
+                "existed"
               ],
               "type": "object"
             },

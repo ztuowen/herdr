@@ -333,6 +333,21 @@ schema label owned by the plugin. `storage_prefix` must start with
 `resources/` and end with `/`. Herdr validates ids and storage plumbing only;
 the plugin owns each resource value's JSON shape, migrations, and cleanup.
 
+Use the generic resource API to address items by collection and item id instead
+of by raw storage key:
+
+```bash
+herdr plugin resource put --plugin example.board --resource cards card-1 '{"uuid":"card-1","title":"Card"}'
+herdr plugin resource get --plugin example.board --resource cards card-1
+herdr plugin resource list --plugin example.board --resource cards
+herdr plugin resource delete --plugin example.board --resource cards card-1
+```
+
+Resource item ids use the same local id rules as actions and panes: ASCII
+letters, digits, colon, underscore, and hyphen. Herdr maps each item to
+`{storage_prefix}{item_id}` and returns list results keyed by item id. It does
+not inspect the JSON against `kind`.
+
 ## Storage
 
 Plugins can store opaque JSON values through Herdr's plugin storage API:

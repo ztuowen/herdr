@@ -720,6 +720,41 @@ fn plugin_command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("resource")
+                .about("Read and write plugin resources")
+                .visible_alias("resources")
+                .subcommand(
+                    Command::new("list")
+                        .about("List plugin resource items")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("resource", "ID")),
+                )
+                .subcommand(
+                    Command::new("get")
+                        .about("Read a plugin resource item")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("resource", "ID"))
+                        .arg(required("item_id", "ITEM_ID")),
+                )
+                .subcommand(
+                    Command::new("put")
+                        .visible_alias("set")
+                        .about("Write a plugin resource JSON item")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("resource", "ID"))
+                        .arg(required("item_id", "ITEM_ID"))
+                        .arg(required("value", "JSON")),
+                )
+                .subcommand(
+                    Command::new("delete")
+                        .visible_alias("remove")
+                        .about("Delete a plugin resource item")
+                        .arg(option("plugin", "ID"))
+                        .arg(option("resource", "ID"))
+                        .arg(required("item_id", "ITEM_ID")),
+                ),
+        )
+        .subcommand(
             Command::new("pane")
                 .about("Manage plugin-owned panes")
                 .subcommand(

@@ -1176,3 +1176,48 @@ fn plugin_storage_requests_round_trip() {
     let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, response);
 }
+
+#[test]
+fn plugin_resource_requests_round_trip() {
+    let put = Request {
+        id: "req_plugin_resource_put".into(),
+        method: Method::PluginResourcePut(PluginResourcePutParams {
+            plugin_id: "example.board".into(),
+            resource_id: "cards".into(),
+            item_id: "card-1".into(),
+            value: serde_json::json!({ "uuid": "card-1", "title": "Card" }),
+        }),
+    };
+    let json = serde_json::to_value(&put).unwrap();
+    assert_eq!(json["method"], "plugin.resource.put");
+    assert_eq!(json["params"]["resource_id"], "cards");
+    assert_eq!(json["params"]["item_id"], "card-1");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, put);
+
+    let list = Request {
+        id: "req_plugin_resource_list".into(),
+        method: Method::PluginResourceList(PluginResourceListParams {
+            plugin_id: "example.board".into(),
+            resource_id: "cards".into(),
+        }),
+    };
+    let json = serde_json::to_value(&list).unwrap();
+    assert_eq!(json["method"], "plugin.resource.list");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, list);
+
+    let response = SuccessResponse {
+        id: "req_plugin_resource_get".into(),
+        result: ResponseResult::PluginResourceValue {
+            plugin_id: "example.board".into(),
+            resource_id: "cards".into(),
+            item_id: "card-1".into(),
+            value: Some(serde_json::json!({ "uuid": "card-1" })),
+        },
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert!(json.contains("\"type\":\"plugin_resource_value\""));
+    let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, response);
+}

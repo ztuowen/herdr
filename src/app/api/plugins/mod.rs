@@ -2,6 +2,7 @@ mod context;
 mod env;
 mod manifest;
 mod panes;
+mod resources;
 mod runtime;
 mod storage;
 
@@ -660,9 +661,10 @@ fn manifest_actions(
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginApiVersion, PluginCapability, PluginSourceInfo, PluginSourceKind,
-        PluginStorageDeleteParams, PluginStorageGetParams, PluginStorageListParams,
-        PluginStorageSetParams, Request, SuccessResponse,
+        Method, PluginApiVersion, PluginCapability, PluginResourceDeleteParams,
+        PluginResourceGetParams, PluginResourceListParams, PluginResourcePutParams,
+        PluginSourceInfo, PluginSourceKind, PluginStorageDeleteParams, PluginStorageGetParams,
+        PluginStorageListParams, PluginStorageSetParams, Request, SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1952,6 +1954,203 @@ platforms = ["linux", "macos", "windows"]
         });
         let value: serde_json::Value = serde_json::from_str(&set).unwrap();
         assert_eq!(value["error"]["code"], "plugin_capability_required");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_resources_round_trip_opaque_json_items() {
+        let root = unique_temp_path("plugin-resources");
+        let xdg_home = unique_temp_path("plugin-resources-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.resources"
+name = "Resources"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+        let state_dir = super::env::plugin_state_dir("example.resources");
+        let _ = std::fs::remove_dir_all(&state_dir);
+        link_manifest(&mut app, &root);
+
+        let put = app.handle_api_request(Request {
+            id: "resource-put".into(),
+            method: Method::PluginResourcePut(PluginResourcePutParams {
+                plugin_id: "example.resources".into(),
+                resource_id: "cards".into(),
+                item_id: "card-1".into(),
+                value: serde_json::json!({ "uuid": "card-1", "title": "Card" }),
+            }),
+        });
+        let ResponseResult::PluginResourcePut { value, .. } = response_result(&put) else {
+            panic!("expected plugin resource put: {put}");
+        };
+        assert_eq!(value["uuid"], "card-1");
+
+        let get = app.handle_api_request(Request {
+            id: "resource-get".into(),
+            method: Method::PluginResourceGet(PluginResourceGetParams {
+                plugin_id: "example.resources".into(),
+                resource_id: "cards".into(),
+                item_id: "card-1".into(),
+            }),
+        });
+        let ResponseResult::PluginResourceValue { value, .. } = response_result(&get) else {
+            panic!("expected plugin resource value: {get}");
+        };
+        assert_eq!(value.unwrap()["title"], "Card");
+
+        let list = app.handle_api_request(Request {
+            id: "resource-list".into(),
+            method: Method::PluginResourceList(PluginResourceListParams {
+                plugin_id: "example.resources".into(),
+                resource_id: "cards".into(),
+            }),
+        });
+        let ResponseResult::PluginResourceList { items, .. } = response_result(&list) else {
+            panic!("expected plugin resource list: {list}");
+        };
+        assert!(items.contains_key("card-1"));
+        assert!(!items.contains_key("resources/cards/card-1"));
+
+        let delete = app.handle_api_request(Request {
+            id: "resource-delete".into(),
+            method: Method::PluginResourceDelete(PluginResourceDeleteParams {
+                plugin_id: "example.resources".into(),
+                resource_id: "cards".into(),
+                item_id: "card-1".into(),
+            }),
+        });
+        let ResponseResult::PluginResourceDeleted { existed, .. } = response_result(&delete) else {
+            panic!("expected plugin resource delete: {delete}");
+        };
+        assert!(existed);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(state_dir);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_resources_require_v2_resources_capability() {
+        let root = unique_temp_path("plugin-resources-missing-capability");
+        let xdg_home = unique_temp_path("plugin-resources-missing-capability-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.resource-missing-cap"
+name = "Resource Missing Capability"
+version = "0.1.0"
+api_version = 2
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let list = app.handle_api_request(Request {
+            id: "resource-list".into(),
+            method: Method::PluginResourceList(PluginResourceListParams {
+                plugin_id: "example.resource-missing-cap".into(),
+                resource_id: "cards".into(),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_capability_required");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn plugin_resources_reject_invalid_item_ids() {
+        let root = unique_temp_path("plugin-resources-invalid-item");
+        let xdg_home = unique_temp_path("plugin-resources-invalid-item-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+
+        let mut app = test_app();
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.resource-invalid-item"
+name = "Resource Invalid Item"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let put = app.handle_api_request(Request {
+            id: "resource-put".into(),
+            method: Method::PluginResourcePut(PluginResourcePutParams {
+                plugin_id: "example.resource-invalid-item".into(),
+                resource_id: "cards".into(),
+                item_id: "bad/item".into(),
+                value: serde_json::json!({ "ok": true }),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&put).unwrap();
+        assert_eq!(value["error"]["code"], "invalid_plugin_resource_item_id");
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);

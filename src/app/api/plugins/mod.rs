@@ -183,6 +183,7 @@ impl App {
             None,
             action.command.clone(),
             &context,
+            params.payload,
             None,
         ) {
             Ok(log) => log,
@@ -221,6 +222,7 @@ impl App {
             None,
             action.command,
             &context,
+            None,
             None,
         )
         .map(|_| ())
@@ -272,6 +274,7 @@ impl App {
             None,
             action.command,
             &context,
+            None,
             None,
         )
         .map(|_| true)
@@ -1176,6 +1179,125 @@ storage_prefix = "resources/cards/"
     }
 
     #[test]
+    fn v2_manifest_declares_client_speech_hooks() {
+        let root = unique_temp_path("plugin-v2-client-speech");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-client-speech"
+name = "V2 Client Speech"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions", "client-speech"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "start-dictation"
+title = "Start dictation"
+command = ["speech-plugin", "start"]
+
+[[actions]]
+id = "stop-dictation"
+title = "Stop dictation"
+command = ["speech-plugin", "stop"]
+
+[[actions]]
+id = "transform-transcript"
+title = "Transform transcript"
+command = ["speech-plugin", "transform"]
+
+[[actions]]
+id = "insert-transcript"
+title = "Insert transcript"
+command = ["speech-plugin", "insert"]
+
+[client_speech]
+start_dictation = "start-dictation"
+stop_dictation = "stop-dictation"
+transform_transcript = "transform-transcript"
+insert_transcript = "insert-transcript"
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        assert_eq!(plugin.api_version, PluginApiVersion::V2);
+        assert_eq!(
+            plugin.capabilities,
+            vec![PluginCapability::Actions, PluginCapability::ClientSpeech]
+        );
+        assert_eq!(
+            plugin.client_speech,
+            crate::api::schema::PluginManifestClientSpeech {
+                start_dictation: Some("start-dictation".into()),
+                stop_dictation: Some("stop-dictation".into()),
+                transform_transcript: Some("transform-transcript".into()),
+                insert_transcript: Some("insert-transcript".into()),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_client_speech_without_capability() {
+        let root = unique_temp_path("plugin-v2-client-speech-missing-capability");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-client-speech-missing-cap"
+name = "V2 Missing Client Speech Capability"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "transform-transcript"
+title = "Transform transcript"
+command = ["speech-plugin", "transform"]
+
+[client_speech]
+transform_transcript = "transform-transcript"
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(result, Err(("plugin_capability_required", _))));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_client_speech_unknown_action() {
+        let root = unique_temp_path("plugin-v2-client-speech-unknown-action");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-client-speech-unknown-action"
+name = "V2 Client Speech Unknown Action"
+version = "0.1.0"
+api_version = 2
+capabilities = ["client-speech"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[client_speech]
+transform_transcript = "missing"
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        assert!(matches!(
+            result,
+            Err(("invalid_plugin_client_speech_action", _))
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn v2_manifest_rejects_resources_without_capability() {
         let root = unique_temp_path("plugin-v2-resource-missing-capability");
         write_manifest_content(
@@ -1851,6 +1973,7 @@ command = ["sh", "-c", "sleep 1"]
                     clicked_url: None,
                     link_handler_id: None,
                 }),
+                payload: None,
             }),
         });
         let ResponseResult::PluginActionInvoked {
@@ -2387,6 +2510,7 @@ platforms = ["linux", "macos", "windows"]
                 plugin_id: Some("example.worktree-bootstrap".into()),
                 action_id: "bootstrap".into(),
                 context: None,
+                payload: None,
             }),
         });
         let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
@@ -2438,6 +2562,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                 plugin_id: Some("example.runner".into()),
                 action_id: "run".into(),
                 context: None,
+                payload: None,
             }),
         });
         let ResponseResult::PluginActionInvoked { log, .. } = response_result(&invoke) else {
@@ -2479,6 +2604,122 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
 
     #[cfg(unix)]
     #[test]
+    fn manifest_action_invoke_injects_payload_env() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-action-payload");
+        let xdg_home = unique_temp_path("plugin-action-payload-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.action-payload"
+name = "Action Payload"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "transform"
+title = "Transform"
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_PAYLOAD_JSON\""]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let invoke = app.handle_api_request(Request {
+            id: "invoke-payload".into(),
+            method: Method::PluginActionInvoke(PluginActionInvokeParams {
+                plugin_id: Some("example.action-payload".into()),
+                action_id: "transform".into(),
+                context: None,
+                payload: Some(serde_json::json!({
+                    "transcript": "open the issue",
+                    "mode": "dictation"
+                })),
+            }),
+        });
+        let ResponseResult::PluginActionInvoked { log, .. } = response_result(&invoke) else {
+            panic!("expected plugin action invocation: {invoke}");
+        };
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            app.drain_all_internal_events();
+            if app.state.plugin_command_logs.iter().any(|entry| {
+                entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let finished = app
+            .state
+            .plugin_command_logs
+            .iter()
+            .find(|entry| entry.log_id == log.log_id)
+            .expect("log should exist");
+        assert_eq!(finished.status, PluginCommandStatus::Succeeded);
+        let payload: serde_json::Value =
+            serde_json::from_str(finished.stdout.as_deref().unwrap_or("")).unwrap();
+        assert_eq!(payload["transcript"], "open the issue");
+        assert_eq!(payload["mode"], "dictation");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn manifest_action_invoke_rejects_oversized_payload() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-action-payload-large");
+        let xdg_home = unique_temp_path("plugin-action-payload-large-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_manifest(&root);
+        link_manifest(&mut app, &root);
+
+        let invoke = app.handle_api_request(Request {
+            id: "invoke-large-payload".into(),
+            method: Method::PluginActionInvoke(PluginActionInvokeParams {
+                plugin_id: Some("example.worktree-bootstrap".into()),
+                action_id: "bootstrap".into(),
+                context: None,
+                payload: Some(serde_json::Value::String(
+                    "x".repeat(super::runtime::PLUGIN_ACTION_PAYLOAD_MAX_BYTES),
+                )),
+            }),
+        });
+        let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
+        assert_eq!(value["error"]["code"], "plugin_payload_too_large");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn manifest_action_invoke_injects_plugin_paths() {
         let mut app = test_app();
         let root = unique_temp_path("plugin-action-path-env");
@@ -2505,6 +2746,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PLUG
                 plugin_id: Some("example.action-paths".into()),
                 action_id: "run".into(),
                 context: None,
+                payload: None,
             }),
         });
         let ResponseResult::PluginActionInvoked { log, .. } = response_result(&invoke) else {
@@ -2671,6 +2913,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
                 plugin_id: Some("example.worktree-bootstrap".into()),
                 action_id: "bootstrap".into(),
                 context: None,
+                payload: None,
             }),
         });
         let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
@@ -3104,6 +3347,7 @@ command = ["show-ctx"]
                 plugin_id: Some("example.context".into()),
                 action_id: "show".into(),
                 context: None,
+                payload: None,
             }),
         });
 
@@ -3166,6 +3410,7 @@ command = ["show-ctx"]
                 plugin_id: Some("example.worktree-bootstrap".into()),
                 action_id: "bootstrap".into(),
                 context: None,
+                payload: None,
             }),
         });
         let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
@@ -3583,6 +3828,7 @@ command = ["act"]
                 plugin_id: Some("example.reject".into()),
                 action_id: "act".into(),
                 context: None,
+                payload: None,
             }),
         });
         let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
@@ -3649,6 +3895,7 @@ command = ["act"]
                 plugin_id: Some("example.override".into()),
                 action_id: "act".into(),
                 context: None,
+                payload: None,
             }),
         });
         let value: serde_json::Value = serde_json::from_str(&invoke).unwrap();
@@ -3709,6 +3956,7 @@ command = ["act"]
                 plugin_id: Some("example.nodecl".into()),
                 action_id: "act".into(),
                 context: None,
+                payload: None,
             }),
         });
         assert!(

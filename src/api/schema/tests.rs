@@ -813,6 +813,7 @@ fn plugin_link_list_unlink_round_trip() {
             platforms: None,
         }],
         resources: vec![],
+        client_speech: PluginManifestClientSpeech::default(),
         source: Default::default(),
         warnings: vec![],
     };
@@ -1107,10 +1108,12 @@ fn plugin_action_list_and_invoke_round_trips() {
             plugin_id: Some("example.issue-flow".into()),
             action_id: "assign-issue".into(),
             context: None,
+            payload: Some(serde_json::json!({ "issue": 123 })),
         }),
     };
     let json = serde_json::to_value(&invoke).unwrap();
     assert_eq!(json["method"], "plugin.action.invoke");
+    assert_eq!(json["params"]["payload"]["issue"], 123);
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, invoke);
 

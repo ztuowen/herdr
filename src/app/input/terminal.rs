@@ -295,6 +295,7 @@ mod tests {
                     platforms: None,
                 }],
                 resources: Vec::new(),
+                client_speech: crate::api::schema::PluginManifestClientSpeech::default(),
                 source: crate::api::schema::PluginSourceInfo::default(),
                 warnings: Vec::new(),
             },

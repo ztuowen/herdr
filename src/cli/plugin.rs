@@ -425,10 +425,13 @@ fn plugin_action_list(args: &[String]) -> std::io::Result<i32> {
 
 fn plugin_action_invoke(args: &[String]) -> std::io::Result<i32> {
     let Some(action_id) = args.first() else {
-        eprintln!("usage: herdr plugin action invoke <action_id> [--plugin ID]");
+        eprintln!(
+            "usage: herdr plugin action invoke <action_id> [--plugin ID] [--payload <json|->]"
+        );
         return Ok(2);
     };
     let mut plugin_id = None;
+    let mut payload = None;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -437,6 +440,18 @@ fn plugin_action_invoke(args: &[String]) -> std::io::Result<i32> {
                     return Ok(2);
                 };
                 plugin_id = Some(value);
+            }
+            "--payload" => {
+                let Some(value) = required_value(args, &mut index, "--payload") else {
+                    return Ok(2);
+                };
+                payload = match parse_plugin_storage_json_value(&value) {
+                    Ok(value) => Some(value),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(2);
+                    }
+                };
             }
             other => {
                 eprintln!("unknown option: {other}");
@@ -465,6 +480,7 @@ fn plugin_action_invoke(args: &[String]) -> std::io::Result<i32> {
             clicked_url: None,
             link_handler_id: None,
         }),
+        payload,
     }))
 }
 
@@ -1979,7 +1995,7 @@ fn print_plugin_help() {
 fn print_plugin_action_help() {
     eprintln!("herdr plugin action commands:");
     eprintln!("  herdr plugin action list [--plugin ID]");
-    eprintln!("  herdr plugin action invoke <action_id> [--plugin ID]");
+    eprintln!("  herdr plugin action invoke <action_id> [--plugin ID] [--payload <json|->]");
 }
 
 fn print_plugin_storage_help() {
@@ -2046,6 +2062,7 @@ mod tests {
             panes: vec![],
             link_handlers: vec![],
             resources: vec![],
+            client_speech: crate::api::schema::PluginManifestClientSpeech::default(),
             source: PluginSourceInfo {
                 kind: PluginSourceKind::Github,
                 owner: Some(owner.to_string()),

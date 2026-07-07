@@ -1,8 +1,8 @@
 use crate::api::schema::{
     InstalledPluginInfo, PluginApiVersion, PluginCapability, PluginManifestAction,
-    PluginManifestBuild, PluginManifestEventHook, PluginManifestLinkHandler, PluginManifestPane,
-    PluginManifestResource, PluginPanePlacement, PluginPlatform, PluginSourceInfo,
-    PluginSourceKind,
+    PluginManifestBuild, PluginManifestClientSpeech, PluginManifestEventHook,
+    PluginManifestLinkHandler, PluginManifestPane, PluginManifestResource, PluginPanePlacement,
+    PluginPlatform, PluginSourceInfo, PluginSourceKind,
 };
 
 const PLUGIN_ID_MAX_CHARS: usize = 120;
@@ -37,6 +37,8 @@ struct RawPluginManifest {
     link_handlers: Vec<RawPluginManifestLinkHandler>,
     #[serde(default)]
     resources: Vec<RawPluginManifestResource>,
+    #[serde(default)]
+    client_speech: RawPluginManifestClientSpeech,
 }
 
 #[derive(serde::Deserialize)]
@@ -98,6 +100,18 @@ struct RawPluginManifestResource {
     title: String,
     kind: String,
     storage_prefix: String,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct RawPluginManifestClientSpeech {
+    #[serde(default)]
+    start_dictation: Option<String>,
+    #[serde(default)]
+    stop_dictation: Option<String>,
+    #[serde(default)]
+    transform_transcript: Option<String>,
+    #[serde(default)]
+    insert_transcript: Option<String>,
 }
 
 /// Raw string platform value from the manifest, validated before conversion.
@@ -193,6 +207,7 @@ pub(crate) fn load_plugin_manifest(
         .collect::<Result<Vec<_>, _>>()?;
     reject_duplicate_link_handler_ids(&link_handlers)?;
     validate_link_handler_actions(&link_handlers, &actions)?;
+    let client_speech = normalize_manifest_client_speech(raw.client_speech, &actions)?;
     let mut resources = raw
         .resources
         .into_iter()
@@ -208,6 +223,7 @@ pub(crate) fn load_plugin_manifest(
         &panes,
         &link_handlers,
         &resources,
+        &client_speech,
     )?;
 
     let mut warnings = validate_event_names(&events);
@@ -233,6 +249,7 @@ pub(crate) fn load_plugin_manifest(
         panes,
         link_handlers,
         resources,
+        client_speech,
         source: Default::default(),
         warnings,
     })
@@ -439,6 +456,57 @@ fn normalize_manifest_resource(
     })
 }
 
+fn normalize_manifest_client_speech(
+    speech: RawPluginManifestClientSpeech,
+    actions: &[PluginManifestAction],
+) -> Result<PluginManifestClientSpeech, (&'static str, String)> {
+    Ok(PluginManifestClientSpeech {
+        start_dictation: normalize_client_speech_action(
+            speech.start_dictation,
+            "start_dictation",
+            actions,
+        )?,
+        stop_dictation: normalize_client_speech_action(
+            speech.stop_dictation,
+            "stop_dictation",
+            actions,
+        )?,
+        transform_transcript: normalize_client_speech_action(
+            speech.transform_transcript,
+            "transform_transcript",
+            actions,
+        )?,
+        insert_transcript: normalize_client_speech_action(
+            speech.insert_transcript,
+            "insert_transcript",
+            actions,
+        )?,
+    })
+}
+
+fn normalize_client_speech_action(
+    value: Option<String>,
+    field: &str,
+    actions: &[PluginManifestAction],
+) -> Result<Option<String>, (&'static str, String)> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let action_id = normalize_action_id(&value).ok_or_else(|| {
+        (
+            "invalid_plugin_client_speech_action",
+            format!("client_speech.{field} references an invalid action id"),
+        )
+    })?;
+    if !actions.iter().any(|action| action.id == action_id) {
+        return Err((
+            "invalid_plugin_client_speech_action",
+            format!("client_speech.{field} references unknown action '{action_id}'"),
+        ));
+    }
+    Ok(Some(action_id))
+}
+
 fn normalize_capabilities(
     api_version: PluginApiVersion,
     raw: Vec<String>,
@@ -447,6 +515,7 @@ fn normalize_capabilities(
     panes: &[PluginManifestPane],
     link_handlers: &[PluginManifestLinkHandler],
     resources: &[PluginManifestResource],
+    client_speech: &PluginManifestClientSpeech,
 ) -> Result<Vec<PluginCapability>, (&'static str, String)> {
     let mut capabilities = if raw.is_empty() && api_version == PluginApiVersion::V1 {
         inferred_v1_capabilities(actions, events, panes, link_handlers, resources)
@@ -462,6 +531,12 @@ fn normalize_capabilities(
         return Err((
             "plugin_api_version_required",
             "[[resources]] requires api_version = 2".to_string(),
+        ));
+    }
+    if api_version == PluginApiVersion::V1 && !client_speech.is_empty() {
+        return Err((
+            "plugin_api_version_required",
+            "[client_speech] requires api_version = 2".to_string(),
         ));
     }
     if api_version == PluginApiVersion::V2 {
@@ -484,6 +559,12 @@ fn normalize_capabilities(
             PluginCapability::Resources,
             resources,
             "resources",
+        )?;
+        require_capability_for_item(
+            &capabilities,
+            PluginCapability::ClientSpeech,
+            !client_speech.is_empty(),
+            "client_speech",
         )?;
     }
 
@@ -540,6 +621,24 @@ fn require_capability_for_section<T>(
     section: &str,
 ) -> Result<(), (&'static str, String)> {
     if !items.is_empty() && !capabilities.contains(&required) {
+        return Err((
+            "plugin_capability_required",
+            format!(
+                "{section} requires capability '{}'",
+                capability_name(required)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn require_capability_for_item(
+    capabilities: &[PluginCapability],
+    required: PluginCapability,
+    present: bool,
+    section: &str,
+) -> Result<(), (&'static str, String)> {
+    if present && !capabilities.contains(&required) {
         return Err((
             "plugin_capability_required",
             format!(

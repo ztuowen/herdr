@@ -2932,6 +2932,7 @@
                 }
               ]
             },
+            "payload": true,
             "plugin_id": {
               "type": [
                 "string",
@@ -6969,6 +6970,9 @@
               },
               "type": "array"
             },
+            "client_speech": {
+              "$ref": "#/schemas/success_response/$defs/PluginManifestClientSpeech"
+            },
             "description": {
               "type": [
                 "string",
@@ -8268,6 +8272,35 @@
           "required": [
             "command"
           ],
+          "type": "object"
+        },
+        "PluginManifestClientSpeech": {
+          "properties": {
+            "insert_transcript": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start_dictation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stop_dictation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "transform_transcript": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           "type": "object"
         },
         "PluginManifestEventHook": {

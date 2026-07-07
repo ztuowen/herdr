@@ -63,6 +63,8 @@ pub struct InstalledPluginInfo {
     pub link_handlers: Vec<PluginManifestLinkHandler>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<PluginManifestResource>,
+    #[serde(default, skip_serializing_if = "PluginManifestClientSpeech::is_empty")]
+    pub client_speech: PluginManifestClientSpeech,
     #[serde(default)]
     pub source: PluginSourceInfo,
     /// Warnings collected at link time or on registry load (e.g. unknown event names,
@@ -327,6 +329,27 @@ pub struct PluginManifestResource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+pub struct PluginManifestClientSpeech {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_dictation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_dictation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform_transcript: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insert_transcript: Option<String>,
+}
+
+impl PluginManifestClientSpeech {
+    pub fn is_empty(&self) -> bool {
+        self.start_dictation.is_none()
+            && self.stop_dictation.is_none()
+            && self.transform_transcript.is_none()
+            && self.insert_transcript.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct PluginActionListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
@@ -405,13 +428,15 @@ pub struct PluginEventEmitParams {
     pub payload: serde_json::Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginActionInvokeParams {
     pub action_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<PluginInvocationContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

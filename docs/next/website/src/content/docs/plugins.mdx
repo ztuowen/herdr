@@ -263,6 +263,10 @@ for common ids, or parse the context JSON for the full shape.
 `HERDR_PLUGIN_CORRELATION_ID` carries the same correlation id as the context
 JSON when Herdr has one, and plugin command logs expose it for debugging related
 action and event work.
+When an action invocation includes a generic JSON payload, Herdr exposes it as
+`HERDR_PLUGIN_PAYLOAD_JSON`. Payloads are transient command input, not plugin
+storage; keep durable state in plugin storage/resources and keep secrets in
+plugin config files or OS credential stores.
 
 Use `HERDR_BIN_PATH` when a plugin needs to call Herdr portably from Node,
 PowerShell, Bash, or another runtime. The raw socket transport behind
@@ -356,6 +360,32 @@ Resource item ids use the same local id rules as actions and panes: ASCII
 letters, digits, colon, underscore, and hyphen. Herdr maps each item to
 `{storage_prefix}{item_id}` and returns list results keyed by item id. It does
 not inspect the JSON against `kind`.
+
+## Client Speech
+
+Plugin v2 can declare client speech hooks without moving microphone capture,
+hotkeys, device selection, provider credentials, or raw audio into server state:
+
+```toml
+api_version = 2
+capabilities = ["actions", "client-speech"]
+
+[[actions]]
+id = "transform-transcript"
+title = "Transform transcript"
+command = ["speech-plugin", "transform"]
+
+[client_speech]
+transform_transcript = "transform-transcript"
+```
+
+The `client_speech` table may reference action ids for `start_dictation`,
+`stop_dictation`, `transform_transcript`, and `insert_transcript`. Herdr
+validates that each referenced action exists and that the manifest declares the
+`client-speech` capability. Client adapters use ordinary `plugin.action.invoke`
+calls for these hooks and can pass transcript text as a transient action
+payload. Herdr does not add `speech.*` socket methods, persist raw audio, or
+store speech provider credentials in plugin payloads.
 
 ## Events
 

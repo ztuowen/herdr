@@ -130,6 +130,7 @@ mod tests {
             panes: vec![],
             link_handlers: vec![],
             resources: vec![],
+            client_speech: crate::api::schema::PluginManifestClientSpeech::default(),
             source: Default::default(),
             warnings: vec![],
         }
@@ -217,6 +218,7 @@ mod tests {
                 panes: vec![],
                 link_handlers: vec![],
                 resources: vec![],
+                client_speech: crate::api::schema::PluginManifestClientSpeech::default(),
                 source: Default::default(),
                 warnings: vec![],
             })

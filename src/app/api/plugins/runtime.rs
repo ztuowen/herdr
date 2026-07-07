@@ -9,6 +9,7 @@ use crate::api::schema::{
 use crate::app::App;
 
 const PLUGIN_COMMAND_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+pub(super) const PLUGIN_ACTION_PAYLOAD_MAX_BYTES: usize = 256 * 1024;
 pub(super) const MAX_PLUGIN_COMMANDS_IN_FLIGHT: usize = 32;
 const PLUGIN_COMMAND_LOG_LIMIT: usize = 200;
 
@@ -20,6 +21,7 @@ impl App {
         event: Option<String>,
         command: Vec<String>,
         context: &PluginInvocationContext,
+        payload: Option<serde_json::Value>,
         event_json: Option<String>,
     ) -> Result<PluginCommandLogInfo, (&'static str, String)> {
         let Some(program) = command.first().cloned() else {
@@ -31,6 +33,22 @@ impl App {
         let args = command.iter().skip(1).cloned().collect::<Vec<_>>();
         let context_json = serde_json::to_string(context)
             .map_err(|err| ("invalid_plugin_context", err.to_string()))?;
+        let payload_json = match payload {
+            Some(payload) => {
+                let json = serde_json::to_string(&payload)
+                    .map_err(|err| ("invalid_plugin_payload", err.to_string()))?;
+                if json.len() > PLUGIN_ACTION_PAYLOAD_MAX_BYTES {
+                    return Err((
+                        "plugin_payload_too_large",
+                        format!(
+                            "plugin action payload exceeds {PLUGIN_ACTION_PAYLOAD_MAX_BYTES} bytes"
+                        ),
+                    ));
+                }
+                Some(json)
+            }
+            None => None,
+        };
         super::env::ensure_plugin_user_dirs(plugin)
             .map_err(|err| ("plugin_user_dir_create_failed", err.to_string()))?;
         let log_id = format!("plugin-log-{}", self.state.next_plugin_command_log_id);
@@ -67,6 +85,9 @@ impl App {
         }
         if let Some(event_json) = event_json {
             env.push(("HERDR_PLUGIN_EVENT_JSON".to_string(), event_json));
+        }
+        if let Some(payload_json) = payload_json {
+            env.push(("HERDR_PLUGIN_PAYLOAD_JSON".to_string(), payload_json));
         }
         if let Some(workspace_id) = context.workspace_id.as_ref() {
             env.push(("HERDR_WORKSPACE_ID".to_string(), workspace_id.clone()));
@@ -229,6 +250,7 @@ impl App {
                     Some(event_name.to_string()),
                     hook.command.clone(),
                     &context,
+                    None,
                     event_json.clone(),
                 );
             }

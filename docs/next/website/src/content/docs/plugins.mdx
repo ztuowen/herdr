@@ -260,6 +260,9 @@ file format and lifecycle.
 agent, selected text, clicked URL, and link handler fields when they are
 available for that invocation. Shell plugins can read the individual env vars
 for common ids, or parse the context JSON for the full shape.
+`HERDR_PLUGIN_CORRELATION_ID` carries the same correlation id as the context
+JSON when Herdr has one, and plugin command logs expose it for debugging related
+action and event work.
 
 Use `HERDR_BIN_PATH` when a plugin needs to call Herdr portably from Node,
 PowerShell, Bash, or another runtime. The raw socket transport behind
@@ -275,6 +278,12 @@ Manifest pane `placement` defaults to `overlay`, which opens a temporary zoomed
 overlay over the active pane and restores the previous focus and zoom when it
 closes. A `plugin.pane.open` request can override the manifest placement with
 `overlay`, `split`, `tab`, or `zoomed`.
+
+Manifest pane `restore` defaults to `never`. Use `restore = "session"` for a
+pane that should be eligible for session restore, or `restore = "workspace"` for
+a pane tied to a workspace-level plugin UI. The current host records and reports
+the restore policy in `PluginPaneInfo`; plugin pane restore behavior can deepen
+from that explicit contract without changing plugin manifests.
 
 Plugin panes are normal Herdr panes after they open. Plugins can call standard
 pane APIs such as `pane.move`, `pane.swap`, `pane.resize`, and `pane.zoom`

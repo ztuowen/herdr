@@ -14,6 +14,7 @@ pub(crate) type InstalledPluginRegistry =
 pub(crate) struct PluginPaneRecord {
     pub plugin_id: String,
     pub entrypoint: String,
+    pub restore: crate::api::schema::PluginPaneRestore,
 }
 
 // ---------------------------------------------------------------------------

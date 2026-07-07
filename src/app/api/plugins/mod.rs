@@ -421,6 +421,7 @@ impl App {
                 plugin_pane: PluginPaneInfo {
                     plugin_id: record.plugin_id,
                     entrypoint: record.entrypoint,
+                    restore: record.restore,
                     pane,
                 },
             },
@@ -1088,6 +1089,34 @@ command = ["echo", "b"]
     }
 
     #[test]
+    fn pane_manifest_parses_restore_policy() {
+        let root = unique_temp_path("plugin-pane-restore");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.pane-restore"
+name = "Pane Restore"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[panes]]
+id = "board"
+title = "Board"
+restore = "workspace"
+command = ["echo", "board"]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        assert_eq!(
+            plugin.panes[0].restore,
+            crate::api::schema::PluginPaneRestore::Workspace
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn smoke_fixture_manifest_loads() {
         let plugin = load_plugin_manifest("tests/fixtures/plugin-smoke", true)
             .expect("smoke fixture should load");
@@ -1104,6 +1133,10 @@ command = ["echo", "b"]
         assert_eq!(plugin.actions.len(), 1);
         assert_eq!(plugin.events.len(), 1);
         assert_eq!(plugin.panes.len(), 1);
+        assert_eq!(
+            plugin.panes[0].restore,
+            crate::api::schema::PluginPaneRestore::Never
+        );
         assert!(plugin.warnings.is_empty());
     }
 
@@ -1348,7 +1381,8 @@ platforms = ["linux", "macos"]
 [[panes]]
 id = "board"
 title = "Plugin Board"
-command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_BIN_PATH\" \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
+restore = "workspace"
+command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_PLUGIN_CORRELATION_ID\" \"$HERDR_BIN_PATH\" \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
 "#,
                 capture.display()
             ),
@@ -1377,6 +1411,10 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_
                         "{\"spoofed\":true}".to_string(),
                     ),
                     (
+                        "HERDR_PLUGIN_CORRELATION_ID".to_string(),
+                        "spoofed-correlation".to_string(),
+                    ),
+                    (
                         "HERDR_BIN_PATH".to_string(),
                         "/tmp/spoofed-herdr".to_string(),
                     ),
@@ -1388,6 +1426,10 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_
         };
         assert_eq!(plugin_pane.plugin_id, "example.pane");
         assert_eq!(plugin_pane.entrypoint, "board");
+        assert_eq!(
+            plugin_pane.restore,
+            crate::api::schema::PluginPaneRestore::Workspace
+        );
         assert_eq!(plugin_pane.pane.label.as_deref(), Some("Plugin Board"));
         let Some((_, opened_pane_id)) = app.parse_pane_id(&plugin_pane.pane.pane_id) else {
             panic!("opened pane id should parse");
@@ -1401,6 +1443,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_
         assert_eq!(lines.next(), Some("board"));
         assert_eq!(lines.next(), Some(plugin_pane.pane.workspace_id.as_str()));
         assert_eq!(lines.next(), Some(plugin_pane.pane.pane_id.as_str()));
+        assert_eq!(lines.next(), Some("plugin-pane"));
         let bin_path = lines.next().expect("bin path");
         assert_ne!(bin_path, "/tmp/spoofed-herdr");
         assert_eq!(
@@ -1825,6 +1868,7 @@ command = ["sh", "-c", "sleep 1"]
         assert_eq!(action.command, ["bun", "run", "bootstrap.ts"]);
         assert_eq!(log.plugin_id, "example.worktree-bootstrap");
         assert_eq!(log.action_id.as_deref(), Some("bootstrap"));
+        assert_eq!(log.correlation_id.as_deref(), Some("external-correlation"));
         assert_eq!(context.workspace_id.as_deref(), Some("1"));
         assert_eq!(context.invocation_source.as_deref(), Some("test"));
         assert_eq!(
@@ -3246,6 +3290,7 @@ command = ["sh", "-c", "echo ok"]
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.worktree-bootstrap".into(),
                 entrypoint: "main".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
         app.state.plugin_panes.insert(
@@ -3253,6 +3298,7 @@ command = ["sh", "-c", "echo ok"]
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.worktree-bootstrap".into(),
                 entrypoint: "side".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
         app.state.plugin_panes.insert(
@@ -3260,6 +3306,7 @@ command = ["sh", "-c", "echo ok"]
             crate::app::state::PluginPaneRecord {
                 plugin_id: "other.plugin".into(),
                 entrypoint: "other".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 
@@ -3297,6 +3344,7 @@ command = ["sh", "-c", "echo ok"]
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 
@@ -3343,6 +3391,7 @@ command = ["sh", "-c", "echo ok"]
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 

@@ -219,6 +219,12 @@ impl App {
             entrypoint.to_string(),
         ));
         env.push(("HERDR_PLUGIN_CONTEXT_JSON".to_string(), context_json));
+        if let Some(correlation_id) = context.correlation_id.as_ref() {
+            env.push((
+                "HERDR_PLUGIN_CORRELATION_ID".to_string(),
+                correlation_id.clone(),
+            ));
+        }
         if let Ok(current_exe) = std::env::current_exe() {
             env.push((
                 "HERDR_BIN_PATH".to_string(),
@@ -252,6 +258,7 @@ impl App {
             crate::app::state::PluginPaneRecord {
                 plugin_id: plugin_id.clone(),
                 entrypoint: entrypoint.clone(),
+                restore: pane_manifest.restore,
             },
         );
         if let Some(tab_idx) = created_tab_idx {
@@ -279,6 +286,7 @@ impl App {
                 plugin_pane: PluginPaneInfo {
                     plugin_id,
                     entrypoint,
+                    restore: pane_manifest.restore,
                     pane,
                 },
             },
@@ -313,6 +321,7 @@ fn plugin_pane_protected_env_key(key: &str) -> bool {
             | "HERDR_PLUGIN_STATE_DIR"
             | "HERDR_PLUGIN_ENTRYPOINT_ID"
             | "HERDR_PLUGIN_CONTEXT_JSON"
+            | "HERDR_PLUGIN_CORRELATION_ID"
             | "HERDR_BIN_PATH"
     )
 }

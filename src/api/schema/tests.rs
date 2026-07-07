@@ -802,6 +802,7 @@ fn plugin_link_list_unlink_round_trip() {
             description: None,
             platforms: None,
             placement: PluginPanePlacement::Overlay,
+            restore: PluginPaneRestore::Never,
             command: vec!["bun".into(), "run".into(), "board.ts".into()],
         }],
         link_handlers: vec![PluginManifestLinkHandler {
@@ -1153,6 +1154,39 @@ fn plugin_pane_open_request_round_trips() {
     assert_eq!(json["params"]["env"]["HERDR_ROLE"], "board");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
+
+    let response = SuccessResponse {
+        id: "req_plugin_pane".into(),
+        result: ResponseResult::PluginPaneOpened {
+            plugin_pane: PluginPaneInfo {
+                plugin_id: "example.board".into(),
+                entrypoint: "board".into(),
+                restore: PluginPaneRestore::Workspace,
+                pane: PaneInfo {
+                    pane_id: "w_1-3".into(),
+                    terminal_id: "term_example".into(),
+                    workspace_id: "w_1".into(),
+                    tab_id: "w_1:2".into(),
+                    focused: false,
+                    cwd: Some("/tmp/review".into()),
+                    foreground_cwd: None,
+                    label: None,
+                    agent: None,
+                    title: None,
+                    display_agent: None,
+                    agent_status: AgentStatus::Unknown,
+                    custom_status: None,
+                    state_labels: HashMap::new(),
+                    agent_session: None,
+                    revision: 0,
+                },
+            },
+        },
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert!(json.contains("\"restore\":\"workspace\""));
+    let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, response);
 }
 
 #[test]

@@ -77,6 +77,8 @@ struct RawPluginManifestPane {
     platforms: Option<Vec<RawPlatform>>,
     #[serde(default)]
     placement: PluginPanePlacement,
+    #[serde(default)]
+    restore: crate::api::schema::PluginPaneRestore,
     command: Vec<String>,
 }
 
@@ -617,6 +619,7 @@ fn normalize_manifest_pane(
         description,
         platforms,
         placement: pane.placement,
+        restore: pane.restore,
         command,
     })
 }

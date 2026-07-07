@@ -303,6 +303,8 @@ pub struct PluginManifestPane {
     pub platforms: Option<Vec<PluginPlatform>>,
     #[serde(default)]
     pub placement: PluginPanePlacement,
+    #[serde(default)]
+    pub restore: PluginPaneRestore,
     pub command: Vec<String>,
 }
 
@@ -420,6 +422,8 @@ pub struct PluginCommandLogInfo {
     pub action_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
     pub command: Vec<String>,
     pub status: PluginCommandStatus,
     pub started_unix_ms: u64,
@@ -547,6 +551,17 @@ pub enum PluginPanePlacement {
     Zoomed,
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPaneRestore {
+    #[default]
+    Never,
+    Session,
+    Workspace,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginPaneFocusParams {
     pub pane_id: String,
@@ -561,5 +576,6 @@ pub struct PluginPaneCloseParams {
 pub struct PluginPaneInfo {
     pub plugin_id: String,
     pub entrypoint: String,
+    pub restore: PluginPaneRestore,
     pub pane: PaneInfo,
 }

@@ -4995,6 +4995,7 @@ mod tests {
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 
@@ -5063,6 +5064,7 @@ mod tests {
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 
@@ -5083,6 +5085,7 @@ mod tests {
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 

@@ -838,6 +838,7 @@ mod tests {
             crate::app::state::PluginPaneRecord {
                 plugin_id: "example.layout".into(),
                 entrypoint: "board".into(),
+                restore: crate::api::schema::PluginPaneRestore::Never,
             },
         );
 

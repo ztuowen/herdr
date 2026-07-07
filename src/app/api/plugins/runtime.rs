@@ -36,6 +36,7 @@ impl App {
         let log_id = format!("plugin-log-{}", self.state.next_plugin_command_log_id);
         self.state.next_plugin_command_log_id += 1;
         let started_unix_ms = current_unix_ms();
+        let correlation_id = context.correlation_id.clone();
         let mut env = super::env::plugin_path_env(plugin);
         env.extend([
             (
@@ -46,6 +47,12 @@ impl App {
             ("HERDR_PLUGIN_ID".to_string(), plugin.plugin_id.clone()),
             ("HERDR_PLUGIN_CONTEXT_JSON".to_string(), context_json),
         ]);
+        if let Some(correlation_id) = correlation_id.as_ref() {
+            env.push((
+                "HERDR_PLUGIN_CORRELATION_ID".to_string(),
+                correlation_id.clone(),
+            ));
+        }
         if let Ok(current_exe) = std::env::current_exe() {
             env.push((
                 "HERDR_BIN_PATH".to_string(),
@@ -88,6 +95,7 @@ impl App {
                 plugin_id: plugin.plugin_id.clone(),
                 action_id,
                 event,
+                correlation_id,
                 command,
                 status: PluginCommandStatus::Failed,
                 started_unix_ms,
@@ -106,6 +114,7 @@ impl App {
             plugin_id: plugin.plugin_id.clone(),
             action_id,
             event,
+            correlation_id,
             command: command.clone(),
             status: PluginCommandStatus::Running,
             started_unix_ms,

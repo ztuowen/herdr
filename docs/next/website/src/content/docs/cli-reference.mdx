@@ -438,7 +438,8 @@ herdr plugin event emit --plugin ID --event NAME <json|->
 
 `plugin event emit` publishes a plugin-scoped opaque event to socket clients
 subscribed with `events.subscribe` and `type = "plugin.event"`. Resource writes
-also publish `resource.put` and `resource.delete` plugin events automatically.
+also publish `resource.put` events, and deletes publish `resource.delete` only
+when they remove an existing item.
 
 Logs:
 

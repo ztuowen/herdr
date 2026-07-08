@@ -41,6 +41,14 @@ impl App {
         event: &crate::api::schema::EventEnvelope,
         correlation_id: &str,
     ) -> PluginInvocationContext {
+        if let Some(invocation_source) =
+            crate::extensions::plugin_invocation_source_for_event(&event.data)
+        {
+            let mut context = self.current_plugin_context(correlation_id);
+            context.invocation_source = Some(invocation_source);
+            return context;
+        }
+
         match &event.data {
             EventData::WorkspaceCreated { workspace }
             | EventData::WorkspaceUpdated { workspace }
@@ -178,19 +186,14 @@ impl App {
                     context.focused_pane_id = Some(pane_id.clone());
                     context
                 }),
-            event_data @ (EventData::KanbanAdded { .. }
-            | EventData::KanbanUpdated { .. }
-            | EventData::KanbanDeleted { .. }) => {
-                let mut context = self.current_plugin_context(correlation_id);
-                context.invocation_source =
-                    crate::extensions::plugin_invocation_source_for_event(event_data);
-                context
-            }
             EventData::PluginEvent { .. } => {
                 let mut context = empty_plugin_context(correlation_id);
                 context.invocation_source = Some("plugin.event".to_string());
                 context
             }
+            // Extension-owned events are classified by the hook above; without
+            // richer context, keep the current runtime context.
+            _ => self.current_plugin_context(correlation_id),
         }
     }
 

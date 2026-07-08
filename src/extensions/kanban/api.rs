@@ -273,19 +273,23 @@ mod tests {
         assert_eq!(mirrored["title"], "Plugin card");
         assert_eq!(mirrored["status"], "todo");
         let events = app.event_hub.events_after(0);
-        assert_plugin_resource_event(
-            &events[0].1,
+        assert_plugin_resource_events_include(
+            &events,
+            crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID,
+            "resource.put",
+            crate::extensions::kanban::resources::CARD_RESOURCE_ID,
+            &item.uuid,
+            Some("Plugin card"),
+        );
+        assert_plugin_resource_events_include(
+            &events,
             "example.board",
             "resource.put",
             "cards",
             &item.uuid,
             Some("Plugin card"),
         );
-        assert!(matches!(
-            &events[1].1.data,
-            crate::api::schema::EventData::KanbanAdded { item: added }
-                if added.uuid == item.uuid
-        ));
+        assert_kanban_event_includes_added(&events, &item.uuid);
 
         let update = handle_api_request(
             &mut app,
@@ -305,19 +309,23 @@ mod tests {
         assert_eq!(mirrored["title"], "Plugin card updated");
         assert_eq!(mirrored["status"], "reviewing");
         let events = app.event_hub.events_after(0);
-        assert_plugin_resource_event(
-            &events[2].1,
+        assert_plugin_resource_events_include(
+            &events,
+            crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID,
+            "resource.put",
+            crate::extensions::kanban::resources::CARD_RESOURCE_ID,
+            &updated.uuid,
+            Some("Plugin card updated"),
+        );
+        assert_plugin_resource_events_include(
+            &events,
             "example.board",
             "resource.put",
             "cards",
             &updated.uuid,
             Some("Plugin card updated"),
         );
-        assert!(matches!(
-            &events[3].1.data,
-            crate::api::schema::EventData::KanbanUpdated { item: event_item }
-                if event_item.uuid == updated.uuid
-        ));
+        assert_kanban_event_includes_updated(&events, &updated.uuid);
 
         let delete = handle_api_request(
             &mut app,
@@ -331,19 +339,23 @@ mod tests {
         assert_eq!(deleted.uuid, updated.uuid);
         assert!(plugin_resource_value(&mut app, &updated.uuid).is_none());
         let events = app.event_hub.events_after(0);
-        assert_plugin_resource_event(
-            &events[4].1,
+        assert_plugin_resource_events_include(
+            &events,
+            crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID,
+            "resource.delete",
+            crate::extensions::kanban::resources::CARD_RESOURCE_ID,
+            &updated.uuid,
+            None,
+        );
+        assert_plugin_resource_events_include(
+            &events,
             "example.board",
             "resource.delete",
             "cards",
             &updated.uuid,
             None,
         );
-        assert!(matches!(
-            &events[5].1.data,
-            crate::api::schema::EventData::KanbanDeleted { item: event_item }
-                if event_item.uuid == updated.uuid
-        ));
+        assert_kanban_event_includes_deleted(&events, &updated.uuid);
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);
@@ -456,6 +468,136 @@ mod tests {
     }
 
     #[test]
+    fn kanban_cards_are_available_through_builtin_plugin_resources() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let add = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Builtin resource card".into(),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Ongoing),
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled");
+        let item = kanban_item_from_response(&add);
+
+        let list = app.handle_api_request(Request {
+            id: "list".into(),
+            method: Method::PluginResourceList(crate::api::schema::PluginResourceListParams {
+                plugin_id: crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID.into(),
+                resource_id: crate::extensions::kanban::resources::CARD_RESOURCE_ID.into(),
+            }),
+        });
+        let ResponseResult::PluginResourceList { items, .. } = response_result(&list) else {
+            panic!("expected plugin resource list: {list}");
+        };
+        assert_eq!(items[&item.uuid]["title"], "Builtin resource card");
+        assert_eq!(items[&item.uuid]["status"], "ongoing");
+
+        let get = app.handle_api_request(Request {
+            id: "get".into(),
+            method: Method::PluginResourceGet(PluginResourceGetParams {
+                plugin_id: crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID.into(),
+                resource_id: crate::extensions::kanban::resources::CARD_RESOURCE_ID.into(),
+                item_id: item.uuid.clone(),
+            }),
+        });
+        let ResponseResult::PluginResourceValue { value, .. } = response_result(&get) else {
+            panic!("expected plugin resource value: {get}");
+        };
+        let value = value.expect("card should exist");
+        assert_eq!(value["uuid"], item.uuid);
+        assert_eq!(value["title"], "Builtin resource card");
+
+        let events = app.event_hub.events_after(0);
+        assert!(events.iter().any(|(_, envelope)| {
+            matches!(
+                &envelope.data,
+                crate::api::schema::EventData::PluginEvent {
+                    plugin_id,
+                    event,
+                    payload,
+                } if plugin_id == crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID
+                    && event == "resource.put"
+                    && payload["resource_id"] == crate::extensions::kanban::resources::CARD_RESOURCE_ID
+                    && payload["item_id"] == item.uuid
+            )
+        }));
+    }
+
+    #[test]
+    fn builtin_plugin_resources_update_kanban_compatibility_projection() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let put = app.handle_api_request(Request {
+            id: "put".into(),
+            method: Method::PluginResourcePut(crate::api::schema::PluginResourcePutParams {
+                plugin_id: crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID.into(),
+                resource_id: crate::extensions::kanban::resources::CARD_RESOURCE_ID.into(),
+                item_id: "card-1".into(),
+                value: serde_json::json!({
+                    "uuid": "card-1",
+                    "title": "V2 card",
+                    "description": "Created through plugin.resource.put",
+                    "status": "todo",
+                    "terminal_id": null,
+                }),
+            }),
+        });
+        let ResponseResult::PluginResourcePut { value, .. } = response_result(&put) else {
+            panic!("expected plugin resource put: {put}");
+        };
+        assert_eq!(value["title"], "V2 card");
+
+        let list = handle_api_request(
+            &mut app,
+            "kanban-list".into(),
+            &Method::KanbanList(KanbanListParams {
+                status: None,
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.list should be handled");
+        let ResponseResult::KanbanList { items } = response_result(&list) else {
+            panic!("expected kanban list: {list}");
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].uuid, "card-1");
+        assert_eq!(items[0].title, "V2 card");
+
+        let delete = app.handle_api_request(Request {
+            id: "delete".into(),
+            method: Method::PluginResourceDelete(PluginResourceDeleteParams {
+                plugin_id: crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID.into(),
+                resource_id: crate::extensions::kanban::resources::CARD_RESOURCE_ID.into(),
+                item_id: "card-1".into(),
+            }),
+        });
+        let ResponseResult::PluginResourceDeleted { existed, .. } = response_result(&delete) else {
+            panic!("expected plugin resource delete: {delete}");
+        };
+        assert!(existed);
+        assert!(app.state.extensions.kanban.items.is_empty());
+    }
+
+    #[test]
     fn kanban_delete_mirror_emits_resource_event_only_when_resource_existed() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -515,12 +657,27 @@ mod tests {
         assert_eq!(deleted.uuid, item.uuid);
 
         let events = app.event_hub.events_after(event_cursor);
-        assert_eq!(events.len(), 1);
-        assert!(matches!(
-            &events[0].1.data,
-            crate::api::schema::EventData::KanbanDeleted { item: event_item }
-                if event_item.uuid == item.uuid
-        ));
+        assert_eq!(events.len(), 2);
+        assert_plugin_resource_events_include(
+            &events,
+            crate::extensions::kanban::resources::BUILTIN_PLUGIN_ID,
+            "resource.delete",
+            crate::extensions::kanban::resources::CARD_RESOURCE_ID,
+            &item.uuid,
+            None,
+        );
+        assert!(
+            !plugin_resource_events_include(
+                &events,
+                "example.board",
+                "resource.delete",
+                "cards",
+                &item.uuid,
+                None,
+            ),
+            "deleting an already removed external mirror should not emit an external resource event"
+        );
+        assert_kanban_event_includes_deleted(&events, &item.uuid);
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);
@@ -733,26 +890,37 @@ mod tests {
         );
 
         let events = event_hub.events_after(0);
-        assert_eq!(events.len(), 3);
+        let kanban_events = events
+            .iter()
+            .filter(|(_, event)| {
+                matches!(
+                    event.event,
+                    crate::api::schema::EventKind::KanbanAdded
+                        | crate::api::schema::EventKind::KanbanUpdated
+                        | crate::api::schema::EventKind::KanbanDeleted
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(kanban_events.len(), 3);
         assert!(matches!(
-            &events[0].1.data,
+            &kanban_events[0].1.data,
             crate::api::schema::EventData::KanbanAdded { item: added }
-                if events[0].1.event == crate::api::schema::EventKind::KanbanAdded
+                if kanban_events[0].1.event == crate::api::schema::EventKind::KanbanAdded
                     && added.uuid == item.uuid
                     && added.title == "Streamed card"
         ));
         assert!(matches!(
-            &events[1].1.data,
+            &kanban_events[1].1.data,
             crate::api::schema::EventData::KanbanUpdated { item: updated }
-                if events[1].1.event == crate::api::schema::EventKind::KanbanUpdated
+                if kanban_events[1].1.event == crate::api::schema::EventKind::KanbanUpdated
                     && updated.uuid == item.uuid
                     && updated.title == "Updated streamed card"
                     && updated.status == crate::api::schema::KanbanStatus::Reviewing
         ));
         assert!(matches!(
-            &events[2].1.data,
+            &kanban_events[2].1.data,
             crate::api::schema::EventData::KanbanDeleted { item: deleted }
-                if events[2].1.event == crate::api::schema::EventKind::KanbanDeleted
+                if kanban_events[2].1.event == crate::api::schema::EventKind::KanbanDeleted
                     && deleted.uuid == item.uuid
         ));
     }
@@ -825,32 +993,120 @@ mod tests {
             .result
     }
 
-    fn assert_plugin_resource_event(
-        event: &crate::api::schema::EventEnvelope,
+    fn assert_plugin_resource_events_include(
+        events: &[(u64, crate::api::schema::EventEnvelope)],
         expected_plugin_id: &str,
         expected_event: &str,
         expected_resource_id: &str,
         expected_item_id: &str,
         expected_title: Option<&str>,
     ) {
-        assert_eq!(event.event, crate::api::schema::EventKind::PluginEvent);
+        assert!(
+            plugin_resource_events_include(
+                events,
+                expected_plugin_id,
+                expected_event,
+                expected_resource_id,
+                expected_item_id,
+                expected_title,
+            ),
+            "expected {expected_plugin_id} {expected_event} for {expected_resource_id}/{expected_item_id}"
+        );
+    }
+
+    fn plugin_resource_events_include(
+        events: &[(u64, crate::api::schema::EventEnvelope)],
+        expected_plugin_id: &str,
+        expected_event: &str,
+        expected_resource_id: &str,
+        expected_item_id: &str,
+        expected_title: Option<&str>,
+    ) -> bool {
+        events.iter().any(|(_, event)| {
+            plugin_resource_event_matches(
+                event,
+                expected_plugin_id,
+                expected_event,
+                expected_resource_id,
+                expected_item_id,
+                expected_title,
+            )
+        })
+    }
+
+    fn plugin_resource_event_matches(
+        event: &crate::api::schema::EventEnvelope,
+        expected_plugin_id: &str,
+        expected_event: &str,
+        expected_resource_id: &str,
+        expected_item_id: &str,
+        expected_title: Option<&str>,
+    ) -> bool {
+        if event.event != crate::api::schema::EventKind::PluginEvent {
+            return false;
+        }
         let crate::api::schema::EventData::PluginEvent {
             plugin_id,
             event,
             payload,
         } = &event.data
         else {
-            panic!("expected plugin event");
+            return false;
         };
-        assert_eq!(plugin_id, expected_plugin_id);
-        assert_eq!(event, expected_event);
-        assert_eq!(payload["resource_id"], expected_resource_id);
-        assert_eq!(payload["item_id"], expected_item_id);
-        if let Some(expected_title) = expected_title {
-            assert_eq!(payload["value"]["title"], expected_title);
-        } else {
-            assert!(payload.get("value").is_none());
+        if plugin_id != expected_plugin_id
+            || event != expected_event
+            || payload["resource_id"] != expected_resource_id
+            || payload["item_id"] != expected_item_id
+        {
+            return false;
         }
+        if let Some(expected_title) = expected_title {
+            payload["value"]["title"] == expected_title
+        } else {
+            payload.get("value").is_none()
+        }
+    }
+
+    fn assert_kanban_event_includes_added(
+        events: &[(u64, crate::api::schema::EventEnvelope)],
+        uuid: &str,
+    ) {
+        assert!(events.iter().any(|(_, event)| {
+            matches!(
+                &event.data,
+                crate::api::schema::EventData::KanbanAdded { item }
+                    if event.event == crate::api::schema::EventKind::KanbanAdded
+                        && item.uuid == uuid
+            )
+        }));
+    }
+
+    fn assert_kanban_event_includes_updated(
+        events: &[(u64, crate::api::schema::EventEnvelope)],
+        uuid: &str,
+    ) {
+        assert!(events.iter().any(|(_, event)| {
+            matches!(
+                &event.data,
+                crate::api::schema::EventData::KanbanUpdated { item }
+                    if event.event == crate::api::schema::EventKind::KanbanUpdated
+                        && item.uuid == uuid
+            )
+        }));
+    }
+
+    fn assert_kanban_event_includes_deleted(
+        events: &[(u64, crate::api::schema::EventEnvelope)],
+        uuid: &str,
+    ) {
+        assert!(events.iter().any(|(_, event)| {
+            matches!(
+                &event.data,
+                crate::api::schema::EventData::KanbanDeleted { item }
+                    if event.event == crate::api::schema::EventKind::KanbanDeleted
+                        && item.uuid == uuid
+            )
+        }));
     }
 
     fn plugin_resource_value(app: &mut App, item_id: &str) -> Option<serde_json::Value> {

@@ -361,13 +361,15 @@ letters, digits, colon, underscore, and hyphen. Herdr maps each item to
 `{storage_prefix}{item_id}` and returns list results keyed by item id. It does
 not inspect the JSON against `kind`.
 
-During the Kanban migration, legacy `kanban.add`, `kanban.update`, and
-`kanban.delete` calls also mirror cards into every enabled plugin resource with
-`kind = "application/vnd.herdr.kanban-card+json"`. Linking or enabling a
-matching board plugin also backfills existing cards. The legacy Kanban API
-remains the compatibility source of truth for now; the mirrored resource
-collection lets board plugins prove they can read card state through
-`plugin.resource.*` without adding new Kanban-specific host methods.
+During the Kanban migration, built-in cards are exposed through the same
+resource methods at plugin id `herdr.kanban`, resource id `cards`, with
+`kind = "application/vnd.herdr.kanban-card+json"`. `plugin.resource.list/get`
+read the built-in board projection, and `plugin.resource.put/delete` mutate it.
+Legacy `kanban.add`, `kanban.update`, and `kanban.delete` remain compatibility
+wrappers and emit matching `resource.put` / `resource.delete` plugin events.
+Herdr also mirrors those changes into every enabled plugin resource with the
+same `kind`; linking or enabling a matching board plugin backfills existing
+cards.
 
 Resource puts publish generic plugin events with `event = "resource.put"`.
 Deletes that remove an existing item publish `event = "resource.delete"`;

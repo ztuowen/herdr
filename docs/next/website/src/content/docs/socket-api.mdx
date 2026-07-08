@@ -513,6 +513,13 @@ Resources are declared in the plugin manifest and backed by plugin storage.
 They are useful when another tool needs to discover or subscribe to objects
 without knowing raw storage keys.
 
+Built-in extension resources use the same methods. During the Kanban migration,
+cards are available at plugin id `herdr.kanban`, resource id `cards`, with
+`kind = "application/vnd.herdr.kanban-card+json"`. The legacy `kanban.*`
+methods remain compatibility wrappers while resource clients can list, get,
+put, delete, and subscribe to card changes through `plugin.resource.*` and
+`plugin.event`.
+
 Open a managed terminal UI:
 
 ```json

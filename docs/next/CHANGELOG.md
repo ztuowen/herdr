@@ -14,6 +14,7 @@
 - Added plugin pane restore policy metadata and plugin command correlation ids so terminal-first plugin UIs can report lifecycle intent and debug related action/event work.
 - Added plugin v2 client-speech hook metadata and generic action invocation payloads so clients can package speech workflows as plugin actions without moving audio capture or provider configuration into server state.
 - Added a Kanban compatibility mirror that writes legacy `kanban.*` card mutations into matching plugin v2 resource collections and backfills cards when board plugins are linked or enabled, letting board plugins consume cards through `plugin.resource.*` during migration.
+- Added the built-in `herdr.kanban/cards` plugin resource namespace so clients can list, get, put, delete, and subscribe to Kanban cards through plugin v2 resource seams while `kanban.*` remains a compatibility surface.
 - Added generic `resource.put` plugin events and state-changing `resource.delete` plugin events for plugin resource writes so board plugins and other resource clients can subscribe without feature-specific socket events.
 - Added a board plugin fixture and socket API examples that model cards as plugin v2 resources instead of raw storage keys.
 - Added `layout.updated` socket events so protocol clients can keep tab layout snapshots current after pane split, resize, swap, move, zoom, and layout mutations.

@@ -102,6 +102,24 @@ impl App {
         id: String,
         params: PluginResourceListParams,
     ) -> String {
+        if let Some((plugin_id, resource_id)) = match normalize_builtin_kanban_card_resource(
+            &id,
+            params.plugin_id.clone(),
+            params.resource_id.clone(),
+        ) {
+            Ok(resource) => resource,
+            Err(response) => return response,
+        } {
+            return encode_success(
+                id,
+                ResponseResult::PluginResourceList {
+                    plugin_id,
+                    resource_id,
+                    items: crate::extensions::kanban::resources::list_card_resources(self),
+                },
+            );
+        }
+
         let (plugin_id, resource) =
             match self.normalize_plugin_resource(&id, params.plugin_id, params.resource_id) {
                 Ok(request) => request,
@@ -134,6 +152,28 @@ impl App {
         id: String,
         params: PluginResourceGetParams,
     ) -> String {
+        if let Some((plugin_id, resource_id, item_id)) =
+            match normalize_builtin_kanban_card_resource_item(
+                &id,
+                params.plugin_id.clone(),
+                params.resource_id.clone(),
+                params.item_id.clone(),
+            ) {
+                Ok(resource) => resource,
+                Err(response) => return response,
+            }
+        {
+            return encode_success(
+                id,
+                ResponseResult::PluginResourceValue {
+                    plugin_id,
+                    resource_id,
+                    item_id: item_id.clone(),
+                    value: crate::extensions::kanban::resources::get_card_resource(self, &item_id),
+                },
+            );
+        }
+
         let (plugin_id, resource, item_id, storage_key) = match self.normalize_plugin_resource_item(
             &id,
             params.plugin_id,
@@ -164,6 +204,41 @@ impl App {
         id: String,
         params: PluginResourcePutParams,
     ) -> String {
+        if let Some((plugin_id, resource_id, item_id)) =
+            match normalize_builtin_kanban_card_resource_item(
+                &id,
+                params.plugin_id.clone(),
+                params.resource_id.clone(),
+                params.item_id.clone(),
+            ) {
+                Ok(resource) => resource,
+                Err(response) => return response,
+            }
+        {
+            if let Err(response) = storage::validate_storage_value(&id, &params.value) {
+                return response;
+            }
+            let value = match crate::extensions::kanban::resources::put_card_resource(
+                self,
+                &item_id,
+                params.value,
+            ) {
+                Ok(value) => value,
+                Err(message) => {
+                    return encode_error(id, "invalid_plugin_resource_value", message);
+                }
+            };
+            return encode_success(
+                id,
+                ResponseResult::PluginResourcePut {
+                    plugin_id,
+                    resource_id,
+                    item_id,
+                    value,
+                },
+            );
+        }
+
         let (plugin_id, resource, item_id, storage_key) = match self.normalize_plugin_resource_item(
             &id,
             params.plugin_id,
@@ -209,6 +284,30 @@ impl App {
         id: String,
         params: PluginResourceDeleteParams,
     ) -> String {
+        if let Some((plugin_id, resource_id, item_id)) =
+            match normalize_builtin_kanban_card_resource_item(
+                &id,
+                params.plugin_id.clone(),
+                params.resource_id.clone(),
+                params.item_id.clone(),
+            ) {
+                Ok(resource) => resource,
+                Err(response) => return response,
+            }
+        {
+            let existed =
+                crate::extensions::kanban::resources::delete_card_resource(self, &item_id);
+            return encode_success(
+                id,
+                ResponseResult::PluginResourceDeleted {
+                    plugin_id,
+                    resource_id,
+                    item_id,
+                    existed,
+                },
+            );
+        }
+
         let (plugin_id, resource, item_id, storage_key) = match self.normalize_plugin_resource_item(
             &id,
             params.plugin_id,
@@ -349,6 +448,53 @@ impl App {
             },
         });
     }
+}
+
+fn normalize_builtin_kanban_card_resource(
+    id: &str,
+    plugin_id: String,
+    resource_id: String,
+) -> Result<Option<(String, String)>, String> {
+    let plugin_id = storage::normalize_plugin_storage_id(id, plugin_id)?;
+    let resource_id = super::manifest::normalize_action_id(&resource_id).ok_or_else(|| {
+        encode_error(
+            id.to_string(),
+            "invalid_plugin_resource_id",
+            "invalid resource id",
+        )
+    })?;
+    if crate::extensions::kanban::resources::is_builtin_card_resource(&plugin_id, &resource_id) {
+        return Ok(Some((plugin_id, resource_id)));
+    }
+    if crate::extensions::kanban::resources::is_builtin_plugin(&plugin_id) {
+        return Err(encode_error(
+            id.to_string(),
+            "plugin_resource_not_found",
+            format!("plugin resource '{resource_id}' not found"),
+        ));
+    }
+    Ok(None)
+}
+
+fn normalize_builtin_kanban_card_resource_item(
+    id: &str,
+    plugin_id: String,
+    resource_id: String,
+    item_id: String,
+) -> Result<Option<(String, String, String)>, String> {
+    let Some((plugin_id, resource_id)) =
+        normalize_builtin_kanban_card_resource(id, plugin_id, resource_id)?
+    else {
+        return Ok(None);
+    };
+    let item_id = super::manifest::normalize_action_id(&item_id).ok_or_else(|| {
+        encode_error(
+            id.to_string(),
+            "invalid_plugin_resource_item_id",
+            "invalid resource item id",
+        )
+    })?;
+    Ok(Some((plugin_id, resource_id, item_id)))
 }
 
 fn write_plugin_resource_item(

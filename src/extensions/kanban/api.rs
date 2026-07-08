@@ -1,6 +1,6 @@
 use crate::api::schema::{
-    EventData, EventEnvelope, EventKind, KanbanAddParams, KanbanDeleteParams, KanbanItem,
-    KanbanListParams, KanbanUpdateParams, Method, ResponseResult,
+    KanbanAddParams, KanbanDeleteParams, KanbanListParams, KanbanUpdateParams, Method,
+    ResponseResult,
 };
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
@@ -17,30 +17,6 @@ pub(crate) fn handle_api_request(
         Method::KanbanDelete(params) => Some(handle_kanban_delete(app, request_id, params.clone())),
         _ => None,
     }
-}
-
-fn emit_kanban_event(app: &mut App, event: EventKind, data: EventData) {
-    app.emit_event(EventEnvelope { event, data });
-}
-
-fn emit_kanban_added(app: &mut App, item: KanbanItem) {
-    emit_kanban_event(app, EventKind::KanbanAdded, EventData::KanbanAdded { item });
-}
-
-fn emit_kanban_updated(app: &mut App, item: KanbanItem) {
-    emit_kanban_event(
-        app,
-        EventKind::KanbanUpdated,
-        EventData::KanbanUpdated { item },
-    );
-}
-
-fn emit_kanban_deleted(app: &mut App, item: KanbanItem) {
-    emit_kanban_event(
-        app,
-        EventKind::KanbanDeleted,
-        EventData::KanbanDeleted { item },
-    );
 }
 
 fn active_pane_terminal_ids(app: &App) -> std::collections::HashSet<String> {
@@ -86,16 +62,13 @@ fn handle_kanban_add(app: &mut App, id: String, params: KanbanAddParams) -> Stri
         app.schedule_session_save();
     }
 
-    let item = app.state.extensions.kanban.add_item(
+    let item = crate::extensions::kanban::resources::create_card(
+        app,
         params.title,
         params.description,
         params.status,
         terminal_id,
     );
-    app.state.mark_session_dirty();
-    app.schedule_session_save();
-    crate::extensions::kanban::resources::mirror_card(app, &item);
-    emit_kanban_added(app, item.clone());
     encode_success(id, ResponseResult::KanbanItem { item })
 }
 
@@ -174,7 +147,8 @@ fn handle_kanban_update(app: &mut App, id: String, params: KanbanUpdateParams) -
         app.schedule_session_save();
     }
 
-    match app.state.extensions.kanban.update_item(
+    match crate::extensions::kanban::resources::update_card(
+        app,
         &params.uuid,
         params.title,
         params.description,
@@ -182,13 +156,7 @@ fn handle_kanban_update(app: &mut App, id: String, params: KanbanUpdateParams) -
         terminal_id,
         params.clear_terminal_id,
     ) {
-        Some(item) => {
-            app.state.mark_session_dirty();
-            app.schedule_session_save();
-            crate::extensions::kanban::resources::mirror_card(app, &item);
-            emit_kanban_updated(app, item.clone());
-            encode_success(id, ResponseResult::KanbanItem { item })
-        }
+        Some(item) => encode_success(id, ResponseResult::KanbanItem { item }),
         None => encode_error(
             id,
             "kanban_item_not_found",
@@ -209,14 +177,8 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
         app.schedule_session_save();
     }
 
-    match app.state.extensions.kanban.delete_item(&params.uuid) {
-        Some(item) => {
-            app.state.mark_session_dirty();
-            app.schedule_session_save();
-            crate::extensions::kanban::resources::delete_card_mirror(app, &item);
-            emit_kanban_deleted(app, item.clone());
-            encode_success(id, ResponseResult::KanbanItem { item })
-        }
+    match crate::extensions::kanban::resources::delete_card(app, &params.uuid) {
+        Some(item) => encode_success(id, ResponseResult::KanbanItem { item }),
         None => encode_error(
             id,
             "kanban_item_not_found",
@@ -229,7 +191,7 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginLinkParams, PluginResourceDeleteParams, PluginResourceGetParams,
+        KanbanItem, Method, PluginLinkParams, PluginResourceDeleteParams, PluginResourceGetParams,
         PluginSetEnabledParams, Request, SuccessResponse,
     };
     use crate::config::Config;

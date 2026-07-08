@@ -1,0 +1,33 @@
+id = "example.board"
+name = "Board Plugin"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions", "events", "panes", "resources", "storage"]
+min_herdr_version = "0.6.10"
+description = "Board fixture that stores cards through plugin resources."
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "list-cards"
+title = "List cards"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "resource", "list", "--plugin", "example.board", "--resource", "cards"]
+
+[[actions]]
+id = "refresh-board"
+title = "Refresh board"
+contexts = ["workspace"]
+command = ["herdr", "plugin", "event", "emit", "--plugin", "example.board", "--event", "board.refresh", "{\"resource_id\":\"cards\"}"]
+
+[[panes]]
+id = "board"
+title = "Board"
+placement = "tab"
+restore = "workspace"
+command = ["herdr", "plugin", "resource", "list", "--plugin", "example.board", "--resource", "cards"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.kanban-card+json"
+storage_prefix = "resources/cards/"

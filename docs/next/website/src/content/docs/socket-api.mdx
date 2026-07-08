@@ -116,7 +116,7 @@ Raw socket method names use dot notation:
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
 | Integrations | `integration.install`, `integration.uninstall` |
-| Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.storage.get`, `plugin.storage.set`, `plugin.storage.delete`, `plugin.storage.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
+| Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.storage.get`, `plugin.storage.set`, `plugin.storage.delete`, `plugin.storage.list`, `plugin.resource.list`, `plugin.resource.get`, `plugin.resource.put`, `plugin.resource.delete`, `plugin.event.emit`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
 
@@ -480,15 +480,15 @@ name such as `worktree.created`.
 Store opaque JSON state for an installed plugin:
 
 ```json
-{"id":"req_plugin_storage_set","method":"plugin.storage.set","params":{"plugin_id":"example.board","key":"kanban/cards","value":[{"uuid":"card-1","title":"Card"}]}}
+{"id":"req_plugin_storage_set","method":"plugin.storage.set","params":{"plugin_id":"example.tool","key":"cache/recent","value":["w1","w2"]}}
 ```
 
 Read, list, or delete storage values:
 
 ```json
-{"id":"req_plugin_storage_get","method":"plugin.storage.get","params":{"plugin_id":"example.board","key":"kanban/cards"}}
-{"id":"req_plugin_storage_list","method":"plugin.storage.list","params":{"plugin_id":"example.board","prefix":"kanban/"}}
-{"id":"req_plugin_storage_delete","method":"plugin.storage.delete","params":{"plugin_id":"example.board","key":"kanban/cards"}}
+{"id":"req_plugin_storage_get","method":"plugin.storage.get","params":{"plugin_id":"example.tool","key":"cache/recent"}}
+{"id":"req_plugin_storage_list","method":"plugin.storage.list","params":{"plugin_id":"example.tool","prefix":"cache/"}}
+{"id":"req_plugin_storage_delete","method":"plugin.storage.delete","params":{"plugin_id":"example.tool","key":"cache/recent"}}
 ```
 
 Plugin storage is scoped by installed plugin id and stored under the plugin
@@ -496,6 +496,19 @@ state directory. Herdr validates the plugin id and key and owns durable
 read/write mechanics; the plugin owns the JSON value shape, migrations, and
 cleanup policy. Use `HERDR_PLUGIN_CONFIG_DIR` and `HERDR_PLUGIN_STATE_DIR`
 directly when a plugin needs custom files, databases, or large artifacts.
+
+Use resource collections for discoverable plugin-owned objects:
+
+```json
+{"id":"req_plugin_resource_put","method":"plugin.resource.put","params":{"plugin_id":"example.board","resource_id":"cards","item_id":"card-1","value":{"uuid":"card-1","title":"Card","status":"todo"}}}
+{"id":"req_plugin_resource_get","method":"plugin.resource.get","params":{"plugin_id":"example.board","resource_id":"cards","item_id":"card-1"}}
+{"id":"req_plugin_resource_list","method":"plugin.resource.list","params":{"plugin_id":"example.board","resource_id":"cards"}}
+{"id":"req_plugin_resource_delete","method":"plugin.resource.delete","params":{"plugin_id":"example.board","resource_id":"cards","item_id":"card-1"}}
+```
+
+Resources are declared in the plugin manifest and backed by plugin storage.
+They are useful when another tool needs to discover or subscribe to objects
+without knowing raw storage keys.
 
 Open a managed terminal UI:
 

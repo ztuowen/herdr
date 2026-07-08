@@ -1174,6 +1174,39 @@ command = ["echo", "board"]
     }
 
     #[test]
+    fn board_fixture_manifest_loads_as_v2_resource_plugin() {
+        let plugin = load_plugin_manifest("tests/fixtures/plugin-board", true)
+            .expect("board fixture should load");
+        assert_eq!(plugin.plugin_id, "example.board");
+        assert_eq!(plugin.api_version, PluginApiVersion::V2);
+        assert_eq!(
+            plugin.capabilities,
+            vec![
+                PluginCapability::Actions,
+                PluginCapability::Events,
+                PluginCapability::Panes,
+                PluginCapability::Storage,
+                PluginCapability::Resources,
+            ]
+        );
+        assert_eq!(plugin.actions.len(), 2);
+        assert_eq!(plugin.events.len(), 0);
+        assert_eq!(plugin.panes.len(), 1);
+        assert_eq!(
+            plugin.panes[0].restore,
+            crate::api::schema::PluginPaneRestore::Workspace
+        );
+        assert_eq!(plugin.resources.len(), 1);
+        assert_eq!(plugin.resources[0].id, "cards");
+        assert_eq!(
+            plugin.resources[0].kind,
+            "application/vnd.herdr.kanban-card+json"
+        );
+        assert_eq!(plugin.resources[0].storage_prefix, "resources/cards/");
+        assert!(plugin.warnings.is_empty());
+    }
+
+    #[test]
     fn v2_manifest_declares_capabilities_and_resources() {
         let root = unique_temp_path("plugin-v2-resources");
         write_manifest_content(

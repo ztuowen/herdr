@@ -59,7 +59,7 @@ impl App {
             }
             return encode_error(id, "plugin_registry_save_failed", err.to_string());
         }
-        crate::extensions::kanban::api::mirror_existing_cards_to_plugin_resources(self);
+        crate::extensions::handle_plugin_availability_changed(self);
         encode_success(id, ResponseResult::PluginLinked { plugin })
     }
 
@@ -584,7 +584,7 @@ impl App {
             return encode_error(id, "plugin_not_found", "plugin not found");
         };
         if enabled {
-            crate::extensions::kanban::api::mirror_existing_cards_to_plugin_resources(self);
+            crate::extensions::handle_plugin_availability_changed(self);
             encode_success(id, ResponseResult::PluginEnabled { plugin })
         } else {
             encode_success(id, ResponseResult::PluginDisabled { plugin })

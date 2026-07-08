@@ -113,6 +113,10 @@ pub(crate) fn init_extension_runtime_hooks(
     crate::extensions::markdown::math::init_redraw_notifier(render_notify, render_dirty);
 }
 
+pub(crate) fn handle_plugin_availability_changed(app: &mut crate::app::App) {
+    crate::extensions::kanban::api::mirror_existing_cards_to_plugin_resources(app);
+}
+
 pub fn handle_extension_api_request(
     app: &mut crate::app::App,
     request_id: String,

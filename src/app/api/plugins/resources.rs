@@ -1,7 +1,7 @@
 use crate::api::schema::{
-    InstalledPluginInfo, PluginCapability, PluginManifestResource, PluginResourceDeleteParams,
-    PluginResourceGetParams, PluginResourceItems, PluginResourceListParams,
-    PluginResourcePutParams, ResponseResult,
+    EventData, EventEnvelope, EventKind, InstalledPluginInfo, PluginCapability,
+    PluginManifestResource, PluginResourceDeleteParams, PluginResourceGetParams,
+    PluginResourceItems, PluginResourceListParams, PluginResourcePutParams, ResponseResult,
 };
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
@@ -19,7 +19,15 @@ impl App {
         let mut mirrored = 0;
         for (plugin, resource) in targets {
             match write_plugin_resource_item(&plugin, &resource, item_id, value.clone()) {
-                Ok(()) => mirrored += 1,
+                Ok(()) => {
+                    mirrored += 1;
+                    self.emit_plugin_resource_put_event(
+                        &plugin.plugin_id,
+                        &resource.id,
+                        item_id,
+                        value.clone(),
+                    );
+                }
                 Err(err) => {
                     tracing::warn!(
                         plugin_id = %plugin.plugin_id,
@@ -43,7 +51,14 @@ impl App {
         let mut mirrored = 0;
         for (plugin, resource) in targets {
             match delete_plugin_resource_item(&plugin, &resource, item_id) {
-                Ok(()) => mirrored += 1,
+                Ok(()) => {
+                    mirrored += 1;
+                    self.emit_plugin_resource_delete_event(
+                        &plugin.plugin_id,
+                        &resource.id,
+                        item_id,
+                    );
+                }
                 Err(err) => {
                     tracing::warn!(
                         plugin_id = %plugin.plugin_id,
@@ -170,6 +185,12 @@ impl App {
         if let Err(response) = storage::write_storage_document(&id, &plugin_id, &document) {
             return response;
         }
+        self.emit_plugin_resource_put_event(
+            &plugin_id,
+            &resource.id,
+            &item_id,
+            params.value.clone(),
+        );
         encode_success(
             id,
             ResponseResult::PluginResourcePut {
@@ -202,6 +223,9 @@ impl App {
         let existed = document.remove(&storage_key).is_some();
         if let Err(response) = storage::write_storage_document(&id, &plugin_id, &document) {
             return response;
+        }
+        if existed {
+            self.emit_plugin_resource_delete_event(&plugin_id, &resource.id, &item_id);
         }
         encode_success(
             id,
@@ -282,6 +306,46 @@ impl App {
         let storage_key = format!("{}{}", resource.storage_prefix, item_id);
         storage::validate_storage_key(id, &storage_key)?;
         Ok((plugin_id, resource, item_id, storage_key))
+    }
+
+    fn emit_plugin_resource_put_event(
+        &mut self,
+        plugin_id: &str,
+        resource_id: &str,
+        item_id: &str,
+        value: serde_json::Value,
+    ) {
+        self.emit_event(EventEnvelope {
+            event: EventKind::PluginEvent,
+            data: EventData::PluginEvent {
+                plugin_id: plugin_id.to_string(),
+                event: "resource.put".to_string(),
+                payload: serde_json::json!({
+                    "resource_id": resource_id,
+                    "item_id": item_id,
+                    "value": value,
+                }),
+            },
+        });
+    }
+
+    fn emit_plugin_resource_delete_event(
+        &mut self,
+        plugin_id: &str,
+        resource_id: &str,
+        item_id: &str,
+    ) {
+        self.emit_event(EventEnvelope {
+            event: EventKind::PluginEvent,
+            data: EventData::PluginEvent {
+                plugin_id: plugin_id.to_string(),
+                event: "resource.delete".to_string(),
+                payload: serde_json::json!({
+                    "resource_id": resource_id,
+                    "item_id": item_id,
+                }),
+            },
+        });
     }
 }
 

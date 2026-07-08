@@ -369,6 +369,12 @@ remains the compatibility source of truth for now; the mirrored resource
 collection lets board plugins prove they can read card state through
 `plugin.resource.*` without adding new Kanban-specific host methods.
 
+Resource writes publish generic plugin events with `event = "resource.put"`;
+deletes publish `event = "resource.delete"`. The payload includes
+`resource_id` and `item_id`, and put events also include the written `value`.
+Clients can subscribe with `events.subscribe` using `type = "plugin.event"` and
+filter by plugin id and event name.
+
 ## Client Speech
 
 Plugin v2 can declare client speech hooks without moving microphone capture,

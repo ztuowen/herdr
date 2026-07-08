@@ -693,6 +693,34 @@ mod tests {
             .result
     }
 
+    fn assert_plugin_resource_event(
+        event: &crate::api::schema::EventEnvelope,
+        expected_plugin_id: &str,
+        expected_event: &str,
+        expected_resource_id: &str,
+        expected_item_id: &str,
+        expected_title: Option<&str>,
+    ) {
+        assert_eq!(event.event, EventKind::PluginEvent);
+        let EventData::PluginEvent {
+            plugin_id,
+            event,
+            payload,
+        } = &event.data
+        else {
+            panic!("expected plugin event");
+        };
+        assert_eq!(plugin_id, expected_plugin_id);
+        assert_eq!(event, expected_event);
+        assert_eq!(payload["resource_id"], expected_resource_id);
+        assert_eq!(payload["item_id"], expected_item_id);
+        if let Some(expected_title) = expected_title {
+            assert_eq!(payload["value"]["title"], expected_title);
+        } else {
+            assert!(payload.get("value").is_none());
+        }
+    }
+
     fn unique_temp_path(name: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2183,6 +2211,14 @@ storage_prefix = "resources/cards/"
             panic!("expected plugin resource put: {put}");
         };
         assert_eq!(value["uuid"], "card-1");
+        assert_plugin_resource_event(
+            &app.event_hub.events_after(0)[0].1,
+            "example.resources",
+            "resource.put",
+            "cards",
+            "card-1",
+            Some("Card"),
+        );
 
         let get = app.handle_api_request(Request {
             id: "resource-get".into(),
@@ -2222,6 +2258,16 @@ storage_prefix = "resources/cards/"
             panic!("expected plugin resource delete: {delete}");
         };
         assert!(existed);
+        let events = app.event_hub.events_after(0);
+        assert_eq!(events.len(), 2);
+        assert_plugin_resource_event(
+            &events[1].1,
+            "example.resources",
+            "resource.delete",
+            "cards",
+            "card-1",
+            None,
+        );
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(state_dir);

@@ -331,6 +331,20 @@ mod tests {
         assert_eq!(mirrored["uuid"], item.uuid);
         assert_eq!(mirrored["title"], "Plugin card");
         assert_eq!(mirrored["status"], "todo");
+        let events = app.event_hub.events_after(0);
+        assert_plugin_resource_event(
+            &events[0].1,
+            "example.board",
+            "resource.put",
+            "cards",
+            &item.uuid,
+            Some("Plugin card"),
+        );
+        assert!(matches!(
+            &events[1].1.data,
+            crate::api::schema::EventData::KanbanAdded { item: added }
+                if added.uuid == item.uuid
+        ));
 
         let update = handle_api_request(
             &mut app,
@@ -349,6 +363,20 @@ mod tests {
         let mirrored = plugin_resource_value(&mut app, &updated.uuid).expect("card should update");
         assert_eq!(mirrored["title"], "Plugin card updated");
         assert_eq!(mirrored["status"], "reviewing");
+        let events = app.event_hub.events_after(0);
+        assert_plugin_resource_event(
+            &events[2].1,
+            "example.board",
+            "resource.put",
+            "cards",
+            &updated.uuid,
+            Some("Plugin card updated"),
+        );
+        assert!(matches!(
+            &events[3].1.data,
+            crate::api::schema::EventData::KanbanUpdated { item: event_item }
+                if event_item.uuid == updated.uuid
+        ));
 
         let delete = handle_api_request(
             &mut app,
@@ -361,6 +389,20 @@ mod tests {
         let deleted = kanban_item_from_response(&delete);
         assert_eq!(deleted.uuid, updated.uuid);
         assert!(plugin_resource_value(&mut app, &updated.uuid).is_none());
+        let events = app.event_hub.events_after(0);
+        assert_plugin_resource_event(
+            &events[4].1,
+            "example.board",
+            "resource.delete",
+            "cards",
+            &updated.uuid,
+            None,
+        );
+        assert!(matches!(
+            &events[5].1.data,
+            crate::api::schema::EventData::KanbanDeleted { item: event_item }
+                if event_item.uuid == updated.uuid
+        ));
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);
@@ -761,6 +803,34 @@ mod tests {
         match resp.result {
             ResponseResult::KanbanItem { item } => item,
             other => panic!("expected kanban item response, got {other:?}"),
+        }
+    }
+
+    fn assert_plugin_resource_event(
+        event: &crate::api::schema::EventEnvelope,
+        expected_plugin_id: &str,
+        expected_event: &str,
+        expected_resource_id: &str,
+        expected_item_id: &str,
+        expected_title: Option<&str>,
+    ) {
+        assert_eq!(event.event, crate::api::schema::EventKind::PluginEvent);
+        let crate::api::schema::EventData::PluginEvent {
+            plugin_id,
+            event,
+            payload,
+        } = &event.data
+        else {
+            panic!("expected plugin event");
+        };
+        assert_eq!(plugin_id, expected_plugin_id);
+        assert_eq!(event, expected_event);
+        assert_eq!(payload["resource_id"], expected_resource_id);
+        assert_eq!(payload["item_id"], expected_item_id);
+        if let Some(expected_title) = expected_title {
+            assert_eq!(payload["value"]["title"], expected_title);
+        } else {
+            assert!(payload.get("value").is_none());
         }
     }
 

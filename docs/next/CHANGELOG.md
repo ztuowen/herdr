@@ -14,6 +14,7 @@
 - Added plugin pane restore policy metadata and plugin command correlation ids so terminal-first plugin UIs can report lifecycle intent and debug related action/event work.
 - Added plugin v2 client-speech hook metadata and generic action invocation payloads so clients can package speech workflows as plugin actions without moving audio capture or provider configuration into server state.
 - Added a Kanban compatibility mirror that writes legacy `kanban.*` card mutations into matching plugin v2 resource collections and backfills cards when board plugins are linked or enabled, letting board plugins consume cards through `plugin.resource.*` during migration.
+- Added generic `resource.put` and `resource.delete` plugin events for plugin resource writes so board plugins and other resource clients can subscribe without feature-specific socket events.
 - Added `layout.updated` socket events so protocol clients can keep tab layout snapshots current after pane split, resize, swap, move, zoom, and layout mutations.
 - Added `herdr terminal session observe` for read-only live ANSI terminal streams that bridge processes can consume as newline-delimited JSON.
 - Added `herdr terminal session control` for bridge processes that need live ANSI frames plus input, resize, scroll, release, and takeover authority.

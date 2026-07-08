@@ -682,6 +682,9 @@ Plugin event subscriptions use `plugin.event`. Plugins emit them with
 `event: "plugin_event"` and include `plugin_id`, the plugin-owned `event` name,
 and an opaque JSON `payload`. Subscribers can pass optional `plugin_id` and
 `event` filters.
+Plugin resource writes also publish `plugin.event` envelopes with
+`event = "resource.put"` or `event = "resource.delete"`. Those payloads include
+`resource_id` and `item_id`; put events also include the written `value`.
 
 Use `events.wait` when you want one matching event and then a response.
 

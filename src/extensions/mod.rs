@@ -114,7 +114,7 @@ pub(crate) fn init_extension_runtime_hooks(
 }
 
 pub(crate) fn handle_plugin_availability_changed(app: &mut crate::app::App) {
-    crate::extensions::kanban::api::mirror_existing_cards_to_plugin_resources(app);
+    crate::extensions::kanban::resources::backfill_existing_cards(app);
 }
 
 pub fn handle_extension_api_request(

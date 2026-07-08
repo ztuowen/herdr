@@ -5,8 +5,6 @@ use crate::api::schema::{
 use crate::app::api::responses::{encode_error, encode_success};
 use crate::app::App;
 
-const KANBAN_CARD_RESOURCE_KIND: &str = "application/vnd.herdr.kanban-card+json";
-
 pub(crate) fn handle_api_request(
     app: &mut App,
     request_id: String,
@@ -43,25 +41,6 @@ fn emit_kanban_deleted(app: &mut App, item: KanbanItem) {
         EventKind::KanbanDeleted,
         EventData::KanbanDeleted { item },
     );
-}
-
-fn mirror_kanban_card_resource(app: &mut App, item: &KanbanItem) {
-    let Ok(value) = serde_json::to_value(item) else {
-        tracing::warn!(uuid = %item.uuid, "failed to serialize kanban card for plugin resource mirror");
-        return;
-    };
-    app.mirror_plugin_resource_kind_put(KANBAN_CARD_RESOURCE_KIND, &item.uuid, value);
-}
-
-fn delete_kanban_card_resource_mirror(app: &mut App, item: &KanbanItem) {
-    app.mirror_plugin_resource_kind_delete(KANBAN_CARD_RESOURCE_KIND, &item.uuid);
-}
-
-pub(crate) fn mirror_existing_cards_to_plugin_resources(app: &mut App) {
-    let items = app.state.extensions.kanban.items.clone();
-    for item in items {
-        mirror_kanban_card_resource(app, &item);
-    }
 }
 
 fn active_pane_terminal_ids(app: &App) -> std::collections::HashSet<String> {
@@ -115,7 +94,7 @@ fn handle_kanban_add(app: &mut App, id: String, params: KanbanAddParams) -> Stri
     );
     app.state.mark_session_dirty();
     app.schedule_session_save();
-    mirror_kanban_card_resource(app, &item);
+    crate::extensions::kanban::resources::mirror_card(app, &item);
     emit_kanban_added(app, item.clone());
     encode_success(id, ResponseResult::KanbanItem { item })
 }
@@ -206,7 +185,7 @@ fn handle_kanban_update(app: &mut App, id: String, params: KanbanUpdateParams) -
         Some(item) => {
             app.state.mark_session_dirty();
             app.schedule_session_save();
-            mirror_kanban_card_resource(app, &item);
+            crate::extensions::kanban::resources::mirror_card(app, &item);
             emit_kanban_updated(app, item.clone());
             encode_success(id, ResponseResult::KanbanItem { item })
         }
@@ -234,7 +213,7 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
         Some(item) => {
             app.state.mark_session_dirty();
             app.schedule_session_save();
-            delete_kanban_card_resource_mirror(app, &item);
+            crate::extensions::kanban::resources::delete_card_mirror(app, &item);
             emit_kanban_deleted(app, item.clone());
             encode_success(id, ResponseResult::KanbanItem { item })
         }

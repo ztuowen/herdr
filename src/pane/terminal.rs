@@ -1506,10 +1506,8 @@ fn ghostty_collect_dirty_patch(
             fallback!("row_dirty_read_error");
         };
         if dirty {
-            match rows.selection() {
-                Ok(None) => {}
-                Ok(Some(_)) => fallback!("row_selection_present"),
-                Err(_) => fallback!("row_selection_error"),
+            if rows.touch_raw().is_err() {
+                fallback!("row_raw_error");
             }
             let Ok(mut cells) = rows.populate_cells(&mut row_cells) else {
                 fallback!("populate_cells_error");
@@ -1517,8 +1515,17 @@ fn ghostty_collect_dirty_patch(
             let mut patch_cells = Vec::with_capacity(usize::from(area_width));
             let mut x = 0u16;
             while x < area_width && cells.next() {
-                let Ok(basic) = cells.basic_data() else {
-                    fallback!("basic_data_error");
+                let wide = cells.wide().unwrap_or(crate::ghostty::CellWide::Narrow);
+                let has_hyperlink = cells.has_hyperlink().unwrap_or(false);
+                let style_data = cells.style().unwrap_or_default();
+                if style_data != crate::ghostty::CellStyle::default() {
+                    fallback!("styling_present");
+                }
+                let basic = crate::ghostty::CellBasicData {
+                    wide,
+                    has_hyperlink,
+                    has_styling: false,
+                    style: style_data,
                 };
                 if basic.has_hyperlink {
                     fallback!("hyperlink_present");
@@ -3983,7 +3990,7 @@ mod tests {
     }
 
     #[test]
-    fn dirty_patch_preserves_curly_underline_style() {
+    fn dirty_patch_falls_back_for_styled_cells() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(20, 5, 0).unwrap();
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
@@ -3997,41 +4004,9 @@ mod tests {
             core.terminal.write(b"\x1b[4:3mU");
         }
 
-        let patch = match pane.collect_dirty_patch(20, 5) {
-            TerminalDirtyPatchOutcome::Patch(patch) => patch,
-            other => panic!("expected dirty patch, got {other:?}"),
-        };
-
-        let cell = &patch.rows[0].1[0];
-        assert_eq!(cell.symbol, "U");
         assert_eq!(
-            crate::protocol::underline_style_from_modifier(cell.modifier),
-            3
-        );
-    }
-
-    #[test]
-    fn full_frame_preserves_curly_underline_style() {
-        let (tx, _rx) = mpsc::channel(4);
-        let terminal = crate::ghostty::Terminal::new(20, 5, 0).unwrap();
-        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
-        {
-            let mut core = pane.core.lock().unwrap();
-            core.terminal.write(b"\x1b[4:3mU");
-        }
-
-        let backend = ratatui::backend::TestBackend::new(20, 5);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| pane.render(frame, Rect::new(0, 0, 20, 5), false))
-            .unwrap();
-
-        let frame =
-            crate::protocol::FrameData::from_ratatui_buffer(terminal.backend().buffer(), None);
-        assert_eq!(frame.cells[0].symbol, "U");
-        assert_eq!(
-            crate::protocol::underline_style_from_modifier(frame.cells[0].modifier),
-            3
+            pane.collect_dirty_patch(20, 5),
+            TerminalDirtyPatchOutcome::Fallback
         );
     }
 

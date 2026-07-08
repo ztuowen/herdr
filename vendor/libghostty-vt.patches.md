@@ -80,3 +80,41 @@ verification:
 zig build test-lib-vt -Dtest-filter="image_get transmit_time_ns changes on retransmission"
 cargo nextest run kitty_image_fingerprint
 ```
+
+## 0003 bounds-check render row sidecars
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0003-bounds-check-render-row-sidecars.patch`
+
+herdr issue: not filed; diagnosed from local coredump pid 307078
+
+upstream discussion: not yet
+
+upstream pr: not yet
+
+introduced upstream: not yet
+
+vendored base: `0f7cd84b880b203c98683e520e84b9db0c5938d8`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/c/render.zig`
+
+reason: headless retained dirty-row streaming populates row cells for dirty
+rows. The C API copied `it.selection[y]` into the row-cells wrapper without a
+release-build bounds check, so a render state whose selection sidecar was
+shorter than the raw row slice could segfault before Rust received an error.
+Herdr also avoids the row-level selection accessor in the retained collector,
+because local coredumps showed it can crash before returning `GHOSTTY_NO_VALUE`.
+
+remove when: the vendored source bounds-checks row sidecar slices or otherwise
+guarantees row-data sidecar lengths before row-cell population, and the
+retained dirty-row streaming tests pass without this patch.
+
+verification:
+
+```sh
+zig build test-lib-vt -Demit-lib-vt -Doptimize=ReleaseSafe -Dtest-filter="render: row get selection"
+just test-one retained_pty_update
+```

@@ -7360,13 +7360,14 @@ next_tab = ""
             .expect("full runtime")
             .test_process_pty_bytes(update);
 
-        assert!(retained_server.render_retained_pty_update_and_stream());
+        assert!(!retained_server.render_retained_pty_update_and_stream());
+        retained_server.render_and_stream();
         full_server.render_and_stream();
 
         let retained_frame = read_server_frame(
             retained_rx
                 .recv_timeout(Duration::from_millis(100))
-                .expect("retained frame"),
+                .expect("full frame after retained fallback"),
         );
         let full_frame = read_server_frame(
             full_rx

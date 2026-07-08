@@ -1,0 +1,40 @@
+diff --git a/vendor/libghostty-vt/src/terminal/c/render.zig b/vendor/libghostty-vt/src/terminal/c/render.zig
+index 0f3b2e7..1b3c1e1 100644
+--- a/vendor/libghostty-vt/src/terminal/c/render.zig
++++ b/vendor/libghostty-vt/src/terminal/c/render.zig
+@@ -698,9 +698,16 @@ fn rowGetTyped(
+     const y = it.y orelse return .invalid_value;
+     switch (data) {
+         .invalid => return .invalid_value,
+-        .dirty => out.* = it.dirty[y],
+-        .raw => out.* = it.raws[y].cval(),
++        .dirty => {
++            if (y >= it.dirty.len) return .invalid_value;
++            out.* = it.dirty[y];
++        },
++        .raw => {
++            if (y >= it.raws.len) return .invalid_value;
++            out.* = it.raws[y].cval();
++        },
+         .cells => {
++            if (y >= it.cells.len) return .invalid_value;
+             const cells = out.* orelse return .invalid_value;
+             const cell_data = it.cells[y].slice();
+             cells.* = .{
+@@ -709,7 +716,7 @@ fn rowGetTyped(
+                 .raws = cell_data.items(.raw),
+                 .graphemes = cell_data.items(.grapheme),
+                 .styles = cell_data.items(.style),
+-                .selection = it.selection[y],
++                .selection = if (y < it.selection.len) it.selection[y] else null,
+                 .palette = it.palette,
+             };
+         },
+@@ -717,6 +724,7 @@ fn rowGetTyped(
+             const out_size = out.size;
+             if (out_size < @sizeOf(RowSelection)) return .invalid_value;
+ 
++            if (y >= it.selection.len) return .no_value;
+             const sel = it.selection[y] orelse return .no_value;
+             out.start_x = sel[0];
+             out.end_x = sel[1];

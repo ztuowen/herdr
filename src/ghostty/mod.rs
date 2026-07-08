@@ -2356,6 +2356,19 @@ impl<'a> RowIter<'a> {
         Ok(dirty)
     }
 
+    pub fn touch_raw(&self) -> Result<(), Error> {
+        let mut row: ffi::GhosttyRow = 0;
+        // SAFETY: row output matches requested row data type.
+        unsafe {
+            ffi::ghostty_render_state_row_get(
+                self.iterator.raw,
+                ffi::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                (&mut row as *mut ffi::GhosttyRow).cast(),
+            )
+            .into_result()
+        }
+    }
+
     #[cfg(windows)]
     pub fn wrap_state(&self) -> Result<(bool, bool), Error> {
         let mut row = 0;

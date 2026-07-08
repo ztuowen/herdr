@@ -1264,6 +1264,21 @@ fn plugin_resource_requests_round_trip() {
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, list);
 
+    let delete = Request {
+        id: "req_plugin_resource_delete".into(),
+        method: Method::PluginResourceDelete(PluginResourceDeleteParams {
+            plugin_id: "example.board".into(),
+            resource_id: "cards".into(),
+            item_id: "card-1".into(),
+        }),
+    };
+    let json = serde_json::to_value(&delete).unwrap();
+    assert_eq!(json["method"], "plugin.resource.delete");
+    assert_eq!(json["params"]["resource_id"], "cards");
+    assert_eq!(json["params"]["item_id"], "card-1");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, delete);
+
     let response = SuccessResponse {
         id: "req_plugin_resource_get".into(),
         result: ResponseResult::PluginResourceValue {
@@ -1275,6 +1290,21 @@ fn plugin_resource_requests_round_trip() {
     };
     let json = serde_json::to_string(&response).unwrap();
     assert!(json.contains("\"type\":\"plugin_resource_value\""));
+    let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, response);
+
+    let response = SuccessResponse {
+        id: "req_plugin_resource_delete".into(),
+        result: ResponseResult::PluginResourceDeleted {
+            plugin_id: "example.board".into(),
+            resource_id: "cards".into(),
+            item_id: "card-1".into(),
+            existed: false,
+        },
+    };
+    let json = serde_json::to_string(&response).unwrap();
+    assert!(json.contains("\"type\":\"plugin_resource_deleted\""));
+    assert!(json.contains("\"existed\":false"));
     let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, response);
 }

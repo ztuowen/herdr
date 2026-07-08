@@ -2302,6 +2302,21 @@ storage_prefix = "resources/cards/"
             None,
         );
 
+        let delete = app.handle_api_request(Request {
+            id: "resource-delete-missing".into(),
+            method: Method::PluginResourceDelete(PluginResourceDeleteParams {
+                plugin_id: "example.resources".into(),
+                resource_id: "cards".into(),
+                item_id: "card-1".into(),
+            }),
+        });
+        let ResponseResult::PluginResourceDeleted { existed, .. } = response_result(&delete) else {
+            panic!("expected plugin resource delete: {delete}");
+        };
+        assert!(!existed);
+        let events = app.event_hub.events_after(0);
+        assert_eq!(events.len(), 2);
+
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(state_dir);
         let _ = std::fs::remove_dir_all(xdg_home);

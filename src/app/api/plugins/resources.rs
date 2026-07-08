@@ -51,13 +51,15 @@ impl App {
         let mut mirrored = 0;
         for (plugin, resource) in targets {
             match delete_plugin_resource_item(&plugin, &resource, item_id) {
-                Ok(()) => {
-                    mirrored += 1;
-                    self.emit_plugin_resource_delete_event(
-                        &plugin.plugin_id,
-                        &resource.id,
-                        item_id,
-                    );
+                Ok(existed) => {
+                    if existed {
+                        mirrored += 1;
+                        self.emit_plugin_resource_delete_event(
+                            &plugin.plugin_id,
+                            &resource.id,
+                            item_id,
+                        );
+                    }
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -371,13 +373,14 @@ fn delete_plugin_resource_item(
     plugin: &InstalledPluginInfo,
     resource: &PluginManifestResource,
     item_id: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     super::env::ensure_plugin_user_dirs(plugin).map_err(|err| err.to_string())?;
     let item_id = super::manifest::normalize_action_id(item_id)
         .ok_or_else(|| "invalid resource item id".to_string())?;
     let storage_key = format!("{}{}", resource.storage_prefix, item_id);
     storage::validate_storage_key("plugin_resource_mirror", &storage_key)?;
     let mut document = storage::read_storage_document("plugin_resource_mirror", &plugin.plugin_id)?;
-    document.remove(&storage_key);
-    storage::write_storage_document("plugin_resource_mirror", &plugin.plugin_id, &document)
+    let existed = document.remove(&storage_key).is_some();
+    storage::write_storage_document("plugin_resource_mirror", &plugin.plugin_id, &document)?;
+    Ok(existed)
 }

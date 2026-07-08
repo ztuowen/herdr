@@ -250,8 +250,8 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginLinkParams, PluginResourceGetParams, PluginSetEnabledParams, Request,
-        SuccessResponse,
+        Method, PluginLinkParams, PluginResourceDeleteParams, PluginResourceGetParams,
+        PluginSetEnabledParams, Request, SuccessResponse,
     };
     use crate::config::Config;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -508,6 +508,78 @@ mod tests {
         assert_eq!(mirrored["uuid"], item.uuid);
         assert_eq!(mirrored["title"], "Disabled board card");
         assert_eq!(mirrored["status"], "ongoing");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        restore_xdg_home(old_config_home, old_state_home);
+    }
+
+    #[test]
+    fn kanban_delete_mirror_emits_resource_event_only_when_resource_existed() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let root = unique_temp_path("kanban-resource-delete-missing");
+        let xdg_home = unique_temp_path("kanban-resource-delete-missing-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_board_manifest(&root);
+
+        link_board_plugin(&mut app, &root, true);
+
+        let add = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Missing mirror card".into(),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Todo),
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled");
+        let item = kanban_item_from_response(&add);
+
+        let direct_delete = app.handle_api_request(Request {
+            id: "resource-delete".into(),
+            method: Method::PluginResourceDelete(PluginResourceDeleteParams {
+                plugin_id: "example.board".into(),
+                resource_id: "cards".into(),
+                item_id: item.uuid.clone(),
+            }),
+        });
+        let ResponseResult::PluginResourceDeleted { existed, .. } = response_result(&direct_delete)
+        else {
+            panic!("expected plugin resource delete: {direct_delete}");
+        };
+        assert!(existed);
+        let event_cursor = app.event_hub.current_sequence();
+
+        let delete = handle_api_request(
+            &mut app,
+            "delete".into(),
+            &Method::KanbanDelete(KanbanDeleteParams {
+                uuid: item.uuid.clone(),
+            }),
+        )
+        .expect("kanban.delete should be handled");
+        let deleted = kanban_item_from_response(&delete);
+        assert_eq!(deleted.uuid, item.uuid);
+
+        let events = app.event_hub.events_after(event_cursor);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].1.data,
+            crate::api::schema::EventData::KanbanDeleted { item: event_item }
+                if event_item.uuid == item.uuid
+        ));
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);
@@ -804,6 +876,12 @@ mod tests {
             ResponseResult::KanbanItem { item } => item,
             other => panic!("expected kanban item response, got {other:?}"),
         }
+    }
+
+    fn response_result(response: &str) -> ResponseResult {
+        serde_json::from_str::<SuccessResponse>(response)
+            .unwrap()
+            .result
     }
 
     fn assert_plugin_resource_event(

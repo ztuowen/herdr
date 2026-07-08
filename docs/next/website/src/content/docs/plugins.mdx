@@ -363,10 +363,11 @@ not inspect the JSON against `kind`.
 
 During the Kanban migration, legacy `kanban.add`, `kanban.update`, and
 `kanban.delete` calls also mirror cards into every enabled plugin resource with
-`kind = "application/vnd.herdr.kanban-card+json"`. The legacy Kanban API remains
-the compatibility source of truth for now; the mirrored resource collection
-lets board plugins prove they can read card state through `plugin.resource.*`
-without adding new Kanban-specific host methods.
+`kind = "application/vnd.herdr.kanban-card+json"`. Linking or enabling a
+matching board plugin also backfills existing cards. The legacy Kanban API
+remains the compatibility source of truth for now; the mirrored resource
+collection lets board plugins prove they can read card state through
+`plugin.resource.*` without adding new Kanban-specific host methods.
 
 ## Client Speech
 

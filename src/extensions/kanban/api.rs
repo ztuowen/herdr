@@ -57,6 +57,13 @@ fn delete_kanban_card_resource_mirror(app: &mut App, item: &KanbanItem) {
     app.mirror_plugin_resource_kind_delete(KANBAN_CARD_RESOURCE_KIND, &item.uuid);
 }
 
+pub(crate) fn mirror_existing_cards_to_plugin_resources(app: &mut App) {
+    let items = app.state.extensions.kanban.items.clone();
+    for item in items {
+        mirror_kanban_card_resource(app, &item);
+    }
+}
+
 fn active_pane_terminal_ids(app: &App) -> std::collections::HashSet<String> {
     let mut active = std::collections::HashSet::new();
     for ws in &app.state.workspaces {
@@ -243,7 +250,8 @@ fn handle_kanban_delete(app: &mut App, id: String, params: KanbanDeleteParams) -
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginLinkParams, PluginResourceGetParams, Request, SuccessResponse,
+        Method, PluginLinkParams, PluginResourceGetParams, PluginSetEnabledParams, Request,
+        SuccessResponse,
     };
     use crate::config::Config;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -295,24 +303,7 @@ mod tests {
         let old_state_home = std::env::var_os("XDG_STATE_HOME");
         std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
         std::env::set_var("XDG_STATE_HOME", &xdg_home);
-        write_manifest_content(
-            &root,
-            r#"
-id = "example.board"
-name = "Board"
-version = "0.1.0"
-api_version = 2
-capabilities = ["resources", "storage"]
-min_herdr_version = "0.6.10"
-platforms = ["linux", "macos", "windows"]
-
-[[resources]]
-id = "cards"
-title = "Cards"
-kind = "application/vnd.herdr.kanban-card+json"
-storage_prefix = "resources/cards/"
-"#,
-        );
+        write_board_manifest(&root);
 
         let link = app.handle_api_request(Request {
             id: "link".into(),
@@ -381,6 +372,104 @@ storage_prefix = "resources/cards/"
             Some(value) => std::env::set_var("XDG_STATE_HOME", value),
             None => std::env::remove_var("XDG_STATE_HOME"),
         }
+    }
+
+    #[test]
+    fn linking_board_plugin_backfills_existing_kanban_cards() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let root = unique_temp_path("kanban-resource-link-backfill");
+        let xdg_home = unique_temp_path("kanban-resource-link-backfill-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_board_manifest(&root);
+
+        let add = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Existing card".into(),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Blocked),
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled");
+        let item = kanban_item_from_response(&add);
+
+        link_board_plugin(&mut app, &root, true);
+
+        let mirrored = plugin_resource_value(&mut app, &item.uuid).expect("card should backfill");
+        assert_eq!(mirrored["uuid"], item.uuid);
+        assert_eq!(mirrored["title"], "Existing card");
+        assert_eq!(mirrored["status"], "blocked");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        restore_xdg_home(old_config_home, old_state_home);
+    }
+
+    #[test]
+    fn enabling_board_plugin_backfills_existing_kanban_cards() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let root = unique_temp_path("kanban-resource-enable-backfill");
+        let xdg_home = unique_temp_path("kanban-resource-enable-backfill-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_board_manifest(&root);
+
+        let add = handle_api_request(
+            &mut app,
+            "add".into(),
+            &Method::KanbanAdd(KanbanAddParams {
+                title: "Disabled board card".into(),
+                description: None,
+                status: Some(crate::api::schema::KanbanStatus::Ongoing),
+                terminal_id: None,
+            }),
+        )
+        .expect("kanban.add should be handled");
+        let item = kanban_item_from_response(&add);
+
+        link_board_plugin(&mut app, &root, false);
+        assert!(
+            plugin_resource_value(&mut app, &item.uuid).is_none(),
+            "disabled plugin should not receive backfill"
+        );
+
+        let enable = app.handle_api_request(Request {
+            id: "enable".into(),
+            method: Method::PluginEnable(PluginSetEnabledParams {
+                plugin_id: "example.board".into(),
+            }),
+        });
+        assert!(enable.contains("plugin_enabled"), "enable failed: {enable}");
+
+        let mirrored = plugin_resource_value(&mut app, &item.uuid).expect("card should backfill");
+        assert_eq!(mirrored["uuid"], item.uuid);
+        assert_eq!(mirrored["title"], "Disabled board card");
+        assert_eq!(mirrored["status"], "ongoing");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        restore_xdg_home(old_config_home, old_state_home);
     }
 
     #[test]
@@ -691,6 +780,21 @@ storage_prefix = "resources/cards/"
         }
     }
 
+    fn link_board_plugin(app: &mut App, root: &std::path::Path, enabled: bool) {
+        let response = app.handle_api_request(Request {
+            id: "link".into(),
+            method: Method::PluginLink(PluginLinkParams {
+                path: root.display().to_string(),
+                enabled,
+                source: None,
+            }),
+        });
+        assert!(
+            response.contains("plugin_linked"),
+            "link failed: {response}"
+        );
+    }
+
     fn unique_temp_path(name: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -699,8 +803,43 @@ storage_prefix = "resources/cards/"
         std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
     }
 
+    fn write_board_manifest(root: &std::path::Path) {
+        write_manifest_content(
+            root,
+            r#"
+id = "example.board"
+name = "Board"
+version = "0.1.0"
+api_version = 2
+capabilities = ["resources", "storage"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[resources]]
+id = "cards"
+title = "Cards"
+kind = "application/vnd.herdr.kanban-card+json"
+storage_prefix = "resources/cards/"
+"#,
+        );
+    }
+
     fn write_manifest_content(root: &std::path::Path, content: &str) {
         std::fs::create_dir_all(root).unwrap();
         std::fs::write(root.join("herdr-plugin.toml"), content).unwrap();
+    }
+
+    fn restore_xdg_home(
+        old_config_home: Option<std::ffi::OsString>,
+        old_state_home: Option<std::ffi::OsString>,
+    ) {
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
     }
 }

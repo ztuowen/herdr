@@ -23,6 +23,9 @@
 
 ### Changed
 - Bumped the client/server protocol version to 15 for socket API placement mutation event and response compatibility.
+- Documented the plugin v2 CLI resource/event commands and clarified that
+  `kanban_items` and `kanban.*` events are compatibility surfaces during the
+  board plugin migration.
 
 ### Fixed
 - Unix local Herdr clients no longer treat empty bracketed paste as a clipboard-image bridge; `herdr --remote` keeps using it for local-desktop image paste over SSH. (#986)

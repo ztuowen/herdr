@@ -389,14 +389,16 @@ Actions:
 
 ```bash
 herdr plugin action list [--plugin ID]
-herdr plugin action invoke <action_id> [--plugin ID]
+herdr plugin action invoke <action_id> [--plugin ID] [--payload <json|->]
 ```
 
 `plugin action invoke` starts the manifest command for an installed, enabled,
 platform-compatible plugin action and prints the started command log record in
 the JSON response. Use the qualified action id (`plugin.id.action`) when more
 than one plugin uses the same action id. Local action ids cannot contain dots,
-so qualified ids remain unambiguous even when plugin ids contain dots.
+so qualified ids remain unambiguous even when plugin ids contain dots. Pass
+`--payload` to provide transient JSON input to the action; Herdr exposes it to
+the command as `HERDR_PLUGIN_PAYLOAD_JSON` and does not persist it.
 
 Storage:
 
@@ -411,6 +413,32 @@ herdr plugin storage delete --plugin ID <key>
 plugin id. Pass `-` as the value to `storage set` to read JSON from stdin.
 Herdr owns durable storage mechanics; the plugin owns value schemas, migrations,
 and cleanup policy.
+
+Resources:
+
+```bash
+herdr plugin resource get --plugin ID --resource ID <item_id>
+herdr plugin resource put --plugin ID --resource ID <item_id> <json|->
+herdr plugin resource list --plugin ID --resource ID
+herdr plugin resource delete --plugin ID --resource ID <item_id>
+```
+
+`plugin resource` reads and writes discoverable plugin-owned objects declared in
+a v2 plugin manifest. Herdr maps each resource item to plugin storage and
+validates ids and storage limits; the plugin owns the JSON schema. During the
+Kanban migration, new board plugins should use resource collections with
+`kind = "application/vnd.herdr.kanban-card+json"` instead of adding new
+Kanban-specific host commands.
+
+Events:
+
+```bash
+herdr plugin event emit --plugin ID --event NAME <json|->
+```
+
+`plugin event emit` publishes a plugin-scoped opaque event to socket clients
+subscribed with `events.subscribe` and `type = "plugin.event"`. Resource writes
+also publish `resource.put` and `resource.delete` plugin events automatically.
 
 Logs:
 

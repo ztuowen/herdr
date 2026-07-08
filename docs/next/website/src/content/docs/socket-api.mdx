@@ -130,7 +130,10 @@ The response is `type: "app_snapshot"` with `server`, `workspaces`, `tabs`,
 `panes`, `agents`, and `kanban_items`. The `server` object includes Herdr's
 version and client/server protocol number. Use this endpoint when a tool needs
 a consistent top-level inventory; use narrower list/get methods when you only
-need one resource type.
+need one resource type. `kanban_items` is kept as compatibility snapshot state
+during the board migration; new board plugins should consume declared plugin
+resources and `plugin.event` subscriptions instead of depending on new
+Kanban-specific host fields.
 
 Pane control methods use public pane ids such as `1-1`. Omit `pane_id` to use
 the server's active focused pane.
@@ -688,7 +691,11 @@ updated `PaneLayoutSnapshot` for one tab. Clients that bootstrap with
 `session.snapshot` should replace the cached layout with the same
 `workspace_id` and `tab_id`.
 
-Kanban event subscriptions include `kanban.added`, `kanban.updated`, and `kanban.deleted`. Each pushed event includes the changed `item`; clients can optionally pass `uuid` on the subscription to receive events for one card.
+Kanban event subscriptions include `kanban.added`, `kanban.updated`, and
+`kanban.deleted`. Each pushed event includes the changed `item`; clients can
+optionally pass `uuid` on the subscription to receive events for one card.
+These events remain a compatibility surface while board plugins migrate to
+generic plugin resources and plugin-scoped events.
 
 Plugin event subscriptions use `plugin.event`. Plugins emit them with
 `plugin.event.emit` or `herdr plugin event emit`; pushed envelopes use

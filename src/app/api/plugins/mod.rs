@@ -268,6 +268,44 @@ impl App {
         .map_err(|(_, message)| message)
     }
 
+    pub(crate) fn call_plugin_action_internal(
+        &mut self,
+        plugin_id: &str,
+        action_id: &str,
+        invocation_source: &str,
+        payload: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<runtime::PluginActionCallResult, String> {
+        let (plugin, action) = self
+            .find_plugin_action(Some(plugin_id), action_id)
+            .map_err(|(_, message)| message)?;
+        if !plugin.enabled {
+            return Err(format!("plugin {} is disabled", plugin.plugin_id));
+        }
+        if !manifest::plugin_has_capability(&plugin, PluginCapability::Actions) {
+            return Err(format!(
+                "plugin {} does not declare the actions capability",
+                plugin.plugin_id
+            ));
+        }
+        ensure_platform_supported(
+            effective_platforms(&action.platforms, &plugin.platforms),
+            &action.qualified_id(),
+        )
+        .map_err(|(_, message)| message)?;
+        let mut context = self.current_plugin_context(invocation_source);
+        context.invocation_source = Some(invocation_source.to_string());
+        self.call_plugin_command(
+            &plugin,
+            Some(&action.action_id),
+            &action.command,
+            &context,
+            Some(payload),
+            timeout,
+        )
+        .map_err(|(_, message)| message)
+    }
+
     pub(crate) fn invoke_plugin_link_handler_for_url(
         &mut self,
         url: &str,
@@ -2944,6 +2982,126 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_PAYLOAD_JSON\""]
             serde_json::from_str(finished.stdout.as_deref().unwrap_or("")).unwrap();
         assert_eq!(payload["transcript"], "open the issue");
         assert_eq!(payload["mode"], "dictation");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_plugin_action_call_returns_captured_output() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-action-call");
+        let xdg_home = unique_temp_path("plugin-action-call-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.action-call"
+name = "Action Call"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "transform"
+title = "Transform"
+command = ["sh", "-c", "printf '%s\n%s' \"$HERDR_PLUGIN_ACTION_ID\" \"$HERDR_PLUGIN_PAYLOAD_JSON\""]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let result = app
+            .call_plugin_action_internal(
+                "example.action-call",
+                "transform",
+                "markdown.transform_document",
+                serde_json::json!({
+                    "document": "hello"
+                }),
+                std::time::Duration::from_secs(1),
+            )
+            .expect("plugin action call should run");
+
+        assert_eq!(result.status, PluginCommandStatus::Succeeded);
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.timed_out);
+        assert_eq!(result.error, None);
+        let mut lines = result.stdout.lines();
+        assert_eq!(lines.next(), Some("transform"));
+        let payload: serde_json::Value = serde_json::from_str(lines.next().unwrap_or("")).unwrap();
+        assert_eq!(payload["document"], "hello");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(xdg_home);
+        match old_config_home {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state_home {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_plugin_action_call_times_out() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-action-call-timeout");
+        let xdg_home = unique_temp_path("plugin-action-call-timeout-xdg");
+        let old_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state_home = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_home);
+        std::env::set_var("XDG_STATE_HOME", &xdg_home);
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.action-call-timeout"
+name = "Action Call Timeout"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "slow"
+title = "Slow"
+command = ["sh", "-c", "sleep 2"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let result = app
+            .call_plugin_action_internal(
+                "example.action-call-timeout",
+                "slow",
+                "markdown.transform_document",
+                serde_json::json!({}),
+                std::time::Duration::from_millis(25),
+            )
+            .expect("plugin action call should return timeout result");
+
+        assert_eq!(result.status, PluginCommandStatus::Failed);
+        assert!(result.timed_out);
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("timed out")));
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(xdg_home);

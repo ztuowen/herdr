@@ -401,9 +401,19 @@ The `client_speech` table may reference action ids for `start_dictation`,
 validates that each referenced action exists and that the manifest declares the
 `client-speech` capability. Herdr invokes `start_dictation` after recording
 starts and `stop_dictation` when recording stops, using ordinary plugin action
-commands with transient JSON payloads. Transcript transform/insert hooks remain
-client adapter extension points. Herdr does not add `speech.*` socket methods,
-persist raw audio, or store speech provider credentials in plugin payloads.
+commands with transient JSON payloads.
+
+Herdr invokes `transform_transcript` before writing the final transcript to the
+terminal. The action receives `HERDR_PLUGIN_PAYLOAD_JSON` with `hook`,
+`phase = "transform"`, `workspace_id`, `is_agent`, and `transcript`. The action
+may print a JSON string, a JSON object with `transcript` or `text`, or raw text
+on stdout. Empty stdout keeps the current transcript. Failed or timed-out
+actions are logged and skipped so dictation still inserts the built-in
+transcript. `insert_transcript` remains a declared extension point while the
+insertion contract is finalized.
+
+Herdr does not add `speech.*` socket methods, persist raw audio, or store speech
+provider credentials in plugin payloads.
 
 ## Markdown
 

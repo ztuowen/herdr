@@ -155,7 +155,14 @@ pub(crate) fn handle_speech_event(app: &mut crate::app::App, ev: &AppEvent) -> b
             let previous_toast = app.state.toast.clone();
             match result {
                 Ok(transcription) => {
-                    let sanitized = sanitize_transcription_text(transcription);
+                    let is_agent = speech_target_is_agent(app, workspace_id, *pane_id);
+                    let transcription = crate::extensions::speech::hooks::transform_transcript(
+                        app,
+                        workspace_id,
+                        transcription,
+                        is_agent,
+                    );
+                    let sanitized = sanitize_transcription_text(&transcription);
                     app.state.toast = Some(crate::app::state::ToastNotification {
                         kind: crate::app::state::ToastKind::Finished,
                         title: "Speech to Text".into(),
@@ -325,4 +332,28 @@ pub(crate) fn handle_speech_event(app: &mut crate::app::App, ev: &AppEvent) -> b
         }
         _ => false,
     }
+}
+
+fn speech_target_is_agent(
+    app: &crate::app::App,
+    workspace_id: &str,
+    pane_id: Option<crate::layout::PaneId>,
+) -> bool {
+    let Some(ws_idx) = app
+        .state
+        .workspaces
+        .iter()
+        .position(|ws| ws.id == workspace_id)
+    else {
+        return false;
+    };
+    let Some(ws) = app.state.workspaces.get(ws_idx) else {
+        return false;
+    };
+    let Some(target_pane_id) = pane_id.or_else(|| ws.focused_pane_id()) else {
+        return false;
+    };
+    ws.pane_state(target_pane_id)
+        .and_then(|pane| app.state.terminals.get(&pane.attached_terminal_id))
+        .is_some_and(|terminal| terminal.is_agent_terminal())
 }

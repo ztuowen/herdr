@@ -1341,6 +1341,149 @@ insert_transcript = "insert-transcript"
     }
 
     #[test]
+    fn v2_manifest_declares_markdown_hooks() {
+        let root = unique_temp_path("plugin-v2-markdown");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-markdown"
+name = "V2 Markdown"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions", "panes", "markdown"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "transform-document"
+title = "Transform markdown"
+command = ["markdown-plugin", "transform"]
+
+[[actions]]
+id = "export-document"
+title = "Export markdown"
+command = ["markdown-plugin", "export"]
+
+[[actions]]
+id = "render-math"
+title = "Render math"
+command = ["markdown-plugin", "math"]
+
+[[panes]]
+id = "preview"
+title = "Markdown preview"
+command = ["markdown-plugin", "preview"]
+
+[markdown]
+transform_document = "transform-document"
+export_document = "export-document"
+render_math = "render-math"
+preview_pane = "preview"
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        assert_eq!(plugin.api_version, PluginApiVersion::V2);
+        assert_eq!(
+            plugin.capabilities,
+            vec![
+                PluginCapability::Actions,
+                PluginCapability::Panes,
+                PluginCapability::Markdown
+            ]
+        );
+        assert_eq!(
+            plugin.markdown,
+            crate::api::schema::PluginManifestMarkdown {
+                transform_document: Some("transform-document".into()),
+                export_document: Some("export-document".into()),
+                render_math: Some("render-math".into()),
+                preview_pane: Some("preview".into()),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_markdown_without_capability() {
+        let root = unique_temp_path("plugin-v2-markdown-missing-capability");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.v2-markdown-missing-cap"
+name = "V2 Missing Markdown Capability"
+version = "0.1.0"
+api_version = 2
+capabilities = ["actions"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "transform-document"
+title = "Transform markdown"
+command = ["markdown-plugin", "transform"]
+
+[markdown]
+transform_document = "transform-document"
+"#,
+        );
+
+        let err = load_plugin_manifest(&root.display().to_string(), true).unwrap_err();
+        assert_eq!(err.0, "plugin_capability_required");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v2_manifest_rejects_markdown_unknown_references() {
+        let action_root = unique_temp_path("plugin-v2-markdown-unknown-action");
+        write_manifest_content(
+            &action_root,
+            r#"
+id = "example.v2-markdown-unknown-action"
+name = "V2 Markdown Unknown Action"
+version = "0.1.0"
+api_version = 2
+capabilities = ["markdown"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[markdown]
+transform_document = "missing-action"
+"#,
+        );
+        assert!(matches!(
+            load_plugin_manifest(&action_root.display().to_string(), true),
+            Err(("invalid_plugin_markdown_action", _))
+        ));
+
+        let pane_root = unique_temp_path("plugin-v2-markdown-unknown-pane");
+        write_manifest_content(
+            &pane_root,
+            r#"
+id = "example.v2-markdown-unknown-pane"
+name = "V2 Markdown Unknown Pane"
+version = "0.1.0"
+api_version = 2
+capabilities = ["markdown"]
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[markdown]
+preview_pane = "missing-pane"
+"#,
+        );
+        assert!(matches!(
+            load_plugin_manifest(&pane_root.display().to_string(), true),
+            Err(("invalid_plugin_markdown_pane", _))
+        ));
+
+        let _ = std::fs::remove_dir_all(action_root);
+        let _ = std::fs::remove_dir_all(pane_root);
+    }
+
+    #[test]
     fn v2_manifest_rejects_client_speech_without_capability() {
         let root = unique_temp_path("plugin-v2-client-speech-missing-capability");
         write_manifest_content(

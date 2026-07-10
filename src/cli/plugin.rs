@@ -2063,6 +2063,7 @@ mod tests {
             link_handlers: vec![],
             resources: vec![],
             client_speech: crate::api::schema::PluginManifestClientSpeech::default(),
+            markdown: crate::api::schema::PluginManifestMarkdown::default(),
             source: PluginSourceInfo {
                 kind: PluginSourceKind::Github,
                 owner: Some(owner.to_string()),

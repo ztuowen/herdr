@@ -814,6 +814,7 @@ fn plugin_link_list_unlink_round_trip() {
         }],
         resources: vec![],
         client_speech: PluginManifestClientSpeech::default(),
+        markdown: crate::api::schema::PluginManifestMarkdown::default(),
         source: Default::default(),
         warnings: vec![],
     };

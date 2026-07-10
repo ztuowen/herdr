@@ -65,6 +65,8 @@ pub struct InstalledPluginInfo {
     pub resources: Vec<PluginManifestResource>,
     #[serde(default, skip_serializing_if = "PluginManifestClientSpeech::is_empty")]
     pub client_speech: PluginManifestClientSpeech,
+    #[serde(default, skip_serializing_if = "PluginManifestMarkdown::is_empty")]
+    pub markdown: PluginManifestMarkdown,
     #[serde(default)]
     pub source: PluginSourceInfo,
     /// Warnings collected at link time or on registry load (e.g. unknown event names,
@@ -106,6 +108,7 @@ pub enum PluginCapability {
     Resources,
     Notifications,
     ClientSpeech,
+    Markdown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -346,6 +349,27 @@ impl PluginManifestClientSpeech {
             && self.stop_dictation.is_none()
             && self.transform_transcript.is_none()
             && self.insert_transcript.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+pub struct PluginManifestMarkdown {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform_document: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_document: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_math: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_pane: Option<String>,
+}
+
+impl PluginManifestMarkdown {
+    pub fn is_empty(&self) -> bool {
+        self.transform_document.is_none()
+            && self.export_document.is_none()
+            && self.render_math.is_none()
+            && self.preview_pane.is_none()
     }
 }
 

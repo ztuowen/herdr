@@ -113,10 +113,10 @@ capabilities = ["actions", "events", "links", "panes", "storage", "resources"]
 ```
 
 Capability values are `actions`, `events`, `links`, `panes`, `storage`,
-`resources`, `notifications`, and `client-speech`. Herdr lists capabilities in
-`plugin.list` so authors and tooling can see the plugin's host dependency
-contract. V1 manifests keep working; Herdr infers their declared actions,
-events, panes, and link handlers for reporting.
+`resources`, `notifications`, `client-speech`, and `markdown`. Herdr lists
+capabilities in `plugin.list` so authors and tooling can see the plugin's host
+dependency contract. V1 manifests keep working; Herdr infers their declared
+actions, events, panes, and link handlers for reporting.
 
 Action ids, pane ids, and link handler ids are local ids inside the plugin.
 They may use ASCII letters, digits, colon, underscore, and hyphen, but not
@@ -404,6 +404,38 @@ starts and `stop_dictation` when recording stops, using ordinary plugin action
 commands with transient JSON payloads. Transcript transform/insert hooks remain
 client adapter extension points. Herdr does not add `speech.*` socket methods,
 persist raw audio, or store speech provider credentials in plugin payloads.
+
+## Markdown
+
+Plugin v2 can declare Markdown extension points as ordinary actions and panes.
+These hooks are for transient document transforms, exports, math rendering, and
+alternate terminal preview UIs; Herdr's built-in Markdown renderer and render
+cache remain host-local.
+
+```toml
+api_version = 2
+capabilities = ["actions", "panes", "markdown"]
+
+[[actions]]
+id = "transform-document"
+title = "Transform Markdown"
+command = ["markdown-plugin", "transform"]
+
+[[panes]]
+id = "preview"
+title = "Markdown preview"
+command = ["markdown-plugin", "preview"]
+
+[markdown]
+transform_document = "transform-document"
+preview_pane = "preview"
+```
+
+The `markdown` table may reference action ids for `transform_document`,
+`export_document`, and `render_math`, and a pane id for `preview_pane`. Herdr
+validates that each reference exists and that the manifest declares the
+`markdown` capability. These hooks use the existing plugin action and pane
+surfaces; Markdown render cache entries are not plugin resources by default.
 
 ## Events
 

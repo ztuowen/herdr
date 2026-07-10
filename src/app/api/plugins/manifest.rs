@@ -1,8 +1,8 @@
 use crate::api::schema::{
     InstalledPluginInfo, PluginApiVersion, PluginCapability, PluginManifestAction,
     PluginManifestBuild, PluginManifestClientSpeech, PluginManifestEventHook,
-    PluginManifestLinkHandler, PluginManifestPane, PluginManifestResource, PluginPanePlacement,
-    PluginPlatform, PluginSourceInfo, PluginSourceKind,
+    PluginManifestLinkHandler, PluginManifestMarkdown, PluginManifestPane, PluginManifestResource,
+    PluginPanePlacement, PluginPlatform, PluginSourceInfo, PluginSourceKind,
 };
 
 const PLUGIN_ID_MAX_CHARS: usize = 120;
@@ -39,6 +39,8 @@ struct RawPluginManifest {
     resources: Vec<RawPluginManifestResource>,
     #[serde(default)]
     client_speech: RawPluginManifestClientSpeech,
+    #[serde(default)]
+    markdown: RawPluginManifestMarkdown,
 }
 
 #[derive(serde::Deserialize)]
@@ -112,6 +114,18 @@ struct RawPluginManifestClientSpeech {
     transform_transcript: Option<String>,
     #[serde(default)]
     insert_transcript: Option<String>,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct RawPluginManifestMarkdown {
+    #[serde(default)]
+    transform_document: Option<String>,
+    #[serde(default)]
+    export_document: Option<String>,
+    #[serde(default)]
+    render_math: Option<String>,
+    #[serde(default)]
+    preview_pane: Option<String>,
 }
 
 /// Raw string platform value from the manifest, validated before conversion.
@@ -208,6 +222,7 @@ pub(crate) fn load_plugin_manifest(
     reject_duplicate_link_handler_ids(&link_handlers)?;
     validate_link_handler_actions(&link_handlers, &actions)?;
     let client_speech = normalize_manifest_client_speech(raw.client_speech, &actions)?;
+    let markdown = normalize_manifest_markdown(raw.markdown, &actions, &panes)?;
     let mut resources = raw
         .resources
         .into_iter()
@@ -224,6 +239,7 @@ pub(crate) fn load_plugin_manifest(
         &link_handlers,
         &resources,
         &client_speech,
+        &markdown,
     )?;
 
     let mut warnings = validate_event_names(&events);
@@ -250,6 +266,7 @@ pub(crate) fn load_plugin_manifest(
         link_handlers,
         resources,
         client_speech,
+        markdown,
         source: Default::default(),
         warnings,
     })
@@ -484,6 +501,72 @@ fn normalize_manifest_client_speech(
     })
 }
 
+fn normalize_manifest_markdown(
+    markdown: RawPluginManifestMarkdown,
+    actions: &[PluginManifestAction],
+    panes: &[PluginManifestPane],
+) -> Result<PluginManifestMarkdown, (&'static str, String)> {
+    Ok(PluginManifestMarkdown {
+        transform_document: normalize_markdown_action(
+            markdown.transform_document,
+            "transform_document",
+            actions,
+        )?,
+        export_document: normalize_markdown_action(
+            markdown.export_document,
+            "export_document",
+            actions,
+        )?,
+        render_math: normalize_markdown_action(markdown.render_math, "render_math", actions)?,
+        preview_pane: normalize_markdown_pane(markdown.preview_pane, panes)?,
+    })
+}
+
+fn normalize_markdown_action(
+    value: Option<String>,
+    field: &str,
+    actions: &[PluginManifestAction],
+) -> Result<Option<String>, (&'static str, String)> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let action_id = normalize_action_id(&value).ok_or_else(|| {
+        (
+            "invalid_plugin_markdown_action",
+            format!("markdown.{field} references an invalid action id"),
+        )
+    })?;
+    if !actions.iter().any(|action| action.id == action_id) {
+        return Err((
+            "invalid_plugin_markdown_action",
+            format!("markdown.{field} references unknown action '{action_id}'"),
+        ));
+    }
+    Ok(Some(action_id))
+}
+
+fn normalize_markdown_pane(
+    value: Option<String>,
+    panes: &[PluginManifestPane],
+) -> Result<Option<String>, (&'static str, String)> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let pane_id = normalize_action_id(&value).ok_or_else(|| {
+        (
+            "invalid_plugin_markdown_pane",
+            "markdown.preview_pane references an invalid pane id".to_string(),
+        )
+    })?;
+    if !panes.iter().any(|pane| pane.id == pane_id) {
+        return Err((
+            "invalid_plugin_markdown_pane",
+            format!("markdown.preview_pane references unknown pane '{pane_id}'"),
+        ));
+    }
+    Ok(Some(pane_id))
+}
+
 fn normalize_client_speech_action(
     value: Option<String>,
     field: &str,
@@ -516,6 +599,7 @@ fn normalize_capabilities(
     link_handlers: &[PluginManifestLinkHandler],
     resources: &[PluginManifestResource],
     client_speech: &PluginManifestClientSpeech,
+    markdown: &PluginManifestMarkdown,
 ) -> Result<Vec<PluginCapability>, (&'static str, String)> {
     let mut capabilities = if raw.is_empty() && api_version == PluginApiVersion::V1 {
         inferred_v1_capabilities(actions, events, panes, link_handlers, resources)
@@ -537,6 +621,12 @@ fn normalize_capabilities(
         return Err((
             "plugin_api_version_required",
             "[client_speech] requires api_version = 2".to_string(),
+        ));
+    }
+    if api_version == PluginApiVersion::V1 && !markdown.is_empty() {
+        return Err((
+            "plugin_api_version_required",
+            "[markdown] requires api_version = 2".to_string(),
         ));
     }
     if api_version == PluginApiVersion::V2 {
@@ -566,6 +656,12 @@ fn normalize_capabilities(
             !client_speech.is_empty(),
             "client_speech",
         )?;
+        require_capability_for_item(
+            &capabilities,
+            PluginCapability::Markdown,
+            !markdown.is_empty(),
+            "markdown",
+        )?;
     }
 
     Ok(capabilities)
@@ -581,6 +677,7 @@ fn normalize_capability(value: &str) -> Result<PluginCapability, (&'static str, 
         "resources" => Ok(PluginCapability::Resources),
         "notifications" => Ok(PluginCapability::Notifications),
         "client-speech" => Ok(PluginCapability::ClientSpeech),
+        "markdown" => Ok(PluginCapability::Markdown),
         other => Err((
             "invalid_plugin_capability",
             format!("unknown plugin capability '{other}'"),
@@ -667,6 +764,7 @@ fn capability_name(capability: PluginCapability) -> &'static str {
         PluginCapability::Resources => "resources",
         PluginCapability::Notifications => "notifications",
         PluginCapability::ClientSpeech => "client-speech",
+        PluginCapability::Markdown => "markdown",
     }
 }
 

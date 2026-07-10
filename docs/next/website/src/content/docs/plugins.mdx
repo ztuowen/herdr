@@ -399,10 +399,11 @@ transform_transcript = "transform-transcript"
 The `client_speech` table may reference action ids for `start_dictation`,
 `stop_dictation`, `transform_transcript`, and `insert_transcript`. Herdr
 validates that each referenced action exists and that the manifest declares the
-`client-speech` capability. Client adapters use ordinary `plugin.action.invoke`
-calls for these hooks and can pass transcript text as a transient action
-payload. Herdr does not add `speech.*` socket methods, persist raw audio, or
-store speech provider credentials in plugin payloads.
+`client-speech` capability. Herdr invokes `start_dictation` after recording
+starts and `stop_dictation` when recording stops, using ordinary plugin action
+commands with transient JSON payloads. Transcript transform/insert hooks remain
+client adapter extension points. Herdr does not add `speech.*` socket methods,
+persist raw audio, or store speech provider credentials in plugin payloads.
 
 ## Events
 

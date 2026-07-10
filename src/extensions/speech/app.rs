@@ -163,13 +163,14 @@ impl App {
             if let Err(e) = self
                 .event_tx
                 .try_send(crate::events::AppEvent::SpeechStartRecording {
-                    workspace_id,
+                    workspace_id: workspace_id.clone(),
                     pane_id,
                     is_agent,
                 })
             {
                 tracing::error!("failed to send SpeechStartRecording: {:?}", e);
             }
+            crate::extensions::speech::hooks::emit_start_dictation(self, &workspace_id, is_agent);
             return true;
         }
 
@@ -205,7 +206,7 @@ impl App {
             return false;
         }
 
-        self.state.extensions.recording_workspace = Some(workspace_id);
+        self.state.extensions.recording_workspace = Some(workspace_id.clone());
         self.state.extensions.live_transcription = Some(String::new());
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::Finished,
@@ -215,12 +216,14 @@ impl App {
             target: None,
         });
 
+        crate::extensions::speech::hooks::emit_start_dictation(self, &workspace_id, is_agent);
         true
     }
 
     pub(crate) fn stop_recording(&mut self, abort: bool) {
         let was_recording = self.extensions.speech_recorder.is_recording();
         let pipeline = self.extensions.speech_recorder.stop();
+        let had_recording = was_recording || pipeline.is_some();
 
         if !was_recording && !abort {
             return;
@@ -253,6 +256,9 @@ impl App {
             {
                 tracing::error!("failed to send SpeechStopRecording: {:?}", e);
             }
+        }
+        if had_recording {
+            crate::extensions::speech::hooks::emit_stop_dictation(self, abort);
         }
 
         if abort {

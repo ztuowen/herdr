@@ -3,6 +3,7 @@ pub mod audio;
 pub(crate) mod client;
 pub mod events;
 pub mod gemini;
+pub(crate) mod hooks;
 pub mod input;
 pub mod pipeline;
 pub(crate) mod server;

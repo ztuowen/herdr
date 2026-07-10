@@ -10,10 +10,10 @@ mod storage;
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
     InstalledPluginInfo, PluginActionInfo, PluginActionInvokeParams, PluginActionListParams,
-    PluginLinkParams, PluginListParams, PluginLogListParams, PluginManifestAction,
-    PluginManifestLinkHandler, PluginPaneCloseParams, PluginPaneFocusParams, PluginPaneInfo,
-    PluginPaneOpenParams, PluginPanePlacement, PluginSetEnabledParams, PluginUnlinkParams,
-    ResponseResult,
+    PluginCapability, PluginCommandLogInfo, PluginLinkParams, PluginListParams,
+    PluginLogListParams, PluginManifestAction, PluginManifestLinkHandler, PluginPaneCloseParams,
+    PluginPaneFocusParams, PluginPaneInfo, PluginPaneOpenParams, PluginPanePlacement,
+    PluginSetEnabledParams, PluginUnlinkParams, ResponseResult,
 };
 use crate::app::App;
 use manifest::{
@@ -227,6 +227,44 @@ impl App {
             None,
         )
         .map(|_| ())
+        .map_err(|(_, message)| message)
+    }
+
+    pub(crate) fn invoke_plugin_action_internal(
+        &mut self,
+        plugin_id: &str,
+        action_id: &str,
+        invocation_source: &str,
+        payload: serde_json::Value,
+    ) -> Result<PluginCommandLogInfo, String> {
+        let (plugin, action) = self
+            .find_plugin_action(Some(plugin_id), action_id)
+            .map_err(|(_, message)| message)?;
+        if !plugin.enabled {
+            return Err(format!("plugin {} is disabled", plugin.plugin_id));
+        }
+        if !manifest::plugin_has_capability(&plugin, PluginCapability::Actions) {
+            return Err(format!(
+                "plugin {} does not declare the actions capability",
+                plugin.plugin_id
+            ));
+        }
+        ensure_platform_supported(
+            effective_platforms(&action.platforms, &plugin.platforms),
+            &action.qualified_id(),
+        )
+        .map_err(|(_, message)| message)?;
+        let mut context = self.current_plugin_context(invocation_source);
+        context.invocation_source = Some(invocation_source.to_string());
+        self.start_plugin_command(
+            &plugin,
+            Some(action.action_id),
+            None,
+            action.command,
+            &context,
+            Some(payload),
+            None,
+        )
         .map_err(|(_, message)| message)
     }
 

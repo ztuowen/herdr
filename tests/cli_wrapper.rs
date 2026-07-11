@@ -1608,7 +1608,7 @@ fn integration_commands_run_locally_when_server_is_missing() {
         .unwrap();
     assert_eq!(integration_status.status.code(), Some(0));
     let status_stdout = String::from_utf8_lossy(&integration_status.stdout);
-    assert!(status_stdout.contains("pi: current (v4)"));
+    assert!(status_stdout.contains("pi: current (v5)"));
     assert!(status_stdout.contains("claude: not installed"));
 
     let integration_uninstall = Command::new(env!("CARGO_BIN_EXE_herdr"))
@@ -1704,7 +1704,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {full_stdout}"
     );
     assert!(
-        full_stdout.contains("  protocol: 15"),
+        full_stdout.contains("  protocol: 16"),
         "stdout: {full_stdout}"
     );
     assert!(full_stdout.contains("server:\n"), "stdout: {full_stdout}");
@@ -1737,7 +1737,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {server_stdout}"
     );
     assert!(
-        server_stdout.contains("protocol: 15"),
+        server_stdout.contains("protocol: 16"),
         "stdout: {server_stdout}"
     );
 
@@ -1749,7 +1749,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {client_stdout}"
     );
     assert!(
-        client_stdout.contains("protocol: 15"),
+        client_stdout.contains("protocol: 16"),
         "stdout: {client_stdout}"
     );
     assert!(
@@ -1759,7 +1759,7 @@ fn status_commands_report_client_and_server_versions() {
 
     let full_json = run_cli_json(&socket_path, &["status", "--json"]);
     assert_eq!(full_json["client"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(full_json["client"]["protocol"], 15);
+    assert_eq!(full_json["client"]["protocol"], 16);
     assert_eq!(full_json["server"]["status"], "running");
     assert_eq!(full_json["server"]["running"], true);
     assert_eq!(full_json["server"]["compatible"], true);
@@ -1773,12 +1773,12 @@ fn status_commands_report_client_and_server_versions() {
     let server_json = run_cli_json(&socket_path, &["status", "server", "--json"]);
     assert_eq!(server_json["status"], "running");
     assert_eq!(server_json["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(server_json["protocol"], 15);
+    assert_eq!(server_json["protocol"], 16);
     assert_eq!(server_json["compatible"], true);
 
     let client_json = run_cli_json(&socket_path, &["status", "client", "--json"]);
     assert_eq!(client_json["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(client_json["protocol"], 15);
+    assert_eq!(client_json["protocol"], 16);
     assert!(client_json["binary"]
         .as_str()
         .is_some_and(|path| !path.is_empty()));
@@ -1840,25 +1840,19 @@ fn server_stop_command_shuts_down_running_server() {
         "server stop should not print stdout: {}",
         String::from_utf8_lossy(&stopped.stdout)
     );
+    assert!(
+        !socket_path.exists() || UnixStream::connect(&socket_path).is_err(),
+        "api socket should be removed or stale before server stop returns"
+    );
+    assert!(
+        !client_socket.exists() || UnixStream::connect(&client_socket).is_err(),
+        "client socket should be removed or stale before server stop returns"
+    );
 
     let pid = herdr.child.process_id();
     let exit_status = herdr.child.wait().unwrap();
     unregister_spawned_herdr_pid(pid);
     assert!(exit_status.success(), "server stop should exit cleanly");
-
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline && (socket_path.exists() || client_socket.exists()) {
-        thread::sleep(Duration::from_millis(25));
-    }
-
-    assert!(
-        !socket_path.exists() || UnixStream::connect(&socket_path).is_err(),
-        "api socket should be removed or stale after server stop"
-    );
-    assert!(
-        !client_socket.exists() || UnixStream::connect(&client_socket).is_err(),
-        "client socket should be removed or stale after server stop"
-    );
 
     cleanup_spawned_herdr(herdr, base);
 }
@@ -2454,6 +2448,79 @@ fn worktree_open_existing_checkout_by_path_and_branch() {
     assert_eq!(removed["result"]["type"], "worktree_removed");
 
     cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn config_check_reports_invalid_config_without_server() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let config_dir = config_home.join(app_dir_name());
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("config.toml"),
+        "[keys\nnew_workspace = \"g\"\n",
+    )
+    .unwrap();
+
+    let checked = run_named_cli(&config_home, &runtime_dir, &["config", "check"]);
+
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(
+        checked.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert!(stdout.contains("config: issues found"), "{stdout}");
+    assert!(stdout.contains("TOML parse error"), "{stdout}");
+    assert!(stdout.contains("line 1"), "{stdout}");
+
+    fs::write(
+        config_dir.join("config.toml"),
+        "[ui]\nsidebar_min_width = 50\nsidebar_max_width = 30\n",
+    )
+    .unwrap();
+    let checked = run_named_cli(&config_home, &runtime_dir, &["config", "check"]);
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(stdout.contains("sidebar_min_width (50)"), "{stdout}");
+    assert!(stdout.contains("sidebar_max_width (30)"), "{stdout}");
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn config_check_reports_ok_when_config_is_missing() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+
+    let checked = run_named_cli(&config_home, &runtime_dir, &["config", "check"]);
+
+    assert!(checked.status.success());
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert!(stdout.contains("config: ok"), "{stdout}");
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn config_check_rejects_json_output() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+
+    let checked = run_named_cli(&config_home, &runtime_dir, &["config", "check", "--json"]);
+
+    assert_eq!(checked.status.code(), Some(2));
+    assert!(checked.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&checked.stderr),
+        "usage: herdr config check\n"
+    );
+
+    cleanup_test_base(&base);
 }
 
 #[test]

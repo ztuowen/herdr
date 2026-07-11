@@ -147,7 +147,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 [update]
 # Update channel used by background version checks and `herdr update`.
-# Use "stable" for normal releases or "preview" for opt-in preview builds.
+# Defaults to "stable" on Linux/macOS and "preview" on Windows.
+# Set explicitly to choose stable releases or opt-in preview builds.
 # channel = "stable"
 
 # Check herdr.dev for new Herdr versions in the background.
@@ -226,6 +227,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Custom commands use the same binding syntax.
 # type = "shell" runs detached in the background.
 # type = "pane" opens a temporary pane and closes it when the command exits.
+# On Windows, command strings run through cmd.exe /d /c.
 # [[keys.command]]
 # key = "prefix+alt+g"
 # type = "pane"
@@ -263,8 +265,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Pane apps like lazygit and btop can still receive mouse when they request it.
 # mouse_capture = true
 
+# Copy text selected by mouse drag or double-click.
+# Set false to disable mouse text selection and copying.
+# copy_on_select = true
+
 # Host cursor policy: "auto", "native", or "drawn".
-# "auto" draws Herdr's own cursor on Windows to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "auto" draws Herdr's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
 # "native" always uses the outer terminal cursor. "drawn" always draws Herdr's cursor as terminal cell content.
 # host_cursor = "auto"
 
@@ -702,7 +708,13 @@ fn main() -> io::Result<()> {
     }
 
     if let Some(remote_launch) = remote_launch {
-        return remote::run_remote(remote_launch);
+        let remote_target = remote_launch.target.clone();
+        if let Err(err) = remote::run_remote(remote_launch) {
+            eprintln!("error: {err}");
+            remote::print_remote_error_hint(&err, &remote_target);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let loaded_config = config::Config::load();

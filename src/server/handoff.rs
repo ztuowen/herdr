@@ -80,6 +80,13 @@ pub(crate) fn spawn_handoff_import(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    if crate::session::explicit_session_requested() {
+        // The import child no longer has the original `--session` argument, so
+        // stale socket overrides must not mask the inherited HERDR_SESSION.
+        command
+            .env_remove(crate::api::SOCKET_PATH_ENV_VAR)
+            .env_remove(crate::server::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR);
+    }
     crate::platform::detach_server_daemon_command(&mut command);
     command.spawn().map_err(|err| {
         io::Error::new(
@@ -371,7 +378,7 @@ fn send_fds(stream: &UnixStream, fds: &[RawFd]) -> io::Result<()> {
     if fds.is_empty() {
         return Ok(());
     }
-    let byte = [b'F'];
+    let byte = *b"F";
     let iov = [libc::iovec {
         iov_base: byte.as_ptr() as *mut libc::c_void,
         iov_len: byte.len(),

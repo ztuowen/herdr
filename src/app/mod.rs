@@ -129,6 +129,7 @@ pub struct App {
     pub(crate) selection_autoscroll_deadline: Option<Instant>,
     pub(crate) selection_highlight_clear_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
+    pub(crate) session_save_thread: Option<std::thread::JoinHandle<()>>,
     pub(crate) persist_pane_history: bool,
     pub(crate) last_render_at: Option<Instant>,
     pub(crate) suppressed_repeat_keys:
@@ -138,6 +139,10 @@ pub struct App {
     pub(crate) full_redraw_pending: bool,
     pub(crate) overlay_panes: HashMap<crate::layout::PaneId, OverlayPaneState>,
     pub(crate) local_terminal_notifications: bool,
+    /// Whether this process applies `AppEvent::PrefixInputSource` to the host input source.
+    /// The headless server sets this to false: the switch belongs to the foreground client,
+    /// even when an App-internal drain consumes the event before the forwarding drain.
+    pub(crate) local_input_source_switch: bool,
     pub(crate) config_reloaded_from_disk: bool,
     // Allow dead code on extensions runtime when speech or kanban features are disabled in build.
     #[allow(dead_code)]
@@ -609,6 +614,7 @@ impl App {
             agent_panel_sort,
             next_agent_state_change_seq: 0,
             mouse_capture: config.ui.mouse_capture,
+            copy_on_select: config.ui.copy_on_select,
             right_click_passthrough_modifiers: config.ui.right_click_passthrough_modifiers(),
             right_click_passthrough: None,
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
@@ -735,6 +741,7 @@ impl App {
             agent_metadata_deadline: None,
             pending_agent_resume_deadline: None,
             session_save_deadline: None,
+            session_save_thread: None,
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
             persist_pane_history: config.experimental.pane_history,
@@ -751,6 +758,7 @@ impl App {
             full_redraw_pending: false,
             overlay_panes: HashMap::new(),
             local_terminal_notifications: true,
+            local_input_source_switch: true,
             config_reloaded_from_disk: false,
             extensions: crate::extensions::ExtensionsRuntime::new(),
             release_events_supported: false,
@@ -846,15 +854,23 @@ impl App {
     }
 
     pub(crate) fn sync_prefix_input_source(&mut self, previous_mode: Mode) {
-        match (
-            previous_mode == Mode::Prefix,
-            self.state.mode == Mode::Prefix,
+        // Emit the input-source intent on entering/leaving the ASCII realm, like `ClipboardWrite`;
+        // the foreground (client, or this app in monolithic mode) applies the switch. Keyed on the
+        // realm so multi-level prefix commands stay ASCII. The switch is flag-gated but the restore
+        // always fires on exit, so a mid-interaction flag toggle can't strand the host on ASCII.
+        let active = match (
+            previous_mode.wants_ascii_input(),
+            self.state.mode.wants_ascii_input(),
         ) {
-            (false, true) if self.state.switch_ascii_input_source_in_prefix => {
-                self.prefix_input_source.switch_to_ascii();
-            }
-            (true, false) => self.prefix_input_source.restore(),
-            _ => {}
+            (false, true) if self.state.switch_ascii_input_source_in_prefix => true,
+            (true, false) => false,
+            _ => return,
+        };
+        if let Err(err) = self
+            .event_tx
+            .try_send(crate::events::AppEvent::PrefixInputSource { active })
+        {
+            tracing::warn!(active, %err, "failed to queue prefix input-source change");
         }
     }
 
@@ -1317,16 +1333,8 @@ impl App {
             // On `min > max`, treat the entire `[ui]` section as invalid: keep
             // the previous settings and skip the section so the re-clamp below
             // — and every subsequent render/drag — can never panic.
-            if crate::config::validated_sidebar_bounds(
-                config.ui.sidebar_min_width,
-                config.ui.sidebar_max_width,
-            )
-            .is_none()
-            {
-                diagnostics.push(format!(
-                    "ui.sidebar_min_width ({}) is greater than sidebar_max_width ({}); keeping previous [ui] settings",
-                    config.ui.sidebar_min_width, config.ui.sidebar_max_width,
-                ));
+            if let Some(diagnostic) = config.invalid_sidebar_bounds_diagnostic() {
+                diagnostics.push(format!("{diagnostic}; keeping previous [ui] settings"));
             } else {
                 diagnostics.extend(config.ui.sound.diagnostics());
 
@@ -1345,6 +1353,17 @@ impl App {
                     .sidebar_width
                     .clamp(self.state.sidebar_min_width, self.state.sidebar_max_width);
                 self.state.mouse_capture = config.ui.mouse_capture;
+                self.state.copy_on_select = config.ui.copy_on_select;
+                if !self.state.copy_on_select {
+                    if self.state.mode == Mode::Copy {
+                        self.state.stop_selection_autoscroll_state();
+                    } else {
+                        self.state.clear_selection();
+                    }
+                    self.last_pane_click = None;
+                    self.selection_autoscroll_deadline = None;
+                    self.selection_highlight_clear_deadline = None;
+                }
                 if self.state.redraw_on_focus_gained != config.ui.redraw_on_focus_gained {
                     self.state.request_client_config_reload = true;
                 }
@@ -1746,6 +1765,14 @@ pub(crate) mod tests {
         )
     }
 
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("herdr-{name}-{}-{stamp}", std::process::id()))
+    }
+
     #[cfg(windows)]
     fn exiting_test_command() -> &'static str {
         "C:\\Windows\\System32\\whoami.exe"
@@ -1795,83 +1822,171 @@ pub(crate) mod tests {
         }
     }
 
+    /// Drain the app event channel, returning the `active` flags of any emitted
+    /// `PrefixInputSource` events (the host-local input-source intents).
+    fn drained_prefix_active(app: &mut App) -> Vec<bool> {
+        let mut out = Vec::new();
+        while let Ok(ev) = app.event_rx.try_recv() {
+            if let crate::events::AppEvent::PrefixInputSource { active } = ev {
+                out.push(active);
+            }
+        }
+        out
+    }
+
     #[test]
-    fn sync_prefix_input_source_switches_then_restores_when_enabled() {
+    fn sync_prefix_input_source_emits_switch_then_restore_when_enabled() {
         let mut app = test_app();
         app.state.switch_ascii_input_source_in_prefix = true;
+
+        // Terminal -> Prefix emits the ASCII-switch intent.
+        app.state.mode = Mode::Prefix;
+        app.sync_prefix_input_source(Mode::Terminal);
+        assert_eq!(drained_prefix_active(&mut app), vec![true]);
+
+        // Prefix -> Terminal emits the restore intent.
+        app.state.mode = Mode::Terminal;
+        app.sync_prefix_input_source(Mode::Prefix);
+        assert_eq!(drained_prefix_active(&mut app), vec![false]);
+    }
+
+    #[test]
+    fn sync_prefix_input_source_does_not_emit_switch_when_flag_disabled() {
+        let mut app = test_app();
+        app.state.switch_ascii_input_source_in_prefix = false;
+
+        // Entering the realm with the flag off emits nothing.
+        app.state.mode = Mode::Prefix;
+        app.sync_prefix_input_source(Mode::Terminal);
+        assert!(drained_prefix_active(&mut app).is_empty());
+
+        // Leaving the realm still emits the restore (harmless if nothing was switched), so a
+        // mid-interaction flag toggle can't strand the host on ASCII.
+        app.state.mode = Mode::Terminal;
+        app.sync_prefix_input_source(Mode::Prefix);
+        assert_eq!(drained_prefix_active(&mut app), vec![false]);
+    }
+
+    #[test]
+    fn mode_wants_ascii_input_classification() {
+        // Allowlist: the prefix command/navigation realm wants ASCII.
+        for mode in [
+            Mode::Prefix,
+            Mode::Navigate,
+            Mode::Navigator,
+            Mode::Copy,
+            Mode::Resize,
+            Mode::ConfirmClose,
+            Mode::ConfirmRemoveWorktree,
+            Mode::ContextMenu,
+            Mode::GlobalMenu,
+            Mode::KeybindHelp,
+        ] {
+            assert!(mode.wants_ascii_input(), "{mode:?} should want ASCII");
+        }
+        // Everything else (terminal, text entry, startup overlays) keeps the user's IME.
+        for mode in [
+            Mode::Terminal,
+            Mode::RenameWorkspace,
+            Mode::RenameTab,
+            Mode::RenamePane,
+            Mode::NewLinkedWorktree,
+            Mode::OpenExistingWorktree,
+            Mode::Settings,
+            Mode::Onboarding,
+            Mode::ReleaseNotes,
+            Mode::ProductAnnouncement,
+        ] {
+            assert!(!mode.wants_ascii_input(), "{mode:?} should keep the IME");
+        }
+    }
+
+    #[test]
+    fn sync_prefix_input_source_keeps_realm_across_multi_level_prefix_commands() {
+        let mut app = test_app();
+        app.state.switch_ascii_input_source_in_prefix = true;
+
+        // Terminal -> Prefix switches once.
+        app.state.mode = Mode::Prefix;
+        app.sync_prefix_input_source(Mode::Terminal);
+        assert_eq!(drained_prefix_active(&mut app), vec![true]);
+
+        // Prefix -> sub-mode and sub-mode -> sub-mode stay in the realm: no emit.
+        app.state.mode = Mode::Navigator;
+        app.sync_prefix_input_source(Mode::Prefix);
+        app.state.mode = Mode::Resize;
+        app.sync_prefix_input_source(Mode::Navigator);
+        assert!(
+            drained_prefix_active(&mut app).is_empty(),
+            "must not switch or restore while still in the realm"
+        );
+
+        // Leaving the realm back to the terminal restores.
+        app.state.mode = Mode::Terminal;
+        app.sync_prefix_input_source(Mode::Resize);
+        assert_eq!(drained_prefix_active(&mut app), vec![false]);
+    }
+
+    #[test]
+    fn sync_prefix_input_source_restores_when_entering_rename_text_mode() {
+        let mut app = test_app();
+        app.state.switch_ascii_input_source_in_prefix = true;
+
+        app.state.mode = Mode::Prefix;
+        app.sync_prefix_input_source(Mode::Terminal);
+        assert_eq!(drained_prefix_active(&mut app), vec![true]);
+
+        // Prefix -> RenameTab leaves the realm (text entry wants the IME): restore.
+        app.state.mode = Mode::RenameTab;
+        app.sync_prefix_input_source(Mode::Prefix);
+        assert_eq!(drained_prefix_active(&mut app), vec![false]);
+    }
+
+    #[test]
+    fn handle_internal_event_prefix_input_source_applies_switch_and_restore() {
+        // The monolithic (in-process) path applies the host switch when it consumes the event.
+        let mut app = test_app();
         let fake = FakePrefixInputSource::switching();
         let switch_calls = fake.switch_calls.clone();
         let restore_calls = fake.restore_calls.clone();
         app.set_prefix_input_source(Box::new(fake));
 
-        // Terminal -> Prefix should switch to ASCII.
-        app.state.mode = Mode::Prefix;
-        app.sync_prefix_input_source(Mode::Terminal);
+        app.handle_internal_event(crate::events::AppEvent::PrefixInputSource { active: true });
         assert_eq!(switch_calls.get(), 1);
         assert_eq!(restore_calls.get(), 0);
 
-        // Prefix -> Terminal should restore the saved source.
-        app.state.mode = Mode::Terminal;
-        app.sync_prefix_input_source(Mode::Prefix);
-        assert_eq!(switch_calls.get(), 1);
+        app.handle_internal_event(crate::events::AppEvent::PrefixInputSource { active: false });
         assert_eq!(restore_calls.get(), 1);
     }
 
     #[test]
-    fn sync_prefix_input_source_is_noop_when_flag_disabled() {
+    fn handle_internal_event_prefix_input_source_restore_is_safe_when_switch_was_noop() {
+        // Already-ASCII / failed-switch case: the restore on leave must stay harmless.
         let mut app = test_app();
-        app.state.switch_ascii_input_source_in_prefix = false;
-        let fake = FakePrefixInputSource::switching();
-        let switch_calls = fake.switch_calls.clone();
-        let restore_calls = fake.restore_calls.clone();
-        app.set_prefix_input_source(Box::new(fake));
-
-        app.state.mode = Mode::Prefix;
-        app.sync_prefix_input_source(Mode::Terminal);
-        app.state.mode = Mode::Terminal;
-        app.sync_prefix_input_source(Mode::Prefix);
-
-        assert_eq!(switch_calls.get(), 0);
-        assert_eq!(restore_calls.get(), 0);
-    }
-
-    #[test]
-    fn sync_prefix_input_source_restore_is_safe_when_switch_was_noop() {
-        // Simulates the already-ASCII / failed-switch case: switch reports no
-        // change, and the later restore on leave must stay harmless.
-        let mut app = test_app();
-        app.state.switch_ascii_input_source_in_prefix = true;
         let fake = FakePrefixInputSource::no_op();
         let switch_calls = fake.switch_calls.clone();
         let restore_calls = fake.restore_calls.clone();
         app.set_prefix_input_source(Box::new(fake));
 
-        app.state.mode = Mode::Prefix;
-        app.sync_prefix_input_source(Mode::Terminal);
-        app.state.mode = Mode::Terminal;
-        app.sync_prefix_input_source(Mode::Prefix);
-
+        app.handle_internal_event(crate::events::AppEvent::PrefixInputSource { active: true });
+        app.handle_internal_event(crate::events::AppEvent::PrefixInputSource { active: false });
         assert_eq!(switch_calls.get(), 1);
         assert_eq!(restore_calls.get(), 0);
     }
 
     #[tokio::test]
-    async fn raw_input_dispatch_restores_input_source_when_leaving_prefix() {
-        // Leaving prefix mode happens inside the raw-input dispatch, not in
-        // `handle_key` itself — the sync must sit at the dispatch layer so any
-        // event that exits prefix (here Esc) still restores the host source.
+    async fn raw_input_dispatch_emits_input_source_intent_when_leaving_prefix() {
+        // Leaving prefix mode happens inside the raw-input dispatch, not in `handle_key` itself —
+        // the sync must sit at the dispatch layer so any event that exits prefix (here Esc) still
+        // emits the restore intent.
         let mut app = test_app();
         app.state.switch_ascii_input_source_in_prefix = true;
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
-        let fake = FakePrefixInputSource::switching();
-        let switch_calls = fake.switch_calls.clone();
-        let restore_calls = fake.restore_calls.clone();
-        app.set_prefix_input_source(Box::new(fake));
 
-        // ctrl+b (the default prefix key) enters prefix mode → switch edge.
+        // ctrl+b (the default prefix key) enters prefix mode → switch intent.
         app.handle_raw_input_event(raw_key(
             KeyCode::Char('b'),
             KeyModifiers::CONTROL,
@@ -1879,11 +1994,9 @@ pub(crate) mod tests {
         ))
         .await;
         assert_eq!(app.state.mode, Mode::Prefix);
-        assert_eq!(switch_calls.get(), 1);
-        assert_eq!(restore_calls.get(), 0);
+        assert_eq!(drained_prefix_active(&mut app), vec![true]);
 
-        // Esc leaves prefix mode → restore edge, even though the exit is decided
-        // below `handle_key`.
+        // Esc leaves prefix mode → restore intent.
         app.handle_raw_input_event(raw_key(
             KeyCode::Esc,
             KeyModifiers::empty(),
@@ -1891,7 +2004,7 @@ pub(crate) mod tests {
         ))
         .await;
         assert_eq!(app.state.mode, Mode::Terminal);
-        assert_eq!(restore_calls.get(), 1);
+        assert_eq!(drained_prefix_active(&mut app), vec![false]);
     }
 
     fn config_env_lock() -> &'static Mutex<()> {
@@ -2443,12 +2556,35 @@ pub(crate) mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
+            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\ncopy_on_select = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
 
         let mut app = test_app();
+        let selection_pane = crate::layout::PaneId::alloc();
+        app.state.selection = Some(crate::selection::Selection::range(
+            selection_pane,
+            0,
+            0,
+            1,
+            None,
+        ));
+        app.state.selection_autoscroll = Some(state::SelectionAutoscroll {
+            direction: state::SelectionAutoscrollDirection::Down,
+            last_mouse_screen_col: 1,
+            last_mouse_screen_row: 1,
+            inner_rect: ratatui::layout::Rect::new(0, 0, 2, 2),
+        });
+        let selection_deadline = Instant::now();
+        app.selection_autoscroll_deadline = Some(selection_deadline);
+        app.selection_highlight_clear_deadline = Some(selection_deadline);
+        app.last_pane_click = Some(PaneClickState {
+            pane_id: selection_pane,
+            viewport_row: 0,
+            col: 0,
+            at: selection_deadline,
+        });
         app.next_auto_update_check = Some(Instant::now());
         app.next_agent_manifest_update_check = Some(Instant::now());
         let report = app.reload_config();
@@ -2467,6 +2603,24 @@ pub(crate) mod tests {
         );
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
         assert!(!app.state.redraw_on_focus_gained);
+        assert!(!app.state.copy_on_select);
+        assert!(app.state.selection.is_none());
+        assert!(app.state.selection_autoscroll.is_none());
+        assert!(app.selection_autoscroll_deadline.is_none());
+        assert!(app.selection_highlight_clear_deadline.is_none());
+        assert!(app.last_pane_click.is_none());
+
+        app.state.mode = Mode::Copy;
+        app.state.selection = Some(crate::selection::Selection::range(
+            selection_pane,
+            0,
+            0,
+            1,
+            None,
+        ));
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert!(app.state.selection.is_some());
         assert_eq!(
             app.state.right_click_passthrough_modifiers,
             Some(KeyModifiers::CONTROL)
@@ -2697,21 +2851,21 @@ pub(crate) mod tests {
 
         let report = app.reload_config();
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("sidebar_min_width")
+                && diagnostic.contains("sidebar_max_width")
+                && diagnostic.contains("greater")
+        }));
         assert_eq!(app.state.sidebar_min_width, original_min);
         assert_eq!(app.state.sidebar_max_width, original_max);
         assert_eq!(
             app.state.mouse_capture, original_mouse_capture,
             "[ui] is treated as invalid on bad bounds; mouse_capture must not apply"
         );
-        assert!(app
-            .state
-            .config_diagnostic
-            .as_deref()
-            .is_some_and(|message| {
-                message.contains("sidebar_min_width")
-                    && message.contains("sidebar_max_width")
-                    && message.contains("greater")
-            }));
+        assert_eq!(
+            app.state.config_diagnostic.as_deref(),
+            Some("config.toml; herdr config check")
+        );
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2734,6 +2888,9 @@ pub(crate) mod tests {
         let report = app.reload_config();
 
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("keys.new_workspace") && diagnostic.contains("disabling binding")
+        }));
         assert_eq!(
             (app.state.prefix_code, app.state.prefix_mods),
             original_prefix
@@ -2743,14 +2900,6 @@ pub(crate) mod tests {
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Terminal
         );
-        assert!(app
-            .state
-            .config_diagnostic
-            .as_deref()
-            .is_some_and(|message| {
-                message.contains("keys.new_workspace") && message.contains("disabling binding")
-            }));
-
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -2802,6 +2951,10 @@ pub(crate) mod tests {
         let report = app.reload_config();
 
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("invalid ui config")));
         assert!(app
             .state
             .keybinds
@@ -2811,12 +2964,6 @@ pub(crate) mod tests {
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Herdr
         );
-        assert!(app
-            .state
-            .config_diagnostic
-            .as_deref()
-            .is_some_and(|message| message.contains("invalid ui config")));
-
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -2840,6 +2987,10 @@ pub(crate) mod tests {
         let report = app.reload_config();
 
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("invalid terminal config")));
         assert_eq!(app.state.default_shell, original_default_shell);
         assert_eq!(app.state.shell_mode, original_shell_mode);
         assert_eq!(app.state.new_terminal_cwd, original_new_cwd);
@@ -2847,12 +2998,6 @@ pub(crate) mod tests {
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Terminal
         );
-        assert!(app
-            .state
-            .config_diagnostic
-            .as_deref()
-            .is_some_and(|message| message.contains("invalid terminal config")));
-
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -2958,7 +3103,7 @@ pub(crate) mod tests {
             .config_diagnostic
             .as_deref()
             .is_some_and(|message| {
-                message.contains("config parse error") && message.contains("keeping current config")
+                message.contains("config.toml:1:6") && message.contains("herdr config check")
             }));
         assert!(app.state.toast.is_none());
 
@@ -4025,6 +4170,71 @@ pub(crate) mod tests {
         app.handle_scheduled_tasks(Instant::now(), false);
 
         assert!(app.session_save_deadline.is_none());
+    }
+
+    #[test]
+    fn due_session_save_starts_background_writer() {
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let config_home = unique_temp_path("background-session-save");
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+
+        let mut app = test_app();
+        app.no_session = false;
+        app.state.workspaces = vec![Workspace::test_new("autosave")];
+        app.state.ensure_test_terminals();
+        app.session_save_deadline = Some(Instant::now() - Duration::from_secs(1));
+
+        app.handle_scheduled_tasks(Instant::now(), false);
+
+        assert!(app.session_save_thread.is_some());
+        assert!(app.session_save_deadline.is_none());
+        app.save_session_now();
+        assert!(crate::session::data_dir().join("session.json").exists());
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(config_home);
+    }
+
+    #[test]
+    fn background_session_save_reschedules_when_writer_is_busy() {
+        let mut app = test_app();
+        app.no_session = false;
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        app.session_save_thread = Some(std::thread::spawn(move || {
+            let _ = release_rx.recv();
+        }));
+
+        app.start_background_session_save();
+
+        assert!(app.session_save_thread.is_some());
+        assert!(app.session_save_deadline.is_some());
+
+        release_tx.send(()).unwrap();
+        app.no_session = true;
+        app.save_session_now();
+    }
+
+    #[test]
+    fn final_session_save_joins_background_writer_before_returning() {
+        let mut app = test_app();
+        app.no_session = true;
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        app.session_save_thread = Some(std::thread::spawn(move || {
+            let _ = release_rx.recv();
+            done_tx.send(()).unwrap();
+        }));
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            release_tx.send(()).unwrap();
+        });
+
+        app.save_session_now();
+
+        releaser.join().unwrap();
+        done_rx.try_recv().unwrap();
+        assert!(app.session_save_thread.is_none());
     }
 
     #[test]

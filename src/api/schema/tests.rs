@@ -443,6 +443,10 @@ fn subscribe_request_parses_parameterized_subscriptions() {
                     "type": "plugin.event",
                     "plugin_id": "example.board",
                     "event": "resource.updated"
+                },
+                {
+                    "type": "pane.scroll_changed",
+                    "pane_id": "p_1_1"
                 }
             ]
         }
@@ -453,7 +457,7 @@ fn subscribe_request_parses_parameterized_subscriptions() {
     let Method::EventsSubscribe(params) = request.method else {
         panic!("wrong method parsed");
     };
-    assert_eq!(params.subscriptions.len(), 3);
+    assert_eq!(params.subscriptions.len(), 4);
     assert!(matches!(
         &params.subscriptions[0],
         Subscription::PaneOutputMatched {
@@ -477,6 +481,10 @@ fn subscribe_request_parses_parameterized_subscriptions() {
             plugin_id: Some(plugin_id),
             event: Some(event),
         } if plugin_id == "example.board" && event == "resource.updated"
+    ));
+    assert!(matches!(
+        &params.subscriptions[3],
+        Subscription::PaneScrollChanged { pane_id } if pane_id == "p_1_1"
     ));
 }
 
@@ -502,6 +510,27 @@ fn subscription_event_envelope_round_trips() {
 
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"event\":\"pane.output_matched\""));
+    let restored: SubscriptionEventEnvelope = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, event);
+}
+
+#[test]
+fn scroll_changed_subscription_event_round_trips() {
+    let event = SubscriptionEventEnvelope {
+        event: SubscriptionEventKind::ScrollChanged,
+        data: SubscriptionEventData::ScrollChanged(PaneScrollChangedEvent {
+            pane_id: "p_1_1".into(),
+            workspace_id: "w_1".into(),
+            scroll: PaneScrollInfo {
+                offset_from_bottom: 12,
+                max_offset_from_bottom: 240,
+                viewport_rows: 30,
+            },
+        }),
+    };
+
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("\"event\":\"pane.scroll_changed\""));
     let restored: SubscriptionEventEnvelope = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, event);
 }
@@ -541,7 +570,7 @@ fn session_snapshot_request_and_response_round_trip() {
         result: ResponseResult::SessionSnapshot {
             snapshot: Box::new(SessionSnapshot {
                 version: "0.1.2".into(),
-                protocol: 15,
+                protocol: 16,
                 focused_workspace_id: None,
                 focused_tab_id: None,
                 focused_pane_id: None,
@@ -620,6 +649,7 @@ fn worktree_request_and_response_round_trip() {
                 custom_status: None,
                 state_labels: HashMap::new(),
                 agent_session: None,
+                scroll: None,
                 revision: 0,
             },
             worktree: WorktreeInfo {
@@ -1033,6 +1063,7 @@ fn create_response_round_trips_with_root_pane() {
                 custom_status: None,
                 state_labels: HashMap::new(),
                 agent_session: None,
+                scroll: None,
                 revision: 0,
             },
         },
@@ -1182,6 +1213,7 @@ fn plugin_pane_open_request_round_trips() {
                     custom_status: None,
                     state_labels: HashMap::new(),
                     agent_session: None,
+                    scroll: None,
                     revision: 0,
                 },
             },

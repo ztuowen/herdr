@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 15,
+  "protocol": 16,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -858,6 +858,16 @@
               "minimum": 0,
               "type": "integer"
             },
+            "scroll": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/PaneScrollInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "state_labels": {
               "additionalProperties": {
                 "type": "string"
@@ -1007,6 +1017,31 @@
             "direction",
             "ratio",
             "rect"
+          ],
+          "type": "object"
+        },
+        "PaneScrollInfo": {
+          "properties": {
+            "max_offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "viewport_rows": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "offset_from_bottom",
+            "max_offset_from_bottom",
+            "viewport_rows"
           ],
           "type": "object"
         },
@@ -3799,6 +3834,22 @@
             },
             {
               "properties": {
+                "pane_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "pane.scroll_changed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "pane_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "type": {
                   "const": "layout.updated",
                   "type": "string"
@@ -5877,6 +5928,50 @@
           ],
           "type": "object"
         },
+        "PaneScrollChangedEvent": {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "scroll": {
+              "$ref": "#/schemas/subscription_event/$defs/PaneScrollInfo"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "workspace_id",
+            "scroll"
+          ],
+          "type": "object"
+        },
+        "PaneScrollInfo": {
+          "properties": {
+            "max_offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "viewport_rows": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "offset_from_bottom",
+            "max_offset_from_bottom",
+            "viewport_rows"
+          ],
+          "type": "object"
+        },
         "ReadFormat": {
           "enum": [
             "text",
@@ -5933,6 +6028,9 @@
                 "item"
               ],
               "type": "object"
+            },
+            {
+              "$ref": "#/schemas/subscription_event/$defs/PaneScrollChangedEvent"
             }
           ]
         },
@@ -5942,7 +6040,8 @@
             "pane.agent_status_changed",
             "kanban.added",
             "kanban.updated",
-            "kanban.deleted"
+            "kanban.deleted",
+            "pane.scroll_changed"
           ],
           "type": "string"
         }
@@ -6997,6 +7096,9 @@
             "manifest_path": {
               "type": "string"
             },
+            "markdown": {
+              "$ref": "#/schemas/success_response/$defs/PluginManifestMarkdown"
+            },
             "min_herdr_version": {
               "default": "",
               "type": "string"
@@ -7401,6 +7503,16 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/PaneScrollInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "state_labels": {
               "additionalProperties": {
@@ -7836,6 +7948,31 @@
           ],
           "type": "object"
         },
+        "PaneScrollInfo": {
+          "properties": {
+            "max_offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "viewport_rows": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "offset_from_bottom",
+            "max_offset_from_bottom",
+            "viewport_rows"
+          ],
+          "type": "object"
+        },
         "PaneSwapReason": {
           "enum": [
             "no_neighbor",
@@ -8010,7 +8147,8 @@
             "storage",
             "resources",
             "notifications",
-            "client-speech"
+            "client-speech",
+            "markdown"
           ],
           "type": "string"
         },
@@ -8360,6 +8498,35 @@
             "pattern",
             "action"
           ],
+          "type": "object"
+        },
+        "PluginManifestMarkdown": {
+          "properties": {
+            "export_document": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "preview_pane": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "render_math": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "transform_document": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           "type": "object"
         },
         "PluginManifestPane": {

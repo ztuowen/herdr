@@ -10,8 +10,11 @@ Herdr works without a config file. Add one when you want custom keys, themes, si
 Herdr reads config from:
 
 ```text
-~/.config/herdr/config.toml
+Linux and macOS: ~/.config/herdr/config.toml
+Windows:          %APPDATA%\herdr\config.toml
 ```
+
+Run `herdr --help` to see the resolved config path for your system.
 
 Print the full default config:
 
@@ -71,7 +74,7 @@ Set the executable Herdr uses for newly created interactive panes:
 default_shell = "nu"
 ```
 
-When unset or empty, Herdr uses `$SHELL`, then `/bin/sh`. This is an executable name or path, not a shell command line. Existing panes keep their current shell until they are recreated. Command panes still run through `/bin/sh -c`; detached custom command keybindings use Herdr's existing `/bin/sh -lc` path.
+When unset or empty, Herdr uses `$SHELL`, then `/bin/sh` on Unix and PowerShell on Windows. This is an executable name or path, not a shell command line. Existing panes keep their current shell until they are recreated. Custom command keybinding strings run through `/bin/sh -c` for pane commands and `/bin/sh -lc` for detached commands on Unix; on Windows they run through `cmd.exe /d /c`.
 
 Set how Herdr starts newly created interactive pane shells:
 
@@ -257,6 +260,8 @@ An optional `description` can be provided. When specified, this description is d
 
 Custom commands receive `HERDR_SOCKET_PATH`, `HERDR_BIN_PATH`, `HERDR_ACTIVE_WORKSPACE_ID`, `HERDR_ACTIVE_TAB_ID`, `HERDR_ACTIVE_PANE_ID`, and `HERDR_ACTIVE_PANE_CWD` when those values are available. Shell commands run from the focused pane's working directory when Herdr can detect it.
 
+On Windows, custom command strings use `cmd.exe /d /c`, so environment variables use `%HERDR_BIN_PATH%` syntax. To run PowerShell syntax, invoke it explicitly, for example `powershell.exe -NoProfile -Command "..."`.
+
 ## Theme
 
 Choose a built-in theme:
@@ -312,6 +317,7 @@ sidebar_max_width = 36
 sidebar_collapsed_mode = "compact"
 mobile_width_threshold = 64
 mouse_capture = true
+copy_on_select = true
 host_cursor = "auto"
 right_click_passthrough_modifier = ""
 redraw_on_focus_gained = true
@@ -338,7 +344,9 @@ The agent panel shows all agents across all spaces. `agent_panel_sort` can be `s
 
 Set `mouse_capture = false` if you want your terminal to handle normal clicks, such as command-clicking URLs. With mouse capture enabled, Ctrl-click opens pane links when your terminal sends that modified click to Herdr. This includes macOS; Cmd-click is not reported separately from plain click while Herdr captures mouse input. Use Shift-Ctrl-click on Linux or Shift-Cmd-click on macOS for the terminal-native bypass path.
 
-`host_cursor` controls whether Herdr uses the outer terminal's native cursor or draws its own cursor as terminal cell content. The default, `auto`, draws Herdr's cursor on Windows to avoid ConPTY cursor flicker during active redraws, and uses the native cursor elsewhere. Set it to `native` to always use the outer terminal cursor, or `drawn` to always use Herdr's drawn cursor.
+Set `copy_on_select = false` to disable Herdr's mouse drag selection and double-click word copying. The default is `true`.
+
+`host_cursor` controls whether Herdr uses the outer terminal's native cursor or draws its own cursor as terminal cell content. The default, `auto`, draws Herdr's cursor on native Windows builds and WSL to avoid ConPTY cursor flicker during active redraws, and uses the native cursor elsewhere. Set it to `native` to always use the outer terminal cursor, or `drawn` to always use Herdr's drawn cursor.
 
 Set `right_click_passthrough_modifier = "ctrl"` if you want Ctrl-right-click, hold, and drag gestures inside mouse-reporting pane apps to reach the app instead of opening Herdr's pane menu. The default is empty, which disables this passthrough. Supported modifiers are `ctrl`, `alt`, `cmd`, `super`, `meta`, and `hyper`; `shift` is rejected because many terminals reserve Shift+mouse for their own mouse bypass.
 
@@ -496,7 +504,7 @@ Herdr can restart supported agent panes in their native conversation sessions af
 resume_agents_on_restore = true
 ```
 
-This is enabled by default. Herdr only resumes panes that reported a native session reference through an official Herdr integration. Supported resume targets are Claude Code, Codex, Cursor Agent CLI, GitHub Copilot CLI, Droid, Kimi Code CLI, Qoder CLI, Pi, Hermes Agent, OpenCode, and Kilo Code CLI. Unsupported, missing, invalid, duplicated, or stale session references restore as a normal shell in the saved pane directory.
+This is enabled by default. Herdr only resumes panes that reported a native session reference through an official Herdr integration. Supported resume targets are Claude Code, Codex, Cursor Agent CLI, GitHub Copilot CLI, Droid, Kimi Code CLI, Qoder CLI, Pi, Hermes Agent, OpenCode, Kilo Code CLI, and MastraCode. Unsupported, missing, invalid, duplicated, or stale session references restore as a normal shell in the saved pane directory.
 
 Session references are stored in the local Herdr session snapshot. They are not shown in normal pane, agent, status, or event output.
 
@@ -517,7 +525,7 @@ cjk_ime_cursor_shape = "steady_block"
 
 When enabled, the cursor stays visible at the focused pane's reported position. If the pane reports no cursor position, the anchor falls back to the pane's top-left so a stable IME hint is always available.
 
-`cjk_ime_agents` is an optional allow-list. When empty, the reveal applies to any focused pane. When non-empty, the reveal only applies if the focused pane's detected agent matches one of the listed names — useful to enable the reveal only for AI-agent TUIs that paint their own cursor while leaving plain shells untouched. Accepted names: `pi`, `claude`, `codex`, `gemini`, `cursor`, `devin`, `agy`, `cline`, `opencode`, `copilot`, `kimi`, `kiro`, `droid`, `amp`, `grok`, `hermes`, `kilo`, `qodercli`, and `qoder`. Unknown names are ignored; if the list contains no valid names, the reveal does not apply.
+`cjk_ime_agents` is an optional allow-list. When empty, the reveal applies to any focused pane. When non-empty, the reveal only applies if the focused pane's detected agent matches one of the listed names — useful to enable the reveal only for AI-agent TUIs that paint their own cursor while leaving plain shells untouched. Accepted names: `pi`, `claude`, `codex`, `gemini`, `cursor`, `devin`, `agy`, `cline`, `opencode`, `copilot`, `kimi`, `kiro`, `droid`, `amp`, `grok`, `hermes`, `kilo`, `qodercli`, `qoder`, and `maki`. Unknown names are ignored; if the list contains no valid names, the reveal does not apply.
 
 `cjk_ime_cursor_shape` controls the DECSCUSR shape rendered for the IME anchor. Accepted values: `block`, `steady_block` (default), `underline`, `steady_underline`, `bar`, `steady_bar`.
 
@@ -529,14 +537,14 @@ The trade-off when enabled: an extra hardware cursor is visible in the outer ter
 
 On macOS, prefix-mode commands can be hard to use while a non-ASCII input source is active because prefix commands are still interpreted through the host input source.
 
-Set `switch_ascii_input_source_in_prefix = true` to switch the host input source to the system ASCII-capable input source while prefix mode is active:
+Set `switch_ascii_input_source_in_prefix = true` to switch the host input source to the system ASCII-capable input source while prefix commands and prefix-launched navigation are active:
 
 ```toml
 [experimental]
 switch_ascii_input_source_in_prefix = false
 ```
 
-When enabled, Herdr switches input sources only after prefix mode is entered, then restores the previous input source when prefix mode exits. The setting is macOS-only and is a no-op on other platforms or when the system input-source switch fails.
+When enabled, Herdr switches input sources after prefix mode is entered, keeps the ASCII source across prefix-launched modes such as navigation, menus, resize, and copy mode, and restores the previous input source when returning to the terminal or entering a text field such as a rename dialog. The setting is macOS-only and is a no-op on other platforms or when the system input-source switch fails.
 
 You can also toggle it from Settings > Experiments > switch to ascii input source in prefix (macOS).
 

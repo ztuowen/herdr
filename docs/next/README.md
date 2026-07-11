@@ -65,7 +65,7 @@ Press `ctrl+b q` to detach the client. The server and pane processes keep runnin
 
 **Workspaces, tabs, panes.** A workspace is the project-level container. Tabs group panes inside a workspace. Panes are real terminal processes, not rewritten agent views.
 
-**Copy.** Herdr copies pane text, not the sidebar. Drag-select inside a pane, double-click a word or token, or press `prefix+[` for keyboard copy mode. In copy mode, move with `h/j/k/l`, `w/b/e`, and `{`/`}`, start selection with `v` or Space, copy with `y` or Enter, and leave with `q` or Esc. In PuTTY and some SSH terminals, hold `Shift` while dragging to use the terminal's own selection, and `Shift` + right click to paste.
+**Copy.** Herdr copies pane text, not the sidebar. Drag-select inside a pane, double-click a word or token, or press `prefix+[` for keyboard copy mode. In copy mode, move with `h/j/k/l`, `w/b/e`, and `{`/`}`, search forward or backward with `/` or `?`, repeat with `n` or `N`, start selection with `v` or Space, copy with `y` or Enter, and leave with `q` or Esc. Esc clears an active selection or search before exiting. In PuTTY and some SSH terminals, hold `Shift` while dragging to use the terminal's own selection, and `Shift` + right click to paste.
 
 **Update and restore.** `herdr update` installs a new binary, but a running server keeps using the old process until it is stopped or handed off. Stop the old server to use the new version. Stopping exits pane processes. Run `herdr server stop`, then run `herdr` again for the default session. For a named session, run `herdr session stop <name>`, then run `herdr session attach <name>` again. `herdr update --handoff` is experimental and tries to move live panes, including foreground processes such as dev servers, from the old server to the new one. With current official integrations installed, supported agent panes can restart from their native agent sessions after a server restart or update.
 
@@ -153,7 +153,7 @@ states:
 - 🔵 **done** — work finished, you have not looked at it yet
 - 🟢 **idle** — done and seen
 
-detection works by reading foreground process and terminal output. zero config, no hooks required. official claude code, codex, github copilot cli, devin, droid, kimi code cli, qodercli, and cursor agent cli integrations provide session restore identity; pi, omp, kimi code cli, opencode, kilo code cli, hermes, and custom socket integrations can report their own state.
+detection works by reading foreground process and terminal output. zero config, no hooks required. official claude code, codex, github copilot cli, devin, droid, kimi code cli, qodercli, and cursor agent cli integrations provide session restore identity; pi, omp, kimi code cli, opencode, kilo code cli, hermes, mastracode, and custom socket integrations can report their own state.
 
 ## lives in your terminal
 
@@ -199,6 +199,7 @@ automatic detection works out of the box. process name matching plus terminal ou
 | kimi code cli | ✓ | ✓ | ✓ |
 | [github copilot cli](https://github.com/features/copilot) | ✓ | ✓ | ✓ |
 | [qodercli](https://qoder.com/cli) | ✓ | ✓ | ✓ |
+| [maki](https://github.com/tontinton/maki) | ✓ | ✓ | ✓ |
 | [kiro cli](https://kiro.dev/docs/cli/) | ✓ | ✓ | — |
 
 detected but not fully tested: gemini cli, cline.
@@ -207,7 +208,7 @@ for agents outside the built-in list, herdr still works as a terminal multiplexe
 
 ### direct integrations
 
-official integrations have two roles. claude code, codex, github copilot cli, devin, droid, qodercli, and cursor agent cli report session identity for native restore, while their state still comes from screen detection. pi, omp, kimi code cli, opencode, kilo code cli, and hermes report both semantic state and session identity. install with:
+official integrations have two roles. claude code, codex, github copilot cli, devin, droid, qodercli, and cursor agent cli report session identity for native restore, while their state still comes from screen detection. pi, omp, kimi code cli, opencode, kilo code cli, hermes, and mastracode report both semantic state and session identity. install with:
 
 ```bash
 herdr integration install pi
@@ -221,6 +222,7 @@ herdr integration install kimi
 herdr integration install opencode
 herdr integration install kilo
 herdr integration install hermes
+herdr integration install mastracode
 herdr integration install qodercli
 herdr integration install cursor
 ```
@@ -269,7 +271,7 @@ In-app settings cover theme, sound, and toast preferences. Herdr writes logs und
 - [install](https://herdr.dev/docs/install/) — install, update, Homebrew, mise, and Nix
 - [session state](https://herdr.dev/docs/session-state/) — detach, restart restore, agent restore, and live handoff
 - [configuration](https://herdr.dev/docs/configuration/) — keybindings, themes, notifications, environment variables
-- [integrations](https://herdr.dev/docs/integrations/) — pi, omp, claude code, codex, cursor agent cli, github copilot cli, droid, kimi code cli, opencode, kilo code cli, hermes, qodercli integrations
+- [integrations](https://herdr.dev/docs/integrations/) — pi, omp, claude code, codex, cursor agent cli, github copilot cli, droid, kimi code cli, opencode, kilo code cli, hermes, mastracode, qodercli integrations
 - [`SKILL.md`](./SKILL.md) — reusable agent skill
 - [socket api](https://herdr.dev/docs/socket-api/) — socket protocol and cli reference
 
@@ -303,13 +305,3 @@ Herdr is dual-licensed:
 2. Commercial: commercial licenses are available for organizations that cannot comply with AGPL.
 
 Contact: hey@herdr.dev
-
-## mandatory star history
-
-<a href="https://www.star-history.com/?repos=ogulcancelik%2Fherdr&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&theme=dark&legend=top-left&v=2026-05-19" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
-   <img alt="star history chart" src="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
- </picture>
-</a>
